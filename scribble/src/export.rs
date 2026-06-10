@@ -9,7 +9,7 @@
 //! precision from already-validated, clamped values — no user-controlled
 //! string ever reaches the operator stream except via [`escape_pdf_text`].
 
-use crate::model::{Color, Item, Page, PenKind, Shape, ShapeKind, Stroke, Text};
+use crate::model::{Color, Item, Page, Palette, PenKind, Shape, ShapeKind, Stroke, Text};
 use std::fmt::Write;
 
 /// ExtGState resource name the host must register on each page:
@@ -27,8 +27,8 @@ fn num(v: f32) -> String {
     format!("{v:.2}")
 }
 
-fn set_stroke(out: &mut String, color: Color, width: f32) {
-    let (r, g, b) = color.rgb();
+fn set_stroke(out: &mut String, color: Color, width: f32, p: Palette) {
+    let (r, g, b) = color.rgb(p);
     let _ = writeln!(
         out,
         "{} {} {} RG {} w 1 J 1 j",
@@ -60,14 +60,14 @@ fn escape_pdf_text(s: &str) -> String {
     out
 }
 
-fn stroke_ops(out: &mut String, s: &Stroke, h: f32) {
+fn stroke_ops(out: &mut String, s: &Stroke, h: f32, pal: Palette) {
     if s.points.is_empty() {
         return;
     }
     out.push_str("q\n");
     if s.kind == PenKind::Highlighter {
         let _ = writeln!(out, "/{HIGHLIGHT_GSTATE} gs");
-        let (r, g, b) = s.color.highlight_rgb();
+        let (r, g, b) = s.color.highlight_rgb(pal);
         let _ = writeln!(
             out,
             "{} {} {} RG {} w 1 J 1 j",
@@ -77,7 +77,7 @@ fn stroke_ops(out: &mut String, s: &Stroke, h: f32) {
             num(s.width)
         );
     } else {
-        set_stroke(out, s.color, s.width);
+        set_stroke(out, s.color, s.width, pal);
     }
     let p0 = s.points[0];
     let _ = writeln!(out, "{} {} m", num(p0[0]), num(h - p0[1]));
@@ -102,13 +102,13 @@ fn line(out: &mut String, x0: f32, y0: f32, x1: f32, y1: f32, h: f32) {
     );
 }
 
-fn shape_ops(out: &mut String, s: &Shape, h: f32) {
+fn shape_ops(out: &mut String, s: &Shape, h: f32, pal: Palette) {
     let [x0, y0, x1, y1] = s.rect;
     let (lo_x, hi_x) = (x0.min(x1), x0.max(x1));
     let (lo_y, hi_y) = (y0.min(y1), y0.max(y1));
     if s.kind == ShapeKind::FillRect {
         // Highlight box: translucent fill via the highlight ExtGState.
-        let (r, g, b) = s.color.highlight_rgb();
+        let (r, g, b) = s.color.highlight_rgb(pal);
         out.push_str("q\n");
         let _ = writeln!(out, "/{HIGHLIGHT_GSTATE} gs");
         let _ = writeln!(out, "{} {} {} rg", num(r), num(g), num(b));
@@ -124,7 +124,7 @@ fn shape_ops(out: &mut String, s: &Shape, h: f32) {
         return;
     }
     out.push_str("q\n");
-    set_stroke(out, s.color, s.width);
+    set_stroke(out, s.color, s.width, pal);
     match s.kind {
         ShapeKind::FillRect => unreachable!("handled above"),
         ShapeKind::Rect => {
@@ -207,8 +207,8 @@ fn shape_ops(out: &mut String, s: &Shape, h: f32) {
     out.push_str("S\nQ\n");
 }
 
-fn text_ops(out: &mut String, t: &Text, h: f32) {
-    let (r, g, b) = t.color.rgb();
+fn text_ops(out: &mut String, t: &Text, h: f32, pal: Palette) {
+    let (r, g, b) = t.color.rgb(pal);
     out.push_str("q\nBT\n");
     let _ = writeln!(out, "/{TEXT_FONT} {} Tf", num(t.size));
     let _ = writeln!(out, "{} {} {} rg", num(r), num(g), num(b));
@@ -223,16 +223,35 @@ fn text_ops(out: &mut String, t: &Text, h: f32) {
     out.push_str("ET\nQ\n");
 }
 
+/// Black text block at an absolute PDF-space position (used for the exported
+/// notes pages). Lines are pre-wrapped by the caller; escaping happens here.
+pub fn text_block_ops(lines: &[&str], x: f32, y_pdf: f32, size: f32) -> String {
+    let mut out = String::new();
+    out.push_str("q\nBT\n");
+    let _ = writeln!(out, "/{TEXT_FONT} {} Tf", num(size));
+    out.push_str("0.10 0.10 0.10 rg\n");
+    let _ = writeln!(out, "{} TL", num(size * 1.35));
+    let _ = writeln!(out, "{} {} Td", num(x), num(y_pdf));
+    for (i, ln) in lines.iter().enumerate() {
+        if i > 0 {
+            out.push_str("T*\n");
+        }
+        let _ = writeln!(out, "({}) Tj", escape_pdf_text(ln));
+    }
+    out.push_str("ET\nQ\n");
+    out
+}
+
 /// PDF content-stream operators for every annotation on `page`, in insertion
 /// order (matching on-screen rendering).
-pub fn page_ops(page: &Page) -> String {
+pub fn page_ops(page: &Page, pal: Palette) -> String {
     let h = page.height;
     let mut out = String::new();
     for item in &page.items {
         match item {
-            Item::Stroke(s) => stroke_ops(&mut out, s, h),
-            Item::Shape(s) => shape_ops(&mut out, s, h),
-            Item::Text(t) => text_ops(&mut out, t, h),
+            Item::Stroke(s) => stroke_ops(&mut out, s, h, pal),
+            Item::Shape(s) => shape_ops(&mut out, s, h, pal),
+            Item::Text(t) => text_ops(&mut out, t, h, pal),
         }
     }
     out
@@ -259,7 +278,7 @@ mod tests {
             points: vec![[10.0, 10.0], [20.0, 30.0]],
         };
         let mut out = String::new();
-        stroke_ops(&mut out, &s, 800.0);
+        stroke_ops(&mut out, &s, 800.0, Palette::Standard);
         assert!(out.contains("10.00 790.00 m"));
         assert!(out.contains("20.00 770.00 l"));
         assert!(out.is_ascii());
@@ -275,7 +294,7 @@ mod tests {
             size: 12.0,
         };
         let mut out = String::new();
-        text_ops(&mut out, &t, 100.0);
+        text_ops(&mut out, &t, 100.0, Palette::Standard);
         // The hostile string must stay inside an escaped literal.
         assert!(out.contains(r"(\) Tj ET Q /evil \() Tj"));
     }

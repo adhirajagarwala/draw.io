@@ -33,6 +33,11 @@ const els = {
   pageCount: $("page-count"),
   zoomSelect: $("zoom-select"),
   viewer: $("viewer"),
+  thumbs: $("thumbs"),
+  notesPane: $("notes-pane"),
+  notesList: $("notes-list"),
+  splitter: $("splitter"),
+  textLayer: $("text-layer"),
   status: $("status"),
   btn: {
     open: $("btn-open"), save: $("btn-save"), load: $("btn-load"),
@@ -40,8 +45,17 @@ const els = {
     prev: $("btn-prev"), next: $("btn-next"),
     zoomIn: $("btn-zoom-in"), zoomOut: $("btn-zoom-out"),
     export: $("btn-export"),
+    thumbs: $("btn-thumbs"), notes: $("btn-notes"),
+    palette: $("btn-palette"), big: $("btn-big"),
+    addNote: $("btn-add-note"),
   },
 };
+
+// Tools that exist only in the UI layer (the Rust core stays in a neutral
+// tool while they're active).
+const JS_TOOLS = new Set(["snip", "pagetext"]);
+const activeTool = () =>
+  document.querySelector("#toolbar .tool.active")?.dataset.tool;
 
 let app;            // WASM App
 let pdfDoc = null;  // PDF.js document
@@ -82,6 +96,61 @@ function status(msg) {
 
 // ---------- rendering ----------
 
+// ---------- selection ----------
+
+let selectedId = -1;          // current selection (select tool)
+const HANDLE_PX = 7;          // on-screen handle half-size (CSS px)
+
+function setSelection(id) {
+  selectedId = id;
+  redrawAnnotations();
+}
+
+// Corner handle centers for a bbox, in page coordinates.
+function handlePoints(bb) {
+  return [
+    [bb[0], bb[1]], [bb[2], bb[1]], [bb[2], bb[3]], [bb[0], bb[3]],
+  ];
+}
+
+function drawSelection(ctx) {
+  if (selectedId < 0) return;
+  const bb = app.item_bbox_of(pageNum, selectedId);
+  if (bb.length !== 4) {
+    selectedId = -1;
+    return;
+  }
+  const k = scale() * dpr();
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.strokeStyle = "#2f5fde";
+  ctx.lineWidth = 1.5 * dpr();
+  ctx.setLineDash([5 * dpr(), 4 * dpr()]);
+  const pad = 4 * k / scale();
+  ctx.strokeRect(bb[0] * k - pad, bb[1] * k - pad, (bb[2] - bb[0]) * k + 2 * pad, (bb[3] - bb[1]) * k + 2 * pad);
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#ffffff";
+  const hs = HANDLE_PX * dpr();
+  for (const [hx, hy] of handlePoints(bb)) {
+    ctx.beginPath();
+    ctx.rect(hx * k - hs / 2, hy * k - hs / 2, hs, hs);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Which corner handle (0..3) is under (x, y) page coords, or -1.
+function handleAt(x, y) {
+  if (selectedId < 0) return -1;
+  const bb = app.item_bbox_of(pageNum, selectedId);
+  if (bb.length !== 4) return -1;
+  const tol = (HANDLE_PX + 3) / scale();
+  return handlePoints(bb).findIndex(
+    ([hx, hy]) => Math.abs(x - hx) <= tol && Math.abs(y - hy) <= tol,
+  );
+}
+
 function redrawAnnotations() {
   const ctx = els.annoCanvas.getContext("2d");
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -89,8 +158,11 @@ function redrawAnnotations() {
   // Backing store is scale*dpr for crisp output at any devicePixelRatio
   // (including browser zoom); CSS shrinks it back to `scale`.
   app.render(ctx, pageNum, scale() * dpr());
+  drawSelection(ctx);
+  drawSnipMarquee(ctx);
   els.btn.undo.disabled = !app.can_undo();
   els.btn.redo.disabled = !app.can_redo();
+  scheduleThumbRefresh();
 }
 
 async function renderPage() {
@@ -128,6 +200,8 @@ async function renderPage() {
   els.btn.zoomOut.disabled = currentScale <= ZOOM_MIN;
   els.btn.zoomIn.disabled = currentScale >= ZOOM_MAX;
   redrawAnnotations();
+  markActiveThumb();
+  buildTextLayer(page);
 }
 
 // Reflect the effective zoom in the dropdown, even for fit modes.
@@ -194,6 +268,12 @@ async function openPdf(file) {
     els.btn.export.disabled = false;
     els.pageInput.disabled = false;
     els.zoomSelect.disabled = false;
+    els.btn.thumbs.disabled = false;
+    els.btn.notes.disabled = false;
+    selectedId = -1;
+    els.thumbs.textContent = "";
+    if (!els.thumbs.hidden) await buildThumbnails();
+    renderNotes();
     await renderPage();
     status("PDF loaded. Scribble away!");
   } catch (e) {
@@ -230,10 +310,31 @@ els.annoCanvas.addEventListener("pointerdown", (ev) => {
   if (!pdfDoc || ev.button !== 0) return;
   const tool = document.querySelector("#toolbar .tool.active")?.dataset.tool;
   const [x, y] = pageCoords(ev);
+  if (tool === "snip") {
+    ev.preventDefault();
+    commitTextInput();
+    snip = { x0: x, y0: y, x1: x, y1: y };
+    capturePointer(ev);
+    return;
+  }
   if (tool === "select") {
     ev.preventDefault();
     commitTextInput();
+    // Resize if a handle of the current selection was grabbed.
+    const h = handleAt(x, y);
+    if (h >= 0 && app.begin_item_drag(pageNum, selectedId, x, y)) {
+      const bb = app.item_bbox_of(pageNum, selectedId);
+      const opposite = handlePoints(bb)[(h + 2) % 4];
+      resizeDrag = {
+        anchor: opposite,
+        startBB: bb,
+        uniform: app.item_kind(pageNum, selectedId) !== "shape",
+      };
+      capturePointer(ev);
+      return;
+    }
     const id = app.find_item(pageNum, x, y);
+    setSelection(id);
     if (id >= 0 && app.begin_item_drag(pageNum, id, x, y)) {
       itemDrag = { id, startX: x, startY: y, moved: false };
       capturePointer(ev);
@@ -255,6 +356,30 @@ els.annoCanvas.addEventListener("pointerdown", (ev) => {
 });
 
 els.annoCanvas.addEventListener("pointermove", (ev) => {
+  if (snip) {
+    const [x, y] = pageCoords(ev);
+    snip.x1 = x;
+    snip.y1 = y;
+    redrawAnnotations();
+    return;
+  }
+  if (resizeDrag) {
+    const [x, y] = pageCoords(ev);
+    const [ax, ay] = resizeDrag.anchor;
+    const bb = resizeDrag.startBB;
+    // Scale factors from how far the dragged corner moved relative to anchor.
+    const w0 = Math.max(1e-3, Math.abs(bb[2] - bb[0]));
+    const h0 = Math.max(1e-3, Math.abs(bb[3] - bb[1]));
+    let sx = Math.abs(x - ax) / w0;
+    let sy = Math.abs(y - ay) / h0;
+    if (resizeDrag.uniform) {
+      // Strokes and text scale uniformly (stretching them looks broken).
+      sx = sy = Math.max(sx, sy);
+    }
+    app.scale_dragged_item(ax, ay, sx, sy);
+    redrawAnnotations();
+    return;
+  }
   if (itemDrag) {
     const [x, y] = pageCoords(ev);
     if (Math.hypot(x - itemDrag.startX, y - itemDrag.startY) > 3 / scale()) {
@@ -267,10 +392,14 @@ els.annoCanvas.addEventListener("pointermove", (ev) => {
     return;
   }
   // Hover feedback for the select tool.
-  if (!drawing && pdfDoc &&
-      document.querySelector("#toolbar .tool.active")?.dataset.tool === "select") {
+  if (!drawing && pdfDoc && activeTool() === "select") {
     const [x, y] = pageCoords(ev);
-    els.annoCanvas.style.cursor = app.find_item(pageNum, x, y) >= 0 ? "move" : "default";
+    const h = handleAt(x, y);
+    els.annoCanvas.style.cursor =
+      h === 0 || h === 2 ? "nwse-resize"
+      : h === 1 || h === 3 ? "nesw-resize"
+      : app.find_item(pageNum, x, y) >= 0 ? "move"
+      : "default";
   }
   if (!drawing) return;
   const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
@@ -284,6 +413,19 @@ els.annoCanvas.addEventListener("pointermove", (ev) => {
 function endStroke(ev) {
   if (ev.pointerId !== undefined && els.annoCanvas.hasPointerCapture(ev.pointerId)) {
     els.annoCanvas.releasePointerCapture(ev.pointerId);
+  }
+  if (snip) {
+    const r = snip;
+    snip = null;
+    redrawAnnotations();
+    finishSnip(r);
+    return;
+  }
+  if (resizeDrag) {
+    resizeDrag = null;
+    app.end_item_drag();
+    redrawAnnotations();
+    return;
   }
   if (itemDrag) {
     const { id, moved } = itemDrag;
@@ -309,9 +451,101 @@ els.annoCanvas.addEventListener("pointerup", endStroke);
 els.annoCanvas.addEventListener("pointercancel", () => {
   drawing = false;
   itemDrag = null;
+  resizeDrag = null;
+  snip = null;
   app.pointer_cancel();
   redrawAnnotations();
 });
+
+// ---------- snip: copy a region (image + its text) into the notes ----------
+
+let snip = null;       // {x0, y0, x1, y1} page coords while dragging
+let resizeDrag = null; // {anchor, startBB, uniform}
+
+// Chunked conversion — spreading a megabyte-sized array into fromCharCode
+// overflows the call stack.
+function bytesToB64(bytes) {
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+function drawSnipMarquee(ctx) {
+  if (!snip) return;
+  const k = scale() * dpr();
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.strokeStyle = "#2f5fde";
+  ctx.lineWidth = 1.5 * dpr();
+  ctx.setLineDash([6 * dpr(), 4 * dpr()]);
+  ctx.strokeRect(
+    Math.min(snip.x0, snip.x1) * k,
+    Math.min(snip.y0, snip.y1) * k,
+    Math.abs(snip.x1 - snip.x0) * k,
+    Math.abs(snip.y1 - snip.y0) * k,
+  );
+  ctx.restore();
+}
+
+async function finishSnip(r) {
+  const x0 = Math.min(r.x0, r.x1), y0 = Math.min(r.y0, r.y1);
+  const w = Math.abs(r.x1 - r.x0), h = Math.abs(r.y1 - r.y0);
+  if (w < 4 || h < 4) {
+    status("Drag a box to snip a region.");
+    return;
+  }
+  try {
+    // 1. Pixels: copy the region (page + annotations) from the live canvases.
+    const k = scale() * dpr();
+    const out = document.createElement("canvas");
+    out.width = Math.max(1, Math.round(w * k));
+    out.height = Math.max(1, Math.round(h * k));
+    const ctx = out.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, out.width, out.height);
+    for (const src of [els.pdfCanvas, els.annoCanvas]) {
+      ctx.drawImage(src, x0 * k, y0 * k, w * k, h * k, 0, 0, out.width, out.height);
+    }
+    const blob = await new Promise((res) => out.toBlob(res, "image/png"));
+    const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
+
+    // 2. Text: PDF text items whose anchor falls inside the region.
+    let text = "";
+    try {
+      const page = await pdfDoc.getPage(pageNum + 1);
+      const tc = await page.getTextContent();
+      const parts = [];
+      for (const item of tc.items) {
+        if (!item.str) continue;
+        const ix = item.transform[4];
+        const iy = basePage.h - item.transform[5]; // flip to top-down
+        if (ix >= x0 - 2 && ix <= x0 + w + 2 && iy >= y0 - 2 && iy <= y0 + h + 6) {
+          parts.push(item.str + (item.hasEOL ? "\n" : " "));
+        }
+      }
+      text = parts.join("").replace(/[ \t]+\n/g, "\n").trim();
+    } catch { /* text extraction is best-effort */ }
+
+    const caption = text ? text.slice(0, 280) : `from page ${pageNum + 1}`;
+    app.add_clipping(b64, pageNum, caption);
+    renderNotes();
+    if (els.notesPane.hidden) toggleNotes(true);
+
+    // Best-effort: also put the image on the system clipboard.
+    try {
+      if (navigator.clipboard?.write && window.ClipboardItem) {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      }
+    } catch { /* clipboard permission is optional */ }
+    status(text ? "Snipped — image and text added to notes." : "Snipped to notes.");
+  } catch (e) {
+    console.error("snip failed:", e);
+    status(`Snip failed: ${e?.message || e}`);
+  }
+}
 
 // ---------- text notes (place / edit / drag) ----------
 
@@ -426,6 +660,10 @@ async function loadJsonFile(file) {
   }
   app.set_pdf_sha256(currentSha); // keep hash of the actually-open PDF
   status("Annotations loaded.");
+  setSelection(-1);
+  renderNotes();
+  if (app.notes_len() > 0 && els.notesPane.hidden) toggleNotes(true);
+  if (!els.thumbs.hidden) await buildThumbnails();
   await renderPage();
 }
 
@@ -443,9 +681,11 @@ async function canvasJpegBytes(canvas) {
 }
 
 function buildPdf(pages) {
-  // pages: [{ w, h, pxW, pxH, jpeg: Uint8Array, ops: string }] — w/h in PDF
-  // points; `ops` is the Rust-generated vector operator stream (annotations
-  // stay crisp vectors; text notes remain real, selectable PDF text).
+  // pages: [{ w, h, ops, images: [{jpeg, pxW, pxH, x, y, w, h}] }] — page
+  // coords in PDF points (x, y = bottom-left of the placed image). `ops` is
+  // Rust-generated vector content (annotations stay crisp vectors; text is
+  // real, selectable PDF text). Paper pages have one full-page image; notes
+  // pages have any number of clipping images.
   const enc = new TextEncoder();
   const chunks = [];
   let offset = 0;
@@ -455,55 +695,189 @@ function buildPdf(pages) {
     chunks.push(b);
     offset += b.length;
   };
-  const obj = (n, body) => {
+  let nextObj = 1;
+  const obj = (body) => {
+    const n = nextObj++;
     offsets[n] = offset;
     push(`${n} 0 obj\n${body}\nendobj\n`);
+    return n;
+  };
+  const streamObj = (head, bytes) => {
+    const n = nextObj++;
+    offsets[n] = offset;
+    push(`${n} 0 obj\n${head}\nstream\n`);
+    push(bytes);
+    push("\nendstream\nendobj\n");
+    return n;
   };
 
   push("%PDF-1.4\n");
   push(new Uint8Array([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a])); // binary marker
 
-  // 1 Catalog, 2 Pages, 3 Font, 4 ExtGState, then 3 objects per page.
-  const FIRST_PAGE_OBJ = 5;
   const fontName = app.text_font_name();
   const gsName = app.highlight_gstate_name();
-  const kids = pages.map((_, i) => `${FIRST_PAGE_OBJ + i * 3} 0 R`).join(" ");
-  obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
-  obj(2, `<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`);
-  obj(3, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
-  obj(4, "<< /Type /ExtGState /CA 0.35 /ca 0.35 /BM /Multiply >>");
+  // Fixed low object numbers so forward references in pages are simple.
+  const catalogN = obj("<< /Type /Catalog /Pages 2 0 R >>"); // 1
+  const pagesN = nextObj++; // 2, body written after pages exist
+  offsets[pagesN] = -1;
+  const fontN = obj(
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+  const gsN = obj("<< /Type /ExtGState /CA 0.35 /ca 0.35 /BM /Multiply >>");
 
-  pages.forEach((p, i) => {
-    const pageN = FIRST_PAGE_OBJ + i * 3, contentN = pageN + 1, imageN = pageN + 2;
+  const pageObjNumbers = [];
+  for (const p of pages) {
     const w = p.w.toFixed(2), h = p.h.toFixed(2);
-    obj(pageN,
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] /Resources << ` +
-      `/XObject << /Im0 ${imageN} 0 R >> /Font << /${fontName} 3 0 R >> ` +
-      `/ExtGState << /${gsName} 4 0 R >> >> /Contents ${contentN} 0 R >>`);
-    const stream = `q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q\n${p.ops}`;
-    const streamBytes = enc.encode(stream);
-    offsets[contentN] = offset;
-    push(`${contentN} 0 obj\n<< /Length ${streamBytes.length} >>\nstream\n`);
-    push(streamBytes);
-    push("\nendstream\nendobj\n");
-    offsets[imageN] = offset;
-    push(
-      `${imageN} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${p.pxW} /Height ${p.pxH} ` +
-      `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.jpeg.length} >>\nstream\n`);
-    push(p.jpeg);
-    push("\nendstream\nendobj\n");
-  });
+    const imageNs = p.images.map((im) =>
+      streamObj(
+        `<< /Type /XObject /Subtype /Image /Width ${im.pxW} /Height ${im.pxH} ` +
+        `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.jpeg.length} >>`,
+        im.jpeg));
+    let stream = "";
+    p.images.forEach((im, k) => {
+      stream += `q ${im.w.toFixed(2)} 0 0 ${im.h.toFixed(2)} ` +
+        `${im.x.toFixed(2)} ${im.y.toFixed(2)} cm /Im${k} Do Q\n`;
+    });
+    stream += p.ops || "";
+    const bytes = enc.encode(stream);
+    const contentN = streamObj(`<< /Length ${bytes.length} >>`, bytes);
+    const xobjects = imageNs.map((n, k) => `/Im${k} ${n} 0 R`).join(" ");
+    pageObjNumbers.push(obj(
+      `<< /Type /Page /Parent ${pagesN} 0 R /MediaBox [0 0 ${w} ${h}] /Resources << ` +
+      `/XObject << ${xobjects} >> /Font << /${fontName} ${fontN} 0 R >> ` +
+      `/ExtGState << /${gsName} ${gsN} 0 R >> >> /Contents ${contentN} 0 R >>`));
+  }
 
-  const count = FIRST_PAGE_OBJ + pages.length * 3;
+  // Pages object, written after its kids (out-of-order objects are legal —
+  // the xref table is what locates them).
+  offsets[pagesN] = offset;
+  push(`${pagesN} 0 obj\n<< /Type /Pages /Kids [${pageObjNumbers
+    .map((n) => `${n} 0 R`).join(" ")}] /Count ${pages.length} >>\nendobj\n`);
+
+  const count = nextObj;
   const xrefAt = offset;
   push(`xref\n0 ${count}\n`);
   push("0000000000 65535 f \n");
   for (let n = 1; n < count; n++) {
     push(`${String(offsets[n]).padStart(10, "0")} 00000 n \n`);
   }
-  push(`trailer\n<< /Size ${count} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`);
+  push(`trailer\n<< /Size ${count} /Root ${catalogN} 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`);
 
   return new Blob(chunks, { type: "application/pdf" });
+}
+
+// ---------- notes pages for export ----------
+
+const NOTE_PAGE = { w: 612, h: 792, margin: 54, size: 11, leading: 14.85 };
+
+function wrapLine(text, cols) {
+  const out = [];
+  for (const raw of text.split("\n")) {
+    let line = raw;
+    while (line.length > cols) {
+      let cut = line.lastIndexOf(" ", cols);
+      if (cut <= 0) cut = cols;
+      out.push(line.slice(0, cut));
+      line = line.slice(cut).trimStart();
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+async function pngB64ToJpeg(b64) {
+  const url = b64ToBlobUrl(b64);
+  try {
+    const img = new Image();
+    await new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = () => rej(new Error("bad clipping image"));
+      img.src = url;
+    });
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0);
+    return { jpeg: await canvasJpegBytes(c), pxW: c.width, pxH: c.height };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Lay the note blocks out across as many letter-size pages as needed.
+async function buildNotesPages() {
+  const total = app.notes_len();
+  if (total === 0) return [];
+  const { w, h, margin, size, leading } = NOTE_PAGE;
+  const contentW = w - 2 * margin;
+  const cols = Math.floor(contentW / (size * 0.5)); // conservative wrap
+  const pages = [];
+  let cur = { w, h, ops: "", images: [] };
+  let yTop = margin; // distance consumed from the top
+  const newPage = () => {
+    pages.push(cur);
+    cur = { w, h, ops: "", images: [] };
+    yTop = margin;
+  };
+  const remaining = () => h - margin - yTop;
+
+  cur.ops += app.note_text_block_ops("Notes", margin, h - margin, 16) ;
+  yTop += 30;
+
+  for (let i = 0; i < total; i++) {
+    const kind = app.note_kind(i);
+    if (kind === "text") {
+      const lines = wrapLine(app.note_text(i), cols);
+      let idx = 0;
+      while (idx < lines.length) {
+        const fit = Math.max(1, Math.floor(remaining() / leading));
+        if (fit < 1 || (remaining() < leading && yTop > margin)) {
+          newPage();
+          continue;
+        }
+        const slice = lines.slice(idx, idx + fit);
+        cur.ops += app.note_text_block_ops(
+          slice.join("\n"), margin, h - yTop - size, size);
+        yTop += slice.length * leading + 6;
+        idx += slice.length;
+      }
+    } else if (kind === "clipping") {
+      let im;
+      try {
+        im = await pngB64ToJpeg(app.note_png(i));
+      } catch {
+        continue; // unrenderable clipping: skip rather than fail the export
+      }
+      let drawW = Math.min(contentW, im.pxW / 2); // snips are 2x resolution
+      let drawH = drawW * (im.pxH / im.pxW);
+      const maxH = h - 2 * margin - 20;
+      if (drawH > maxH) {
+        drawH = maxH;
+        drawW = drawH * (im.pxW / im.pxH);
+      }
+      if (drawH + 16 > remaining() && yTop > margin) newPage();
+      cur.images.push({
+        ...im,
+        x: margin,
+        y: h - yTop - drawH,
+        w: drawW,
+        h: drawH,
+      });
+      yTop += drawH + 4;
+      const caption = app.note_caption(i);
+      if (caption) {
+        const capLines = wrapLine(caption, cols + 10).slice(0, 4);
+        cur.ops += app.note_text_block_ops(
+          capLines.join("\n"), margin, h - yTop - 9, 9);
+        yTop += capLines.length * 12;
+      }
+      yTop += 10;
+    }
+  }
+  pages.push(cur);
+  return pages;
 }
 
 async function exportPdf() {
@@ -527,10 +901,17 @@ async function exportPdf() {
       // operators generated by the Rust core (crisp at any zoom).
       pages.push({
         w: base.width, h: base.height,
-        pxW: canvas.width, pxH: canvas.height,
-        jpeg: await canvasJpegBytes(canvas),
         ops: app.export_pdf_ops(i),
+        images: [{
+          jpeg: await canvasJpegBytes(canvas),
+          pxW: canvas.width, pxH: canvas.height,
+          x: 0, y: 0, w: base.width, h: base.height,
+        }],
       });
+    }
+    if (app.notes_len() > 0) {
+      status("Adding your notes pages…");
+      pages.push(...await buildNotesPages());
     }
     const blob = buildPdf(pages);
     const a = document.createElement("a");
@@ -570,9 +951,17 @@ els.fileJson.addEventListener("change", () => {
 for (const b of document.querySelectorAll("#toolbar .tool")) {
   b.addEventListener("click", () => {
     commitTextInput();
-    if (!app.set_tool(b.dataset.tool)) return;
+    const name = b.dataset.tool;
+    if (JS_TOOLS.has(name)) {
+      app.set_tool("select"); // neutral: core draws nothing on pointer events
+    } else if (!app.set_tool(name)) {
+      return;
+    }
     document.querySelectorAll("#toolbar .tool").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
+    document.body.classList.toggle("textselect", name === "pagetext");
+    if (name !== "select") setSelection(-1);
+    els.annoCanvas.style.cursor = name === "snip" ? "crosshair" : "";
   });
 }
 
@@ -640,10 +1029,17 @@ window.addEventListener("resize", () => {
   resizeTimer = setTimeout(() => renderPage(), 150);
 });
 
-const TOOL_KEYS = { v: "select", p: "pen", h: "highlighter", t: "text", e: "eraser" };
+const TOOL_KEYS = {
+  v: "select", p: "pen", h: "highlighter", t: "text", e: "eraser",
+  s: "snip", i: "pagetext",
+};
 
 document.addEventListener("keydown", (ev) => {
-  if (ev.target === els.textInput || ev.target === els.pageInput) return;
+  // Never hijack keys while the user is typing in any field (incl. notes).
+  if (ev.target instanceof Element &&
+      ev.target.matches("input, textarea, select, [contenteditable]")) {
+    return;
+  }
   const mod = ev.ctrlKey || ev.metaKey;
   const key = ev.key.toLowerCase();
   // Word/Docs-style: Ctrl+Z undo, Ctrl+Y or Ctrl+Shift+Z redo, Ctrl+S save.
@@ -658,6 +1054,12 @@ document.addEventListener("keydown", (ev) => {
   } else if (mod && key === "s") {
     ev.preventDefault();
     if (!els.btn.save.disabled) downloadJson();
+  } else if ((ev.key === "Delete" || ev.key === "Backspace") && selectedId >= 0) {
+    ev.preventDefault();
+    app.delete_item(pageNum, selectedId);
+    setSelection(-1);
+  } else if (ev.key === "Escape" && selectedId >= 0) {
+    setSelection(-1);
   } else if (!mod && TOOL_KEYS[key]) {
     document.querySelector(`#toolbar [data-tool="${TOOL_KEYS[key]}"]`)?.click();
   } else if (ev.key === "PageDown" || ev.key === "PageUp") {
@@ -686,6 +1088,216 @@ window.addEventListener("beforeunload", (ev) => {
     ev.preventDefault();
     ev.returnValue = "";
   }
+});
+
+// ---------- notes pane (working document) ----------
+// Blocks live in the Rust document; this renders them. Text uses textareas
+// (native undo); clippings render via blob: URLs (never HTML from content).
+
+function b64ToBlobUrl(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+}
+
+function autoGrow(ta) {
+  ta.style.height = "auto";
+  ta.style.height = `${ta.scrollHeight}px`;
+}
+
+function blockActions(i, total) {
+  const wrap = document.createElement("div");
+  wrap.className = "block-actions";
+  const mk = (label, title, fn) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.title = title;
+    b.addEventListener("click", fn);
+    wrap.appendChild(b);
+  };
+  if (i > 0) mk("↑", "Move up", () => { app.move_note(i, -1); renderNotes(); });
+  if (i < total - 1) mk("↓", "Move down", () => { app.move_note(i, 1); renderNotes(); });
+  mk("✕", "Delete block", () => { app.remove_note(i); renderNotes(); });
+  return wrap;
+}
+
+function renderNotes() {
+  // Revoke old blob URLs before rebuilding.
+  for (const img of els.notesList.querySelectorAll("img[data-blob]")) {
+    URL.revokeObjectURL(img.src);
+  }
+  els.notesList.textContent = "";
+  const total = app.notes_len();
+  for (let i = 0; i < total; i++) {
+    const kind = app.note_kind(i);
+    const div = document.createElement("div");
+    div.className = "note-block";
+    if (kind === "text") {
+      const ta = document.createElement("textarea");
+      ta.value = app.note_text(i);
+      ta.placeholder = "Write a note…";
+      ta.addEventListener("input", () => {
+        app.update_note_text(i, ta.value);
+        autoGrow(ta);
+      });
+      div.appendChild(ta);
+      queueMicrotask(() => autoGrow(ta));
+    } else if (kind === "clipping") {
+      const img = document.createElement("img");
+      img.src = b64ToBlobUrl(app.note_png(i));
+      img.dataset.blob = "1";
+      img.alt = "clipping";
+      const srcPage = app.note_source_page(i);
+      if (srcPage >= 0) {
+        img.title = `Snipped from page ${srcPage + 1} — click to jump there`;
+        img.style.cursor = "pointer";
+        img.addEventListener("click", () => goToPage(srcPage));
+      }
+      const cap = document.createElement("input");
+      cap.className = "caption";
+      cap.maxLength = 300;
+      cap.placeholder = "Caption…";
+      cap.value = app.note_caption(i);
+      cap.addEventListener("input", () => app.update_note_caption(i, cap.value));
+      div.append(img, cap);
+    }
+    div.appendChild(blockActions(i, total));
+    els.notesList.appendChild(div);
+  }
+}
+
+function toggleNotes(show) {
+  const visible = show ?? els.notesPane.hidden;
+  els.notesPane.hidden = !visible;
+  els.splitter.hidden = !visible;
+  if (visible) renderNotes();
+}
+
+els.btn.notes.addEventListener("click", () => toggleNotes());
+els.btn.addNote.addEventListener("click", () => {
+  try {
+    app.add_text_note("");
+    renderNotes();
+    els.notesList.querySelector(".note-block:last-child textarea")?.focus();
+  } catch (e) {
+    status(String(e));
+  }
+});
+
+// Splitter: drag to resize the notes pane; double-click to reset.
+let splitDrag = null;
+els.splitter.addEventListener("pointerdown", (ev) => {
+  splitDrag = { startX: ev.clientX, startW: els.notesPane.offsetWidth };
+  els.splitter.setPointerCapture(ev.pointerId);
+});
+els.splitter.addEventListener("pointermove", (ev) => {
+  if (!splitDrag) return;
+  const w = splitDrag.startW + (splitDrag.startX - ev.clientX);
+  els.notesPane.style.width = `${Math.max(220, Math.min(window.innerWidth * 0.6, w))}px`;
+});
+els.splitter.addEventListener("pointerup", () => { splitDrag = null; });
+els.splitter.addEventListener("dblclick", () => { els.notesPane.style.width = ""; });
+
+// ---------- thumbnails sidebar ----------
+
+const THUMB_SCALE_WIDTH = 220; // backing px; CSS shrinks for sharpness
+
+async function buildThumbnails() {
+  els.thumbs.textContent = "";
+  if (!pdfDoc) return;
+  for (let i = 0; i < pdfDoc.numPages; i++) {
+    const btn = document.createElement("button");
+    btn.className = "thumb";
+    btn.title = `Go to page ${i + 1}`;
+    const canvas = document.createElement("canvas");
+    const tag = document.createElement("span");
+    tag.className = "pageno";
+    tag.textContent = String(i + 1);
+    btn.append(canvas, tag);
+    btn.addEventListener("click", () => goToPage(i));
+    els.thumbs.appendChild(btn);
+    await renderThumb(i); // sequential keeps memory low
+  }
+  markActiveThumb();
+}
+
+async function renderThumb(i) {
+  const canvas = els.thumbs.children[i]?.querySelector("canvas");
+  if (!canvas || !pdfDoc) return;
+  const page = await pdfDoc.getPage(i + 1);
+  const base = page.getViewport({ scale: 1 });
+  const s = THUMB_SCALE_WIDTH / base.width;
+  const vp = page.getViewport({ scale: s });
+  canvas.width = Math.floor(vp.width);
+  canvas.height = Math.floor(vp.height);
+  const ctx = canvas.getContext("2d");
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  app.ensure_page(i, base.width, base.height);
+  app.render(ctx, i, s); // annotations visible in the overview
+}
+
+function markActiveThumb() {
+  [...els.thumbs.children].forEach((el, i) =>
+    el.classList.toggle("active", i === pageNum));
+}
+
+// Refresh the current page's thumbnail shortly after edits settle.
+let thumbTimer;
+function scheduleThumbRefresh() {
+  if (els.thumbs.hidden) return;
+  clearTimeout(thumbTimer);
+  thumbTimer = setTimeout(() => renderThumb(pageNum), 800);
+}
+
+els.btn.thumbs.addEventListener("click", async () => {
+  els.thumbs.hidden = !els.thumbs.hidden;
+  if (!els.thumbs.hidden && els.thumbs.childElementCount === 0) {
+    await buildThumbnails();
+  }
+});
+
+// ---------- PDF.js text layer (Page-text tool) ----------
+
+let textLayerTask = null;
+
+async function buildTextLayer(page) {
+  els.textLayer.textContent = "";
+  if (textLayerTask?.cancel) textLayerTask.cancel();
+  try {
+    const lib = await getPdfjs();
+    const vp = page.getViewport({ scale: scale() });
+    els.textLayer.style.setProperty("--scale-factor", String(scale()));
+    textLayerTask = new lib.TextLayer({
+      textContentSource: page.streamTextContent(),
+      container: els.textLayer,
+      viewport: vp,
+    });
+    await textLayerTask.render();
+  } catch (e) {
+    if (e?.name !== "AbortException") console.warn("text layer:", e);
+  }
+}
+
+// ---------- accessibility toggles ----------
+
+els.btn.big.addEventListener("click", () => {
+  const on = document.body.classList.toggle("big");
+  els.btn.big.classList.toggle("active", on);
+});
+
+els.btn.palette.addEventListener("click", () => {
+  const safe = !els.btn.palette.classList.contains("active");
+  app.set_palette(safe ? "safe" : "standard");
+  els.btn.palette.classList.toggle("active", safe);
+  // Swatches reflect the active palette (colors come from the Rust enum).
+  for (const s of document.querySelectorAll("#colors .swatch")) {
+    s.style.background = app.color_css(s.dataset.color);
+  }
+  redrawAnnotations();
+  if (!els.thumbs.hidden) renderThumb(pageNum);
+  status(safe ? "Colorblind-safe palette on (green→brown, red→vermillion)."
+              : "Standard palette.");
 });
 
 // ---------- boot ----------

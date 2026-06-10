@@ -21,6 +21,16 @@ feature uses WebCrypto, which requires a secure context — localhost counts.)
 
 ## Usage
 
+New in this version: a **Select tool (V)** with move/resize (corner handles;
+strokes and text scale uniformly) and Delete; a **Snip tool (S)** that copies
+any dragged region — image *and* the PDF text inside it — into a side-by-side
+**Notes pane** (movable splitter) whose blocks export as extra pages in the
+final PDF; a **Page-text tool (I)** for selecting the PDF's own text; a page
+**thumbnails sidebar** showing your marks; a **colorblind-safe palette**
+toggle (green→brown, red→vermillion; files store color names, not pixels);
+and a **larger-controls** toggle.
+
+
 - **Open PDF** → pick the question paper.
 - Tools: Pen (P), Highlighter (H), Text (T), Eraser (E), plus tick, cross,
   circle, and arrow markers (click to place, or drag to size). 5 colors,

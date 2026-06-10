@@ -152,6 +152,16 @@ export class App {
         wasm.app_pointer_up(this.__wbg_ptr);
     }
     /**
+     * Delete an item as a single undoable step. Returns false if missing.
+     * @param {number} page
+     * @param {number} id
+     * @returns {boolean}
+     */
+    delete_item(page, id) {
+        const ret = wasm.app_delete_item(this.__wbg_ptr, page, id);
+        return ret !== 0;
+    }
+    /**
      * Register a page's size (PDF coordinates at scale 1).
      * @param {number} index
      * @param {number} width
@@ -162,6 +172,26 @@ export class App {
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
         }
+    }
+    /**
+     * @param {number} i
+     * @returns {boolean}
+     */
+    remove_note(i) {
+        const ret = wasm.app_remove_note(this.__wbg_ptr, i);
+        return ret !== 0;
+    }
+    /**
+     * Switch display palette ("standard" | "safe"). Colors in files are
+     * semantic names, so this changes rendering only — never the document.
+     * @param {string} name
+     * @returns {boolean}
+     */
+    set_palette(name) {
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.app_set_palette(this.__wbg_ptr, ptr0, len0);
+        return ret !== 0;
     }
     /**
      * Replace the content of an existing text note. Empty content deletes
@@ -176,6 +206,53 @@ export class App {
         const ret = wasm.app_update_text(this.__wbg_ptr, page, id, ptr0, len0);
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Append a snipped clipping. Returns its index.
+     * @param {string} png_b64
+     * @param {number} source_page
+     * @param {string} caption
+     * @returns {number}
+     */
+    add_clipping(png_b64, source_page, caption) {
+        const ptr0 = passStringToWasm0(png_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(caption, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.app_add_clipping(this.__wbg_ptr, ptr0, len0, source_page, ptr1, len1);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] >>> 0;
+    }
+    /**
+     * Bounding box `[x0, y0, x1, y1]` of the item, or empty if missing.
+     * Used by the host to draw selection handles.
+     * @param {number} page
+     * @param {number} id
+     * @returns {Float32Array}
+     */
+    item_bbox_of(page, id) {
+        const ret = wasm.app_item_bbox_of(this.__wbg_ptr, page, id);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @param {number} i
+     * @returns {string}
+     */
+    note_caption(i) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.app_note_caption(this.__wbg_ptr, i);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
     }
     /**
@@ -212,6 +289,20 @@ export class App {
         } finally {
             wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
+    }
+    /**
+     * Append an empty/with-content text block. Returns its index.
+     * @param {string} content
+     * @returns {number}
+     */
+    add_text_note(content) {
+        const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.app_add_text_note(this.__wbg_ptr, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] >>> 0;
     }
     /**
      * Finish a move, recording it as a single undoable step.
@@ -294,6 +385,73 @@ export class App {
     begin_item_drag(page, id, x, y) {
         const ret = wasm.app_begin_item_drag(this.__wbg_ptr, page, id, x, y);
         return ret !== 0;
+    }
+    /**
+     * @param {number} i
+     * @returns {number}
+     */
+    note_source_page(i) {
+        const ret = wasm.app_note_source_page(this.__wbg_ptr, i);
+        return ret;
+    }
+    /**
+     * @param {number} i
+     * @param {string} content
+     */
+    update_note_text(i, content) {
+        const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.app_update_note_text(this.__wbg_ptr, i, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Scale the item under drag about an anchor point (a resize preview).
+     * Factors are clamped; text scales its font size by the larger factor.
+     * Commit/undo semantics are identical to a move (end_item_drag).
+     * @param {number} anchor_x
+     * @param {number} anchor_y
+     * @param {number} sx
+     * @param {number} sy
+     */
+    scale_dragged_item(anchor_x, anchor_y, sx, sy) {
+        wasm.app_scale_dragged_item(this.__wbg_ptr, anchor_x, anchor_y, sx, sy);
+    }
+    /**
+     * PDF ops for a pre-wrapped block of note text on an exported notes
+     * page. `lines` are joined by '\n'; sanitization + escaping in Rust.
+     * @param {string} lines
+     * @param {number} x
+     * @param {number} y_pdf
+     * @param {number} size
+     * @returns {string}
+     */
+    note_text_block_ops(lines, x, y_pdf, size) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ptr0 = passStringToWasm0(lines, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.app_note_text_block_ops(this.__wbg_ptr, ptr0, len0, x, y_pdf, size);
+            deferred2_0 = ret[0];
+            deferred2_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @param {number} i
+     * @param {string} caption
+     */
+    update_note_caption(i, caption) {
+        const ptr0 = passStringToWasm0(caption, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.app_update_note_caption(this.__wbg_ptr, i, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
     }
     /**
      * @returns {string}
@@ -379,6 +537,22 @@ export class App {
         return ret !== 0;
     }
     /**
+     * @param {number} i
+     * @returns {string}
+     */
+    note_png(i) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.app_note_png(this.__wbg_ptr, i);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
      * @param {string} name
      * @returns {boolean}
      */
@@ -399,6 +573,25 @@ export class App {
         var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;
+    }
+    /**
+     * Display color (CSS) of `name` under the active palette, for swatches.
+     * @param {string} name
+     * @returns {string}
+     */
+    color_css(name) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.app_color_css(this.__wbg_ptr, ptr0, len0);
+            deferred2_0 = ret[0];
+            deferred2_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
     }
     /**
      * Move the dragged item with the pointer. The translation is clamped so
@@ -422,6 +615,25 @@ export class App {
         return ret;
     }
     /**
+     * Kind of the item ("stroke" | "text" | "shape" | ""), for the host to
+     * decide e.g. whether resizing must stay uniform.
+     * @param {number} page
+     * @param {number} id
+     * @returns {string}
+     */
+    item_kind(page, id) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.app_item_kind(this.__wbg_ptr, page, id);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
      * Load annotations from JSON. Input is treated as hostile: size-capped,
      * strictly parsed, fully validated. On any error the current document is
      * left untouched.
@@ -434,6 +646,56 @@ export class App {
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
         }
+    }
+    /**
+     * Move a block up (delta = -1) or down (delta = +1).
+     * @param {number} i
+     * @param {number} delta
+     * @returns {boolean}
+     */
+    move_note(i, delta) {
+        const ret = wasm.app_move_note(this.__wbg_ptr, i, delta);
+        return ret !== 0;
+    }
+    /**
+     * "text" | "clipping" | "" (out of range).
+     * @param {number} i
+     * @returns {string}
+     */
+    note_kind(i) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.app_note_kind(this.__wbg_ptr, i);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @param {number} i
+     * @returns {string}
+     */
+    note_text(i) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.app_note_text(this.__wbg_ptr, i);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    notes_len() {
+        const ret = wasm.app_notes_len(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
      * @returns {string}

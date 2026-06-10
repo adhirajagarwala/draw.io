@@ -40,6 +40,13 @@
         <svg viewBox="0 0 24 24"><path d="M14 4l6 6-9 9H7l-4-4L14 4z"/><path d="M9 19h12"/></svg>
         Erase
       </button>
+      <button class="btn tool" data-tool="snip" title="Snip — drag a box to copy that region (image + any text in it) into your notes (shortcut: S)">
+        <svg viewBox="0 0 24 24"><path d="M4 8V4h4"/><path d="M16 4h4v4"/><path d="M20 16v4h-4"/><path d="M8 20H4v-4"/><rect x="9" y="9" width="6" height="6"/></svg>
+        Snip
+      </button>
+      <button class="btn tool" data-tool="pagetext" title="Page text — select and copy the PDF's own text (shortcut: I)">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+      </button>
     </div>
 
     <div class="group" id="shapes">
@@ -122,6 +129,22 @@
       </button>
     </div>
 
+    <div class="group">
+      <button id="btn-thumbs" class="btn" title="Show/hide page thumbnails" disabled>
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="6" height="7"/><rect x="3" y="14" width="6" height="7"/><path d="M12 5h9M12 9h9M12 15h9M12 19h9"/></svg>
+      </button>
+      <button id="btn-notes" class="btn" title="Show/hide your working notes" disabled>
+        <svg viewBox="0 0 24 24"><path d="M13 3H5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V10"/><path d="M14 3l6 6"/><path d="M8 13h8M8 17h5"/></svg>
+        Notes
+      </button>
+      <button id="btn-palette" class="btn" title="Toggle colorblind-safe palette (green becomes brown, red becomes vermillion)">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18"/></svg>
+      </button>
+      <button id="btn-big" class="btn" title="Toggle larger controls">
+        <svg viewBox="0 0 24 24"><path d="M3 18L8 6l5 12"/><path d="M4.7 14h6.6"/><path d="M14 18l3.5-8 3.5 8"/></svg>
+      </button>
+    </div>
+
     <div class="group push">
       <button id="btn-save" class="btn labeled" title="Save your work to a file you can resume from later (shortcut: Ctrl/Cmd+S)" disabled>
         <svg viewBox="0 0 24 24"><path d="M5 3h11l5 5v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 3v5h7V3"/><path d="M7 21v-7h10v7"/></svg>
@@ -138,14 +161,26 @@
     </div>
   </header>
 
-  <main id="viewer">
-    <p id="placeholder">Open a question paper (PDF) to start scribbling.</p>
-    <div id="page-wrap" hidden>
-      <canvas id="pdf-canvas"></canvas>
-      <canvas id="anno-canvas"></canvas>
-      <input id="text-input" type="text" maxlength="500" hidden
-             autocomplete="off" spellcheck="false" placeholder="Type, press Enter">
+  <main id="workspace">
+    <aside id="thumbs" hidden></aside>
+    <div id="viewer">
+      <p id="placeholder">Open a question paper (PDF) to start scribbling.</p>
+      <div id="page-wrap" hidden>
+        <canvas id="pdf-canvas"></canvas>
+        <div id="text-layer"></div>
+        <canvas id="anno-canvas"></canvas>
+        <input id="text-input" type="text" maxlength="500" hidden
+               autocomplete="off" spellcheck="false" placeholder="Type, press Enter">
+      </div>
     </div>
+    <div id="splitter" hidden title="Drag to resize notes (double-click to reset)"></div>
+    <aside id="notes-pane" hidden>
+      <header>
+        <span>Notes</span>
+        <button id="btn-add-note" class="btn" title="Add a text block">＋ Text</button>
+      </header>
+      <div id="notes-list"></div>
+    </aside>
   </main>
 
   <div id="status" role="status" aria-live="polite"></div>

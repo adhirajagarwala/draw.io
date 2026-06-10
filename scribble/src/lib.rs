@@ -55,8 +55,10 @@ pub struct App {
     current_shape: Option<(usize, Shape)>,
     /// Items removed during an in-progress eraser drag.
     erase_pending: Option<(usize, Vec<Item>)>,
-    /// Existing item being moved with the select tool.
+    /// Existing item being moved or resized with the select tool.
     item_drag: Option<DragState>,
+    /// Active color palette (display preference; files store color names).
+    palette: Palette,
 }
 
 #[wasm_bindgen]
@@ -77,6 +79,7 @@ impl App {
             current_shape: None,
             erase_pending: None,
             item_drag: None,
+            palette: Palette::Standard,
         }
     }
 
@@ -157,6 +160,25 @@ impl App {
             }
             None => false,
         }
+    }
+
+    /// Switch display palette ("standard" | "safe"). Colors in files are
+    /// semantic names, so this changes rendering only — never the document.
+    pub fn set_palette(&mut self, name: &str) -> bool {
+        match Palette::from_name(name) {
+            Some(p) => {
+                self.palette = p;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Display color (CSS) of `name` under the active palette, for swatches.
+    pub fn color_css(&self, name: &str) -> String {
+        Color::from_name(name)
+            .map(|c| c.css(self.palette).to_string())
+            .unwrap_or_default()
     }
 
     // ---------- pointer input (page coordinates, scale 1) ----------
@@ -401,6 +423,82 @@ impl App {
         }
     }
 
+    /// Bounding box `[x0, y0, x1, y1]` of the item, or empty if missing.
+    /// Used by the host to draw selection handles.
+    pub fn item_bbox_of(&self, page: usize, id: f64) -> Vec<f32> {
+        let Some(id) = checked_id(id) else {
+            return Vec::new();
+        };
+        self.doc
+            .pages
+            .get(page)
+            .and_then(|p| p.items.iter().find(|it| it.id() == id))
+            .map(|it| item_bbox(it).to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Kind of the item ("stroke" | "text" | "shape" | ""), for the host to
+    /// decide e.g. whether resizing must stay uniform.
+    pub fn item_kind(&self, page: usize, id: f64) -> String {
+        let Some(id) = checked_id(id) else {
+            return String::new();
+        };
+        self.doc
+            .pages
+            .get(page)
+            .and_then(|p| p.items.iter().find(|it| it.id() == id))
+            .map(|it| match it {
+                Item::Stroke(_) => "stroke",
+                Item::Text(_) => "text",
+                Item::Shape(_) => "shape",
+            })
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// Scale the item under drag about an anchor point (a resize preview).
+    /// Factors are clamped; text scales its font size by the larger factor.
+    /// Commit/undo semantics are identical to a move (end_item_drag).
+    pub fn scale_dragged_item(&mut self, anchor_x: f32, anchor_y: f32, sx: f32, sy: f32) {
+        if !anchor_x.is_finite() || !anchor_y.is_finite() || !sx.is_finite() || !sy.is_finite() {
+            return;
+        }
+        let (sx, sy) = (sx.clamp(0.05, 20.0), sy.clamp(0.05, 20.0));
+        let Some(drag) = &self.item_drag else {
+            return;
+        };
+        let (page, id) = (drag.page, drag.id);
+        let original = drag.original.clone();
+        let scaled = scale_item(&original, anchor_x, anchor_y, sx, sy);
+        let Some(p) = self.doc.pages.get_mut(page) else {
+            return;
+        };
+        let (w, h) = (p.width.max(1.0), p.height.max(1.0));
+        if let Some(slot) = p.items.iter_mut().find(|it| it.id() == id) {
+            *slot = clamp_item_to_page(scaled, w, h);
+        }
+    }
+
+    /// Delete an item as a single undoable step. Returns false if missing.
+    pub fn delete_item(&mut self, page: usize, id: f64) -> bool {
+        let Some(id) = checked_id(id) else {
+            return false;
+        };
+        let Some(p) = self.doc.pages.get_mut(page) else {
+            return false;
+        };
+        let Some(idx) = p.items.iter().position(|it| it.id() == id) else {
+            return false;
+        };
+        let removed = p.items.remove(idx);
+        self.history.push(Command::Remove {
+            page,
+            items: vec![removed],
+        });
+        self.dirty = true;
+        true
+    }
+
     /// Finish a move, recording it as a single undoable step.
     pub fn end_item_drag(&mut self) {
         let Some(drag) = self.item_drag.take() else {
@@ -467,6 +565,146 @@ impl App {
                 Item::Text(t) if t.id == id => Some(t),
                 _ => None,
             })
+    }
+
+    // ---------- working-document notes ----------
+    //
+    // Notes are NOT routed through the undo stack: text blocks live in
+    // textareas (which have native undo), and block add/remove is rare and
+    // explicit. Every text path is sanitized; clippings are validated base64.
+
+    pub fn notes_len(&self) -> usize {
+        self.doc.notes.len()
+    }
+
+    /// "text" | "clipping" | "" (out of range).
+    pub fn note_kind(&self, i: usize) -> String {
+        match self.doc.notes.get(i) {
+            Some(NoteBlock::Text { .. }) => "text".into(),
+            Some(NoteBlock::Clipping { .. }) => "clipping".into(),
+            None => String::new(),
+        }
+    }
+
+    pub fn note_text(&self, i: usize) -> String {
+        match self.doc.notes.get(i) {
+            Some(NoteBlock::Text { content }) => content.clone(),
+            _ => String::new(),
+        }
+    }
+
+    pub fn note_caption(&self, i: usize) -> String {
+        match self.doc.notes.get(i) {
+            Some(NoteBlock::Clipping { caption, .. }) => caption.clone(),
+            _ => String::new(),
+        }
+    }
+
+    pub fn note_png(&self, i: usize) -> String {
+        match self.doc.notes.get(i) {
+            Some(NoteBlock::Clipping { png_b64, .. }) => png_b64.clone(),
+            _ => String::new(),
+        }
+    }
+
+    pub fn note_source_page(&self, i: usize) -> i32 {
+        match self.doc.notes.get(i) {
+            Some(NoteBlock::Clipping { source_page, .. }) => *source_page as i32,
+            _ => -1,
+        }
+    }
+
+    /// Append an empty/with-content text block. Returns its index.
+    pub fn add_text_note(&mut self, content: &str) -> Result<usize, String> {
+        if self.doc.notes.len() >= MAX_NOTE_BLOCKS {
+            return Err("notes are full".into());
+        }
+        self.doc.notes.push(NoteBlock::Text {
+            content: sanitize_text_capped(content, MAX_NOTE_TEXT_LEN),
+        });
+        self.dirty = true;
+        Ok(self.doc.notes.len() - 1)
+    }
+
+    /// Append a snipped clipping. Returns its index.
+    pub fn add_clipping(
+        &mut self,
+        png_b64: &str,
+        source_page: usize,
+        caption: &str,
+    ) -> Result<usize, String> {
+        if self.doc.notes.len() >= MAX_NOTE_BLOCKS {
+            return Err("notes are full".into());
+        }
+        if !valid_b64_png(png_b64) {
+            return Err("invalid image data".into());
+        }
+        if source_page >= MAX_PAGES {
+            return Err("bad source page".into());
+        }
+        self.doc.notes.push(NoteBlock::Clipping {
+            png_b64: png_b64.to_string(),
+            source_page: source_page as u32,
+            caption: sanitize_text_capped(caption, MAX_CAPTION_LEN),
+        });
+        self.dirty = true;
+        Ok(self.doc.notes.len() - 1)
+    }
+
+    pub fn update_note_text(&mut self, i: usize, content: &str) -> Result<(), String> {
+        match self.doc.notes.get_mut(i) {
+            Some(NoteBlock::Text { content: c }) => {
+                *c = sanitize_text_capped(content, MAX_NOTE_TEXT_LEN);
+                self.dirty = true;
+                Ok(())
+            }
+            _ => Err("no such text block".into()),
+        }
+    }
+
+    pub fn update_note_caption(&mut self, i: usize, caption: &str) -> Result<(), String> {
+        match self.doc.notes.get_mut(i) {
+            Some(NoteBlock::Clipping { caption: c, .. }) => {
+                *c = sanitize_text_capped(caption, MAX_CAPTION_LEN);
+                self.dirty = true;
+                Ok(())
+            }
+            _ => Err("no such clipping".into()),
+        }
+    }
+
+    pub fn remove_note(&mut self, i: usize) -> bool {
+        if i < self.doc.notes.len() {
+            self.doc.notes.remove(i);
+            self.dirty = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Move a block up (delta = -1) or down (delta = +1).
+    pub fn move_note(&mut self, i: usize, delta: i32) -> bool {
+        let len = self.doc.notes.len();
+        let j = i as i64 + delta as i64;
+        if i < len && j >= 0 && (j as usize) < len {
+            self.doc.notes.swap(i, j as usize);
+            self.dirty = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// PDF ops for a pre-wrapped block of note text on an exported notes
+    /// page. `lines` are joined by '\n'; sanitization + escaping in Rust.
+    pub fn note_text_block_ops(&self, lines: &str, x: f32, y_pdf: f32, size: f32) -> String {
+        if !x.is_finite() || !y_pdf.is_finite() || !size.is_finite() {
+            return String::new();
+        }
+        let clean = sanitize_text_capped(lines, MAX_NOTE_TEXT_LEN);
+        let split: Vec<&str> = clean.split('\n').collect();
+        export::text_block_ops(&split, x, y_pdf, size.clamp(4.0, 72.0))
     }
 
     // ---------- undo / redo ----------
@@ -562,16 +800,16 @@ impl App {
         ctx.set_line_cap("round");
         ctx.set_line_join("round");
         for item in &p.items {
-            draw_item(ctx, item);
+            draw_item(ctx, item, self.palette);
         }
         if let Some((cur_page, stroke)) = &self.current {
             if *cur_page == page {
-                draw_stroke(ctx, stroke);
+                draw_stroke(ctx, stroke, self.palette);
             }
         }
         if let Some((cur_page, shape)) = &self.current_shape {
             if *cur_page == page {
-                draw_shape(ctx, shape);
+                draw_shape(ctx, shape, self.palette);
             }
         }
         ctx.restore();
@@ -586,7 +824,7 @@ impl App {
         self.doc
             .pages
             .get(page)
-            .map(export::page_ops)
+            .map(|p| export::page_ops(p, self.palette))
             .unwrap_or_default()
     }
 
@@ -735,11 +973,58 @@ fn translate_item(item: &Item, dx: f32, dy: f32) -> Item {
     out
 }
 
+/// Scale an item about an anchor point. Strokes scale their points, shapes
+/// their rect; text scales position and font size (clamped) by max(sx, sy).
+fn scale_item(item: &Item, ax: f32, ay: f32, sx: f32, sy: f32) -> Item {
+    let mut out = item.clone();
+    let tx = |x: f32| ax + (x - ax) * sx;
+    let ty = |y: f32| ay + (y - ay) * sy;
+    match &mut out {
+        Item::Stroke(s) => {
+            for p in &mut s.points {
+                p[0] = tx(p[0]);
+                p[1] = ty(p[1]);
+            }
+        }
+        Item::Text(t) => {
+            t.pos = [tx(t.pos[0]), ty(t.pos[1])];
+            t.size = (t.size * sx.max(sy)).clamp(MIN_TEXT_SIZE, MAX_TEXT_SIZE);
+        }
+        Item::Shape(s) => {
+            s.rect = [tx(s.rect[0]), ty(s.rect[1]), tx(s.rect[2]), ty(s.rect[3])];
+        }
+    }
+    out
+}
+
+/// Clamp an item's geometry to the page after a scale.
+fn clamp_item_to_page(mut item: Item, w: f32, h: f32) -> Item {
+    match &mut item {
+        Item::Stroke(s) => {
+            for p in &mut s.points {
+                p[0] = p[0].clamp(0.0, w);
+                p[1] = p[1].clamp(0.0, h);
+            }
+        }
+        Item::Text(t) => {
+            t.pos[0] = t.pos[0].clamp(0.0, w);
+            t.pos[1] = t.pos[1].clamp(0.0, h);
+        }
+        Item::Shape(s) => {
+            s.rect[0] = s.rect[0].clamp(0.0, w);
+            s.rect[1] = s.rect[1].clamp(0.0, h);
+            s.rect[2] = s.rect[2].clamp(0.0, w);
+            s.rect[3] = s.rect[3].clamp(0.0, h);
+        }
+    }
+    item
+}
+
 /// True if two items have identical geometry (used to skip no-op moves).
 fn item_geometry_eq(a: &Item, b: &Item) -> bool {
     match (a, b) {
         (Item::Stroke(x), Item::Stroke(y)) => x.points == y.points,
-        (Item::Text(x), Item::Text(y)) => x.pos == y.pos,
+        (Item::Text(x), Item::Text(y)) => x.pos == y.pos && x.size == y.size,
         (Item::Shape(x), Item::Shape(y)) => x.rect == y.rect,
         _ => false,
     }
@@ -790,15 +1075,15 @@ fn text_hit(t: &Text, x: f32, y: f32, radius: f32) -> bool {
 
 // ---------- drawing ----------
 
-fn draw_item(ctx: &CanvasRenderingContext2d, item: &Item) {
+fn draw_item(ctx: &CanvasRenderingContext2d, item: &Item, pal: Palette) {
     match item {
-        Item::Stroke(s) => draw_stroke(ctx, s),
-        Item::Text(t) => draw_text(ctx, t),
-        Item::Shape(s) => draw_shape(ctx, s),
+        Item::Stroke(s) => draw_stroke(ctx, s, pal),
+        Item::Text(t) => draw_text(ctx, t, pal),
+        Item::Shape(s) => draw_shape(ctx, s, pal),
     }
 }
 
-fn draw_shape(ctx: &CanvasRenderingContext2d, s: &Shape) {
+fn draw_shape(ctx: &CanvasRenderingContext2d, s: &Shape, pal: Palette) {
     let [x0, y0, x1, y1] = s.rect.map(f64::from);
     let (lo_x, hi_x) = (x0.min(x1), x0.max(x1));
     let (lo_y, hi_y) = (y0.min(y1), y0.max(y1));
@@ -807,12 +1092,12 @@ fn draw_shape(ctx: &CanvasRenderingContext2d, s: &Shape) {
         // Highlight box: translucent marker tint over the region.
         ctx.set_global_alpha(HIGHLIGHT_ALPHA);
         ctx.set_global_composite_operation("multiply").ok();
-        ctx.set_fill_style_str(s.color.highlight_css());
+        ctx.set_fill_style_str(s.color.highlight_css(pal));
         ctx.fill_rect(lo_x, lo_y, hi_x - lo_x, hi_y - lo_y);
         ctx.restore();
         return;
     }
-    ctx.set_stroke_style_str(s.color.css());
+    ctx.set_stroke_style_str(s.color.css(pal));
     ctx.set_line_width(f64::from(s.width));
     ctx.begin_path();
     match s.kind {
@@ -853,7 +1138,7 @@ fn draw_shape(ctx: &CanvasRenderingContext2d, s: &Shape) {
     ctx.restore();
 }
 
-fn draw_stroke(ctx: &CanvasRenderingContext2d, s: &Stroke) {
+fn draw_stroke(ctx: &CanvasRenderingContext2d, s: &Stroke, pal: Palette) {
     if s.points.is_empty() {
         return;
     }
@@ -862,9 +1147,9 @@ fn draw_stroke(ctx: &CanvasRenderingContext2d, s: &Stroke) {
         ctx.set_global_alpha(HIGHLIGHT_ALPHA);
         ctx.set_global_composite_operation("multiply").ok();
         // Marker tints: dark pen colors make unreadable highlights.
-        ctx.set_stroke_style_str(s.color.highlight_css());
+        ctx.set_stroke_style_str(s.color.highlight_css(pal));
     } else {
-        ctx.set_stroke_style_str(s.color.css());
+        ctx.set_stroke_style_str(s.color.css(pal));
     }
     ctx.set_line_width(s.width as f64);
     ctx.begin_path();
@@ -881,9 +1166,9 @@ fn draw_stroke(ctx: &CanvasRenderingContext2d, s: &Stroke) {
     ctx.restore();
 }
 
-fn draw_text(ctx: &CanvasRenderingContext2d, t: &Text) {
+fn draw_text(ctx: &CanvasRenderingContext2d, t: &Text, pal: Palette) {
     ctx.save();
-    ctx.set_fill_style_str(t.color.css());
+    ctx.set_fill_style_str(t.color.css(pal));
     // Font string built only from a clamped number + fixed family. Text content
     // goes through fill_text (pure canvas drawing) — XSS is structurally impossible.
     ctx.set_font(&format!(
@@ -1152,6 +1437,108 @@ mod tests {
         } else {
             panic!("expected text");
         }
+    }
+
+    #[test]
+    fn resize_scales_and_undoes() {
+        let mut a = app_with_page();
+        a.set_tool("rect");
+        a.pointer_down(0, 100.0, 100.0, 8.0);
+        a.pointer_move(200.0, 150.0, 8.0);
+        a.pointer_up();
+        let id = a.find_item(0, 150.0, 125.0);
+        let bb = a.item_bbox_of(0, id);
+        assert_eq!(bb, vec![100.0, 100.0, 200.0, 150.0]);
+        assert_eq!(a.item_kind(0, id), "shape");
+        // resize about top-left anchor, 2x in both axes
+        a.begin_item_drag(0, id, 200.0, 150.0);
+        a.scale_dragged_item(100.0, 100.0, 2.0, 2.0);
+        a.end_item_drag();
+        assert_eq!(a.item_bbox_of(0, id), vec![100.0, 100.0, 300.0, 200.0]);
+        a.undo();
+        assert_eq!(a.item_bbox_of(0, id), vec![100.0, 100.0, 200.0, 150.0]);
+    }
+
+    #[test]
+    fn text_resize_changes_font_size_one_undo() {
+        let mut a = app_with_page();
+        a.add_text(0, 100.0, 100.0, "hi").unwrap();
+        let id = a.find_item(0, 102.0, 95.0);
+        a.begin_item_drag(0, id, 100.0, 100.0);
+        a.scale_dragged_item(100.0, 100.0, 1.5, 1.5);
+        a.end_item_drag();
+        if let Item::Text(t) = &a.doc.pages[0].items[0] {
+            assert!((t.size - 24.0).abs() < 0.01);
+        } else {
+            panic!()
+        }
+        a.undo();
+        if let Item::Text(t) = &a.doc.pages[0].items[0] {
+            assert!((t.size - 16.0).abs() < 0.01);
+        } else {
+            panic!()
+        }
+    }
+
+    #[test]
+    fn delete_item_is_undoable() {
+        let mut a = app_with_page();
+        a.add_text(0, 50.0, 50.0, "bye").unwrap();
+        let id = a.find_item(0, 52.0, 46.0);
+        assert!(a.delete_item(0, id));
+        assert_eq!(a.doc.pages[0].items.len(), 0);
+        a.undo();
+        assert_eq!(a.doc.pages[0].items.len(), 1);
+        assert!(!a.delete_item(0, 999.0));
+    }
+
+    #[test]
+    fn notes_blocks_roundtrip_and_validate() {
+        let mut a = app_with_page();
+        let i = a.add_text_note("first thought\nsecond line").unwrap();
+        let j = a.add_clipping("aGVsbG8=", 0, "eq (3)").unwrap();
+        assert_eq!(a.notes_len(), 2);
+        assert_eq!(a.note_kind(i), "text");
+        assert_eq!(a.note_kind(j), "clipping");
+        a.update_note_text(i, "edited \u{202E}clean").unwrap();
+        assert_eq!(a.note_text(i), "edited clean"); // bidi stripped
+        assert!(a.add_clipping("<bad>", 0, "x").is_err());
+        assert!(a.move_note(j, -1));
+        assert_eq!(a.note_kind(0), "clipping");
+        let json = a.save_json().unwrap();
+        let mut b = App::new();
+        b.load_json(&json).unwrap();
+        assert_eq!(b.notes_len(), 2);
+        assert_eq!(b.note_caption(0), "eq (3)");
+        assert!(b.remove_note(0));
+        assert_eq!(b.notes_len(), 1);
+    }
+
+    #[test]
+    fn palette_switch_changes_rendering_not_document() {
+        let mut a = app_with_page();
+        a.set_color("green");
+        a.pointer_down(0, 10.0, 10.0, 8.0);
+        a.pointer_up();
+        let standard = a.export_pdf_ops(0);
+        assert!(a.set_palette("safe"));
+        let safe = a.export_pdf_ops(0);
+        assert_ne!(standard, safe, "safe palette must change emitted colors");
+        assert!(safe.contains("0.55 0.32 0.04"), "green renders as brown");
+        // document unchanged: same JSON either way
+        let j1 = a.save_json().unwrap();
+        a.set_palette("standard");
+        let j2 = a.save_json().unwrap();
+        assert_eq!(j1, j2);
+        assert!(!a.set_palette("neon"));
+    }
+
+    #[test]
+    fn note_text_block_ops_escapes() {
+        let a = App::new();
+        let ops = a.note_text_block_ops("line (1)\n) Tj /evil (", 50.0, 700.0, 11.0);
+        assert!(ops.contains(r"(line \(1\)) Tj"));
+        assert!(ops.contains(r"(\) Tj /evil \() Tj"));
     }
 
     #[test]

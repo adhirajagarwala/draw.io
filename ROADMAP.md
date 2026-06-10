@@ -1,5 +1,8 @@
 # Roadmap — deferred items from review
 
+**Status: all six items below are now implemented** (see README for usage).
+This document is kept for the design rationale.
+
 Each item: what it is, the conventional approach, the approach we actually
 plan to take (and why), and an effectiveness/cost judgement.
 

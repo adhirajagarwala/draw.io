@@ -12,7 +12,12 @@ pub const MAX_STROKE_WIDTH: f32 = 30.0;
 pub const MIN_TEXT_SIZE: f32 = 6.0;
 pub const MAX_TEXT_SIZE: f32 = 72.0;
 pub const MAX_PAGE_DIM: f32 = 20_000.0;
-pub const MAX_JSON_BYTES: usize = 10 * 1024 * 1024;
+pub const MAX_JSON_BYTES: usize = 30 * 1024 * 1024;
+pub const MAX_NOTE_BLOCKS: usize = 500;
+pub const MAX_NOTE_TEXT_LEN: usize = 20_000;
+pub const MAX_CAPTION_LEN: usize = 300;
+/// Per-clipping cap on base64 PNG payload (~1.5 MB of image data).
+pub const MAX_CLIPPING_B64: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Color {
@@ -23,50 +28,91 @@ pub enum Color {
     Yellow,
 }
 
+/// Color palette. Files store semantic color *names* (the `Color` enum), so
+/// a document made in one palette renders correctly in the other. `Safe` is
+/// based on the Okabe–Ito colorblind-safe set (green becomes brown, red
+/// becomes vermillion) so red/green confusion never hides meaning.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Palette {
+    #[default]
+    Standard,
+    Safe,
+}
+
+impl Palette {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "standard" => Some(Palette::Standard),
+            "safe" => Some(Palette::Safe),
+            _ => None,
+        }
+    }
+}
+
 impl Color {
-    /// Closed enum -> fixed CSS strings. User input can never inject CSS.
-    pub fn css(self) -> &'static str {
-        match self {
-            Color::Black => "#1a1a1a",
-            Color::Red => "#d32f2f",
-            Color::Blue => "#1565c0",
-            Color::Green => "#2e7d32",
-            Color::Yellow => "#f9d000",
+    /// Closed enums -> fixed CSS strings. User input can never inject CSS.
+    pub fn css(self, p: Palette) -> &'static str {
+        match (p, self) {
+            (Palette::Standard, Color::Black) => "#1a1a1a",
+            (Palette::Standard, Color::Red) => "#d32f2f",
+            (Palette::Standard, Color::Blue) => "#1565c0",
+            (Palette::Standard, Color::Green) => "#2e7d32",
+            (Palette::Standard, Color::Yellow) => "#f9d000",
+            (Palette::Safe, Color::Black) => "#1a1a1a",
+            (Palette::Safe, Color::Red) => "#d55e00", // vermillion
+            (Palette::Safe, Color::Blue) => "#0072b2",
+            (Palette::Safe, Color::Green) => "#8c510a", // brown
+            (Palette::Safe, Color::Yellow) => "#e69f00",
         }
     }
 
     /// RGB components in `0..=1`, matching [`Color::css`]. Used for PDF export.
-    pub fn rgb(self) -> (f32, f32, f32) {
-        match self {
-            Color::Black => (0.102, 0.102, 0.102),
-            Color::Red => (0.827, 0.184, 0.184),
-            Color::Blue => (0.082, 0.396, 0.753),
-            Color::Green => (0.180, 0.490, 0.196),
-            Color::Yellow => (0.976, 0.816, 0.000),
+    pub fn rgb(self, p: Palette) -> (f32, f32, f32) {
+        match (p, self) {
+            (Palette::Standard, Color::Black) => (0.102, 0.102, 0.102),
+            (Palette::Standard, Color::Red) => (0.827, 0.184, 0.184),
+            (Palette::Standard, Color::Blue) => (0.082, 0.396, 0.753),
+            (Palette::Standard, Color::Green) => (0.180, 0.490, 0.196),
+            (Palette::Standard, Color::Yellow) => (0.976, 0.816, 0.000),
+            (Palette::Safe, Color::Black) => (0.102, 0.102, 0.102),
+            (Palette::Safe, Color::Red) => (0.835, 0.369, 0.000),
+            (Palette::Safe, Color::Blue) => (0.000, 0.447, 0.698),
+            (Palette::Safe, Color::Green) => (0.549, 0.319, 0.039),
+            (Palette::Safe, Color::Yellow) => (0.902, 0.624, 0.000),
         }
     }
 
     /// Lighter, saturated tints used by the highlighter and highlight boxes.
     /// Dark pen colors make unreadable highlights, so each color maps to a
     /// marker-style tint instead (matching [`Color::highlight_css`]).
-    pub fn highlight_rgb(self) -> (f32, f32, f32) {
-        match self {
-            Color::Black => (0.62, 0.62, 0.62),
-            Color::Red => (0.957, 0.561, 0.694),
-            Color::Blue => (0.310, 0.765, 0.969),
-            Color::Green => (0.565, 0.933, 0.565),
-            Color::Yellow => (0.976, 0.816, 0.000),
+    pub fn highlight_rgb(self, p: Palette) -> (f32, f32, f32) {
+        match (p, self) {
+            (Palette::Standard, Color::Black) => (0.62, 0.62, 0.62),
+            (Palette::Standard, Color::Red) => (0.957, 0.561, 0.694),
+            (Palette::Standard, Color::Blue) => (0.310, 0.765, 0.969),
+            (Palette::Standard, Color::Green) => (0.565, 0.933, 0.565),
+            (Palette::Standard, Color::Yellow) => (0.976, 0.816, 0.000),
+            (Palette::Safe, Color::Black) => (0.62, 0.62, 0.62),
+            (Palette::Safe, Color::Red) => (0.969, 0.722, 0.612),
+            (Palette::Safe, Color::Blue) => (0.498, 0.769, 0.910),
+            (Palette::Safe, Color::Green) => (0.824, 0.651, 0.475),
+            (Palette::Safe, Color::Yellow) => (0.941, 0.823, 0.537),
         }
     }
 
-    /// CSS form of [`Color::highlight_rgb`]. Closed enum — fixed strings only.
-    pub fn highlight_css(self) -> &'static str {
-        match self {
-            Color::Black => "#9e9e9e",
-            Color::Red => "#f48fb1",
-            Color::Blue => "#4fc3f7",
-            Color::Green => "#90ee90",
-            Color::Yellow => "#f9d000",
+    /// CSS form of [`Color::highlight_rgb`]. Closed enums — fixed strings only.
+    pub fn highlight_css(self, p: Palette) -> &'static str {
+        match (p, self) {
+            (Palette::Standard, Color::Black) => "#9e9e9e",
+            (Palette::Standard, Color::Red) => "#f48fb1",
+            (Palette::Standard, Color::Blue) => "#4fc3f7",
+            (Palette::Standard, Color::Green) => "#90ee90",
+            (Palette::Standard, Color::Yellow) => "#f9d000",
+            (Palette::Safe, Color::Black) => "#9e9e9e",
+            (Palette::Safe, Color::Red) => "#f7b89c",
+            (Palette::Safe, Color::Blue) => "#7fc4e8",
+            (Palette::Safe, Color::Green) => "#d2a679",
+            (Palette::Safe, Color::Yellow) => "#f0d289",
         }
     }
 
@@ -168,12 +214,31 @@ impl Page {
     }
 }
 
+/// A block in the side-by-side working document ("notes"): either a chunk
+/// of plain text or a clipping snipped from the paper (stored as base64 PNG).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum NoteBlock {
+    Text {
+        content: String,
+    },
+    Clipping {
+        png_b64: String,
+        source_page: u32,
+        caption: String,
+    },
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
     pub version: u32,
     pub pdf_sha256: String,
     pub pages: Vec<Page>,
+    /// Working-document blocks. `default` keeps files from older versions
+    /// loading unchanged.
+    #[serde(default)]
+    pub notes: Vec<NoteBlock>,
 }
 
 impl Document {
@@ -182,6 +247,7 @@ impl Document {
             version: DOC_VERSION,
             pdf_sha256: String::new(),
             pages: Vec::new(),
+            notes: Vec::new(),
         }
     }
 }
@@ -214,10 +280,25 @@ pub fn is_forbidden_text_char(c: char) -> bool {
 /// Strip forbidden characters and cap length. Used for every path that
 /// accepts text typed by (or loaded for) the user.
 pub fn sanitize_text(s: &str) -> String {
+    sanitize_text_capped(s, MAX_TEXT_LEN)
+}
+
+/// As [`sanitize_text`] with an explicit cap (notes blocks are longer).
+pub fn sanitize_text_capped(s: &str, cap: usize) -> String {
     s.chars()
         .filter(|c| !is_forbidden_text_char(*c))
-        .take(MAX_TEXT_LEN)
+        .take(cap)
         .collect()
+}
+
+/// Validate a base64 payload: charset only (standard alphabet + padding) and
+/// length cap. We never decode it in Rust — the host displays it — so a
+/// malformed payload can at worst fail to render as an image.
+pub fn valid_b64_png(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= MAX_CLIPPING_B64
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
 }
 
 /// Strict validation of a deserialized document. Rejects on any violation;
@@ -231,6 +312,38 @@ pub fn validate(doc: &mut Document) -> Result<(), String> {
     }
     if doc.pages.len() > MAX_PAGES {
         return Err("too many pages".into());
+    }
+    if doc.notes.len() > MAX_NOTE_BLOCKS {
+        return Err("too many note blocks".into());
+    }
+    for block in &doc.notes {
+        match block {
+            NoteBlock::Text { content } => {
+                if content.chars().count() > MAX_NOTE_TEXT_LEN {
+                    return Err("note text too long".into());
+                }
+                if content.chars().any(is_forbidden_text_char) {
+                    return Err("forbidden characters in note".into());
+                }
+            }
+            NoteBlock::Clipping {
+                png_b64,
+                source_page,
+                caption,
+            } => {
+                if !valid_b64_png(png_b64) {
+                    return Err("invalid clipping image data".into());
+                }
+                if *source_page as usize >= MAX_PAGES {
+                    return Err("clipping source page out of range".into());
+                }
+                if caption.chars().count() > MAX_CAPTION_LEN
+                    || caption.chars().any(is_forbidden_text_char)
+                {
+                    return Err("invalid clipping caption".into());
+                }
+            }
+        }
     }
     let mut seen_ids = std::collections::HashSet::new();
     for page in &mut doc.pages {
@@ -321,7 +434,43 @@ mod tests {
                 height: 800.0,
                 items,
             }],
+            notes: Vec::new(),
         }
+    }
+
+    #[test]
+    fn notes_validation() {
+        let mut d = doc_with(vec![]);
+        d.notes.push(NoteBlock::Text {
+            content: "good point about Q3\nfollow up".into(),
+        });
+        d.notes.push(NoteBlock::Clipping {
+            png_b64: "iVBORw0KGgoAAAANSUhEUg==".into(),
+            source_page: 2,
+            caption: "eq. 4".into(),
+        });
+        assert!(validate(&mut d).is_ok());
+
+        // hostile payloads rejected
+        d.notes.push(NoteBlock::Clipping {
+            png_b64: "<script>".into(),
+            source_page: 0,
+            caption: String::new(),
+        });
+        assert!(validate(&mut d).is_err());
+        d.notes.pop();
+        d.notes.push(NoteBlock::Text {
+            content: "evil \u{202E}".into(),
+        });
+        assert!(validate(&mut d).is_err());
+    }
+
+    #[test]
+    fn old_files_without_notes_still_load() {
+        let json = r#"{"version":1,"pdf_sha256":"","pages":[]}"#;
+        let mut d: Document = serde_json::from_str(json).unwrap();
+        assert!(validate(&mut d).is_ok());
+        assert!(d.notes.is_empty());
     }
 
     #[test]
