@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; img-src 'self' blob:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+  <title>Scribble — annotate your question paper</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="toolbar">
+    <div class="brand"><svg viewBox="0 0 24 24"><path d="M3 17c3-6 5-8 6-7s-2 6-1 7 4-3 5-2-1 4 0 4 3-2 8-3"/></svg>Scribble</div>
+
+    <div class="group">
+      <button id="btn-open" class="btn labeled" title="Open question paper (PDF)">
+        <svg viewBox="0 0 24 24"><path d="M4 20V4a1 1 0 0 1 1-1h8l6 6v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M13 3v6h6"/></svg>
+        Open PDF
+      </button>
+    </div>
+
+    <div class="group" id="tools">
+      <button class="btn tool active" data-tool="pen" title="Draw freehand (P)">
+        <svg viewBox="0 0 24 24"><path d="M16.5 3.5l4 4L8 20l-5 1 1-5L16.5 3.5z"/></svg>
+        Pen
+      </button>
+      <button class="btn tool" data-tool="highlighter" title="Highlight text (H)">
+        <svg viewBox="0 0 24 24"><path d="M14.5 4.5l5 5L9 20H5v-4L14.5 4.5z"/><path d="M3 22h9"/></svg>
+        Highlight
+      </button>
+      <button class="btn tool" data-tool="text" title="Click the page and type a note (T)">
+        <svg viewBox="0 0 24 24"><path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/></svg>
+        Text
+      </button>
+      <button class="btn tool" data-tool="eraser" title="Remove strokes and notes (E)">
+        <svg viewBox="0 0 24 24"><path d="M14 4l6 6-9 9H7l-4-4L14 4z"/><path d="M9 19h12"/></svg>
+        Erase
+      </button>
+    </div>
+
+    <div class="group" id="shapes">
+      <button class="btn tool" data-tool="tick" title="Tick mark — click or drag on the page">
+        <svg viewBox="0 0 24 24"><path d="M4 13l5 5L20 6"/></svg>
+      </button>
+      <button class="btn tool" data-tool="cross" title="Cross mark — click or drag on the page">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>
+      </button>
+      <button class="btn tool" data-tool="circle" title="Circle — drag around what you want to mark">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/></svg>
+      </button>
+      <button class="btn tool" data-tool="arrow" title="Arrow — drag from tail to tip">
+        <svg viewBox="0 0 24 24"><path d="M5 19L19 5"/><path d="M11 5h8v8"/></svg>
+      </button>
+    </div>
+
+    <div class="group" id="widths" title="Line thickness">
+      <button class="btn width" data-width="thin" title="Thin line"><span class="dot d1"></span></button>
+      <button class="btn width active" data-width="medium" title="Medium line"><span class="dot d2"></span></button>
+      <button class="btn width" data-width="thick" title="Thick line"><span class="dot d3"></span></button>
+    </div>
+
+    <div class="group" id="colors">
+      <button class="swatch active" data-color="black" title="Black"></button>
+      <button class="swatch" data-color="red" title="Red"></button>
+      <button class="swatch" data-color="blue" title="Blue"></button>
+      <button class="swatch" data-color="green" title="Green"></button>
+      <button class="swatch" data-color="yellow" title="Yellow"></button>
+    </div>
+
+    <div class="group">
+      <button id="btn-undo" class="btn" title="Undo (Ctrl/Cmd+Z)" disabled>
+        <svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 1 3 6.7"/></svg>
+        Undo
+      </button>
+      <button id="btn-redo" class="btn" title="Redo (Ctrl/Cmd+Shift+Z)" disabled>
+        <svg viewBox="0 0 24 24"><path d="M21 7v6h-6"/><path d="M21 13a9 9 0 1 0-3 6.7"/></svg>
+        Redo
+      </button>
+    </div>
+
+    <div class="group">
+      <button id="btn-prev" class="btn" title="Previous page" disabled>
+        <svg viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6"/></svg>
+      </button>
+      <span class="readout" id="page-indicator">– / –</span>
+      <button id="btn-next" class="btn" title="Next page" disabled>
+        <svg viewBox="0 0 24 24"><path d="M10 6l6 6-6 6"/></svg>
+      </button>
+    </div>
+
+    <div class="group">
+      <button id="btn-zoom-out" class="btn" title="Zoom out" disabled>
+        <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
+      </button>
+      <span class="readout" id="zoom-indicator">100%</span>
+      <button id="btn-zoom-in" class="btn" title="Zoom in" disabled>
+        <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+      </button>
+    </div>
+
+    <div class="group push">
+      <button id="btn-save" class="btn labeled" title="Save your work to continue later (.json)" disabled>
+        <svg viewBox="0 0 24 24"><path d="M5 3h11l5 5v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 3v5h7V3"/><path d="M7 21v-7h10v7"/></svg>
+        Save work
+      </button>
+      <button id="btn-load" class="btn labeled" title="Re-open a saved work file (.json) to continue where you left off" disabled>
+        <svg viewBox="0 0 24 24"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v2"/><path d="M3 7h18l-2 12H5L3 7z"/></svg>
+        Resume
+      </button>
+      <button id="btn-export" class="btn primary labeled" title="Export the annotated paper as a PDF" disabled>
+        <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
+        Export PDF
+      </button>
+    </div>
+  </header>
+
+  <main id="viewer">
+    <p id="placeholder">Open a question paper (PDF) to start scribbling.</p>
+    <div id="page-wrap" hidden>
+      <canvas id="pdf-canvas"></canvas>
+      <canvas id="anno-canvas"></canvas>
+      <input id="text-input" type="text" maxlength="500" hidden
+             autocomplete="off" spellcheck="false" placeholder="Type, press Enter">
+    </div>
+  </main>
+
+  <div id="status" role="status" aria-live="polite"></div>
+
+  <input id="file-pdf" type="file" accept=".pdf,application/pdf" hidden>
+  <input id="file-json" type="file" accept=".json,application/json" hidden>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

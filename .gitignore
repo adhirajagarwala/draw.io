@@ -1,0 +1,13 @@
+# build artifacts
+scribble/target/
+*.log
+
+# local test files — never commit student papers or annotations
+test-paper.pdf
+*.json.bak
+annotations-*.json
+annotated-*.pdf
+
+# OS noise
+.DS_Store
+Thumbs.db
