@@ -67,8 +67,18 @@ fn stroke_ops(out: &mut String, s: &Stroke, h: f32) {
     out.push_str("q\n");
     if s.kind == PenKind::Highlighter {
         let _ = writeln!(out, "/{HIGHLIGHT_GSTATE} gs");
+        let (r, g, b) = s.color.highlight_rgb();
+        let _ = writeln!(
+            out,
+            "{} {} {} RG {} w 1 J 1 j",
+            num(r),
+            num(g),
+            num(b),
+            num(s.width)
+        );
+    } else {
+        set_stroke(out, s.color, s.width);
     }
-    set_stroke(out, s.color, s.width);
     let p0 = s.points[0];
     let _ = writeln!(out, "{} {} m", num(p0[0]), num(h - p0[1]));
     if s.points.len() == 1 {
@@ -94,9 +104,39 @@ fn line(out: &mut String, x0: f32, y0: f32, x1: f32, y1: f32, h: f32) {
 
 fn shape_ops(out: &mut String, s: &Shape, h: f32) {
     let [x0, y0, x1, y1] = s.rect;
+    let (lo_x, hi_x) = (x0.min(x1), x0.max(x1));
+    let (lo_y, hi_y) = (y0.min(y1), y0.max(y1));
+    if s.kind == ShapeKind::FillRect {
+        // Highlight box: translucent fill via the highlight ExtGState.
+        let (r, g, b) = s.color.highlight_rgb();
+        out.push_str("q\n");
+        let _ = writeln!(out, "/{HIGHLIGHT_GSTATE} gs");
+        let _ = writeln!(out, "{} {} {} rg", num(r), num(g), num(b));
+        let _ = writeln!(
+            out,
+            "{} {} {} {} re f",
+            num(lo_x),
+            num(h - hi_y),
+            num(hi_x - lo_x),
+            num(hi_y - lo_y)
+        );
+        out.push_str("Q\n");
+        return;
+    }
     out.push_str("q\n");
     set_stroke(out, s.color, s.width);
     match s.kind {
+        ShapeKind::FillRect => unreachable!("handled above"),
+        ShapeKind::Rect => {
+            let _ = writeln!(
+                out,
+                "{} {} {} {} re",
+                num(lo_x),
+                num(h - hi_y),
+                num(hi_x - lo_x),
+                num(hi_y - lo_y)
+            );
+        }
         ShapeKind::Circle => {
             // Ellipse inscribed in the normalized rect, four Bézier arcs.
             let (lo_x, hi_x) = (x0.min(x1), x0.max(x1));

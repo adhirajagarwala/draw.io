@@ -20,36 +20,46 @@
     </div>
 
     <div class="group" id="tools">
-      <button class="btn tool active" data-tool="pen" title="Draw freehand (P)">
+      <button class="btn tool" data-tool="select" title="Select — move any annotation, click a note to edit it (shortcut: V)">
+        <svg viewBox="0 0 24 24"><path d="M6 3l12 9-6 1 3 6-3 1-3-6-4 4V3z"/></svg>
+        Select
+      </button>
+      <button class="btn tool active" data-tool="pen" title="Pen — draw freehand (shortcut: P)">
         <svg viewBox="0 0 24 24"><path d="M16.5 3.5l4 4L8 20l-5 1 1-5L16.5 3.5z"/></svg>
         Pen
       </button>
-      <button class="btn tool" data-tool="highlighter" title="Highlight text (H)">
+      <button class="btn tool" data-tool="highlighter" title="Highlighter — draw translucent marker lines (shortcut: H)">
         <svg viewBox="0 0 24 24"><path d="M14.5 4.5l5 5L9 20H5v-4L14.5 4.5z"/><path d="M3 22h9"/></svg>
         Highlight
       </button>
-      <button class="btn tool" data-tool="text" title="Click the page and type a note (T)">
+      <button class="btn tool" data-tool="text" title="Text note — click the page and type (shortcut: T)">
         <svg viewBox="0 0 24 24"><path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/></svg>
         Text
       </button>
-      <button class="btn tool" data-tool="eraser" title="Remove strokes and notes (E)">
+      <button class="btn tool" data-tool="eraser" title="Eraser — removes whole strokes, notes and marks (shortcut: E)">
         <svg viewBox="0 0 24 24"><path d="M14 4l6 6-9 9H7l-4-4L14 4z"/><path d="M9 19h12"/></svg>
         Erase
       </button>
     </div>
 
     <div class="group" id="shapes">
-      <button class="btn tool" data-tool="tick" title="Tick mark — click or drag on the page">
+      <button class="btn tool" data-tool="tick" title="Tick mark — click to place, drag to size">
         <svg viewBox="0 0 24 24"><path d="M4 13l5 5L20 6"/></svg>
       </button>
-      <button class="btn tool" data-tool="cross" title="Cross mark — click or drag on the page">
+      <button class="btn tool" data-tool="cross" title="Cross mark — click to place, drag to size">
         <svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>
       </button>
-      <button class="btn tool" data-tool="circle" title="Circle — drag around what you want to mark">
+      <button class="btn tool" data-tool="circle" title="Circle — drag around the region to mark">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/></svg>
       </button>
       <button class="btn tool" data-tool="arrow" title="Arrow — drag from tail to tip">
         <svg viewBox="0 0 24 24"><path d="M5 19L19 5"/><path d="M11 5h8v8"/></svg>
+      </button>
+      <button class="btn tool" data-tool="rect" title="Box — drag around the region to outline">
+        <svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/></svg>
+      </button>
+      <button class="btn tool" data-tool="fillrect" title="Highlight box — drag to tint a whole region">
+        <svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/><path d="M4 6l16 12M10 6L4 11M20 13l-7 5"/></svg>
       </button>
     </div>
 
@@ -68,22 +78,26 @@
     </div>
 
     <div class="group">
-      <button id="btn-undo" class="btn" title="Undo (Ctrl/Cmd+Z)" disabled>
+      <button id="btn-undo" class="btn" title="Undo (shortcut: Ctrl/Cmd+Z)" disabled>
         <svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 1 3 6.7"/></svg>
         Undo
       </button>
-      <button id="btn-redo" class="btn" title="Redo (Ctrl/Cmd+Shift+Z)" disabled>
+      <button id="btn-redo" class="btn" title="Redo (shortcut: Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)" disabled>
         <svg viewBox="0 0 24 24"><path d="M21 7v6h-6"/><path d="M21 13a9 9 0 1 0-3 6.7"/></svg>
         Redo
       </button>
     </div>
 
     <div class="group">
-      <button id="btn-prev" class="btn" title="Previous page" disabled>
+      <button id="btn-prev" class="btn" title="Previous page (PageUp at top of page)" disabled>
         <svg viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6"/></svg>
       </button>
-      <span class="readout" id="page-indicator">– / –</span>
-      <button id="btn-next" class="btn" title="Next page" disabled>
+      <span class="readout">
+        <input id="page-input" type="number" min="1" value="1" disabled
+               title="Type a page number and press Enter">
+        <span id="page-count">/ –</span>
+      </span>
+      <button id="btn-next" class="btn" title="Next page (PageDown at bottom of page)" disabled>
         <svg viewBox="0 0 24 24"><path d="M10 6l6 6-6 6"/></svg>
       </button>
     </div>
@@ -92,14 +106,24 @@
       <button id="btn-zoom-out" class="btn" title="Zoom out" disabled>
         <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
       </button>
-      <span class="readout" id="zoom-indicator">100%</span>
+      <select id="zoom-select" title="Zoom level" disabled>
+        <option value="fit-width">Fit width</option>
+        <option value="fit-page">Fit page</option>
+        <option value="0.5">50%</option>
+        <option value="0.75">75%</option>
+        <option value="1" selected>100%</option>
+        <option value="1.25">125%</option>
+        <option value="1.5">150%</option>
+        <option value="2">200%</option>
+        <option value="3">300%</option>
+      </select>
       <button id="btn-zoom-in" class="btn" title="Zoom in" disabled>
         <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
       </button>
     </div>
 
     <div class="group push">
-      <button id="btn-save" class="btn labeled" title="Save your work to continue later (.json)" disabled>
+      <button id="btn-save" class="btn labeled" title="Save your work to a file you can resume from later (shortcut: Ctrl/Cmd+S)" disabled>
         <svg viewBox="0 0 24 24"><path d="M5 3h11l5 5v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 3v5h7V3"/><path d="M7 21v-7h10v7"/></svg>
         Save work
       </button>
@@ -107,7 +131,7 @@
         <svg viewBox="0 0 24 24"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v2"/><path d="M3 7h18l-2 12H5L3 7z"/></svg>
         Resume
       </button>
-      <button id="btn-export" class="btn primary labeled" title="Export the annotated paper as a PDF" disabled>
+      <button id="btn-export" class="btn primary labeled" title="Final step: download the annotated paper as a PDF (highlighted because it's the main output)" disabled>
         <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
         Export PDF
       </button>

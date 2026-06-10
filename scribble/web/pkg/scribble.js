@@ -214,10 +214,10 @@ export class App {
         }
     }
     /**
-     * Finish a drag, recording it as a single undoable step.
+     * Finish a move, recording it as a single undoable step.
      */
-    end_text_drag() {
-        wasm.app_end_text_drag(this.__wbg_ptr);
+    end_item_drag() {
+        wasm.app_end_item_drag(this.__wbg_ptr);
     }
     /**
      * Pen / shape stroke width by named size.
@@ -283,13 +283,16 @@ export class App {
         }
     }
     /**
-     * Start dragging a text note. Returns false if the id is unknown.
+     * Start moving an existing item (any kind). `x`, `y` is the grab point.
+     * Returns false if the id is unknown.
      * @param {number} page
      * @param {number} id
+     * @param {number} x
+     * @param {number} y
      * @returns {boolean}
      */
-    begin_text_drag(page, id) {
-        const ret = wasm.app_begin_text_drag(this.__wbg_ptr, page, id);
+    begin_item_drag(page, id, x, y) {
+        const ret = wasm.app_begin_item_drag(this.__wbg_ptr, page, id, x, y);
         return ret !== 0;
     }
     /**
@@ -328,6 +331,17 @@ export class App {
      */
     render(ctx, page, scale) {
         wasm.app_render(this.__wbg_ptr, ctx, page, scale);
+    }
+    /**
+     * True if the item with `id` is a text note (the host opens an editor
+     * for these on click instead of just moving them).
+     * @param {number} page
+     * @param {number} id
+     * @returns {boolean}
+     */
+    is_text(page, id) {
+        const ret = wasm.app_is_text(this.__wbg_ptr, page, id);
+        return ret !== 0;
     }
     /**
      * @param {number} page
@@ -387,22 +401,24 @@ export class App {
         return v1;
     }
     /**
-     * Move the dragged text note to (x, y). No-op if no drag is active.
+     * Move the dragged item with the pointer. The translation is clamped so
+     * the item's bounding box stays on the page (no distortion: the whole
+     * item moves rigidly from its original geometry).
      * @param {number} x
      * @param {number} y
      */
-    drag_text(x, y) {
-        wasm.app_drag_text(this.__wbg_ptr, x, y);
+    drag_item(x, y) {
+        wasm.app_drag_item(this.__wbg_ptr, x, y);
     }
     /**
-     * Topmost text note at (x, y), or -1 if there is none.
+     * Topmost item of any kind at (x, y), or -1 if there is none.
      * @param {number} page
      * @param {number} x
      * @param {number} y
      * @returns {number}
      */
-    find_text(page, x, y) {
-        const ret = wasm.app_find_text(this.__wbg_ptr, page, x, y);
+    find_item(page, x, y) {
+        const ret = wasm.app_find_item(this.__wbg_ptr, page, x, y);
         return ret;
     }
     /**
@@ -492,6 +508,9 @@ function __wbg_get_imports() {
     imports.wbg.__wbg_ellipse_95f0fe1a522875d7 = function() { return handleError(function (arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
         arg0.ellipse(arg1, arg2, arg3, arg4, arg5, arg6, arg7);
     }, arguments) };
+    imports.wbg.__wbg_fillRect_c38d5d56492a2368 = function(arg0, arg1, arg2, arg3, arg4) {
+        arg0.fillRect(arg1, arg2, arg3, arg4);
+    };
     imports.wbg.__wbg_fillText_2a0055d8531355d1 = function() { return handleError(function (arg0, arg1, arg2, arg3, arg4) {
         arg0.fillText(getStringFromWasm0(arg1, arg2), arg3, arg4);
     }, arguments) };
@@ -500,6 +519,9 @@ function __wbg_get_imports() {
     };
     imports.wbg.__wbg_moveTo_123c5e7629da2e1e = function(arg0, arg1, arg2) {
         arg0.moveTo(arg1, arg2);
+    };
+    imports.wbg.__wbg_rect_2e7beff911554fa5 = function(arg0, arg1, arg2, arg3, arg4) {
+        arg0.rect(arg1, arg2, arg3, arg4);
     };
     imports.wbg.__wbg_restore_cc5ae2746f7b5043 = function(arg0) {
         arg0.restore();

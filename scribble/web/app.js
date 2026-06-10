@@ -16,7 +16,9 @@ async function getPdfjs() {
 
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
 const MAX_PAGES = 100;
-const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 4;
+const FIT_MARGIN = 48; // px breathing room for fit modes
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -27,8 +29,10 @@ const els = {
   textInput: $("text-input"),
   filePdf: $("file-pdf"),
   fileJson: $("file-json"),
-  pageIndicator: $("page-indicator"),
-  zoomIndicator: $("zoom-indicator"),
+  pageInput: $("page-input"),
+  pageCount: $("page-count"),
+  zoomSelect: $("zoom-select"),
+  viewer: $("viewer"),
   status: $("status"),
   btn: {
     open: $("btn-open"), save: $("btn-save"), load: $("btn-load"),
@@ -42,11 +46,31 @@ const els = {
 let app;            // WASM App
 let pdfDoc = null;  // PDF.js document
 let pageNum = 0;    // 0-based current page
-let zoomIdx = 2;    // index into ZOOM_STEPS
 let drawing = false;
 let renderTask = null;
 
-const scale = () => ZOOM_STEPS[zoomIdx];
+// Zoom: a percentage, or a fit mode recomputed on resize.
+let zoomMode = "1"; // option value from the zoom <select>
+let currentScale = 1;   // effective CSS scale of the current page
+let basePage = { w: 1, h: 1 }; // current page size in PDF points
+
+const scale = () => currentScale;
+const dpr = () => Math.max(1, Math.min(4, window.devicePixelRatio || 1));
+
+function computeScale() {
+  if (zoomMode === "fit-width") {
+    return clampZoom((els.viewer.clientWidth - FIT_MARGIN) / basePage.w);
+  }
+  if (zoomMode === "fit-page") {
+    return clampZoom(Math.min(
+      (els.viewer.clientWidth - FIT_MARGIN) / basePage.w,
+      (els.viewer.clientHeight - FIT_MARGIN) / basePage.h,
+    ));
+  }
+  return clampZoom(parseFloat(zoomMode) || 1);
+}
+
+const clampZoom = (v) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v));
 
 let statusTimer;
 function status(msg) {
@@ -62,7 +86,9 @@ function redrawAnnotations() {
   const ctx = els.annoCanvas.getContext("2d");
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, els.annoCanvas.width, els.annoCanvas.height);
-  app.render(ctx, pageNum, scale());
+  // Backing store is scale*dpr for crisp output at any devicePixelRatio
+  // (including browser zoom); CSS shrinks it back to `scale`.
+  app.render(ctx, pageNum, scale() * dpr());
   els.btn.undo.disabled = !app.can_undo();
   els.btn.redo.disabled = !app.can_redo();
 }
@@ -72,12 +98,17 @@ async function renderPage() {
   commitTextInput();
   const page = await pdfDoc.getPage(pageNum + 1);
   const base = page.getViewport({ scale: 1 });
+  basePage = { w: base.width, h: base.height };
   app.ensure_page(pageNum, base.width, base.height);
-  const vp = page.getViewport({ scale: scale() });
+  currentScale = computeScale();
+  const ratio = dpr();
+  const vp = page.getViewport({ scale: currentScale * ratio });
   const w = Math.floor(vp.width), h = Math.floor(vp.height);
   for (const c of [els.pdfCanvas, els.annoCanvas]) {
     c.width = w;
     c.height = h;
+    c.style.width = `${Math.floor(w / ratio)}px`;
+    c.style.height = `${Math.floor(h / ratio)}px`;
   }
   if (renderTask) renderTask.cancel();
   renderTask = page.render({ canvasContext: els.pdfCanvas.getContext("2d"), viewport: vp });
@@ -88,13 +119,37 @@ async function renderPage() {
     return;
   }
   renderTask = null;
-  els.pageIndicator.textContent = `${pageNum + 1} / ${pdfDoc.numPages}`;
-  els.zoomIndicator.textContent = `${Math.round(scale() * 100)}%`;
+  els.pageInput.value = String(pageNum + 1);
+  els.pageInput.max = String(pdfDoc.numPages);
+  els.pageCount.textContent = `/ ${pdfDoc.numPages}`;
+  syncZoomSelect();
   els.btn.prev.disabled = pageNum === 0;
   els.btn.next.disabled = pageNum >= pdfDoc.numPages - 1;
-  els.btn.zoomOut.disabled = zoomIdx === 0;
-  els.btn.zoomIn.disabled = zoomIdx === ZOOM_STEPS.length - 1;
+  els.btn.zoomOut.disabled = currentScale <= ZOOM_MIN;
+  els.btn.zoomIn.disabled = currentScale >= ZOOM_MAX;
   redrawAnnotations();
+}
+
+// Reflect the effective zoom in the dropdown, even for fit modes.
+function syncZoomSelect() {
+  const sel = els.zoomSelect;
+  if (zoomMode === "fit-width" || zoomMode === "fit-page") {
+    sel.value = zoomMode;
+    const label = zoomMode === "fit-width" ? "Fit width" : "Fit page";
+    sel.options[sel.selectedIndex].textContent =
+      `${label} (${Math.round(currentScale * 100)}%)`;
+  } else {
+    const pct = `${Math.round(currentScale * 100)}%`;
+    let opt = [...sel.options].find((o) => o.value === String(currentScale));
+    if (!opt) {
+      opt = sel.querySelector("option[data-custom]") || document.createElement("option");
+      opt.dataset.custom = "1";
+      opt.value = String(currentScale);
+      opt.textContent = pct;
+      sel.appendChild(opt);
+    }
+    sel.value = opt.value;
+  }
 }
 
 // ---------- PDF loading ----------
@@ -131,12 +186,14 @@ async function openPdf(file) {
     app = new App(); // fresh document per PDF
     if (hash) app.set_pdf_sha256(hash);
     pageNum = 0;
-    zoomIdx = 2;
+    zoomMode = "1";
     els.placeholder.hidden = true;
     els.wrap.hidden = false;
     els.btn.save.disabled = false;
     els.btn.load.disabled = false;
     els.btn.export.disabled = false;
+    els.pageInput.disabled = false;
+    els.zoomSelect.disabled = false;
     await renderPage();
     status("PDF loaded. Scribble away!");
   } catch (e) {
@@ -148,8 +205,13 @@ async function openPdf(file) {
 // ---------- pointer input ----------
 
 function pageCoords(ev) {
+  // Map through the on-screen rect rather than assuming CSS px == scale —
+  // robust under devicePixelRatio changes and browser zoom.
   const r = els.annoCanvas.getBoundingClientRect();
-  return [(ev.clientX - r.left) / scale(), (ev.clientY - r.top) / scale()];
+  return [
+    ((ev.clientX - r.left) / r.width) * basePage.w,
+    ((ev.clientY - r.top) / r.height) * basePage.h,
+  ];
 }
 
 const eraseRadius = () => 10 / scale();
@@ -168,20 +230,20 @@ els.annoCanvas.addEventListener("pointerdown", (ev) => {
   if (!pdfDoc || ev.button !== 0) return;
   const tool = document.querySelector("#toolbar .tool.active")?.dataset.tool;
   const [x, y] = pageCoords(ev);
+  if (tool === "select") {
+    ev.preventDefault();
+    commitTextInput();
+    const id = app.find_item(pageNum, x, y);
+    if (id >= 0 && app.begin_item_drag(pageNum, id, x, y)) {
+      itemDrag = { id, startX: x, startY: y, moved: false };
+      capturePointer(ev);
+    }
+    return;
+  }
   if (tool === "text") {
     // Prevent the click's default focus behavior from stealing focus
     // back from the text input (which would instantly commit/close it).
     ev.preventDefault();
-    const id = app.find_text(pageNum, x, y);
-    if (id >= 0) {
-      // Existing note: drag to move; release without moving to edit.
-      commitTextInput();
-      if (app.begin_text_drag(pageNum, id)) {
-        textDrag = { id, startX: x, startY: y, moved: false };
-        capturePointer(ev);
-      }
-      return;
-    }
     openTextEditor(x, y, "", null);
     return;
   }
@@ -193,16 +255,22 @@ els.annoCanvas.addEventListener("pointerdown", (ev) => {
 });
 
 els.annoCanvas.addEventListener("pointermove", (ev) => {
-  if (textDrag) {
+  if (itemDrag) {
     const [x, y] = pageCoords(ev);
-    if (Math.hypot(x - textDrag.startX, y - textDrag.startY) > 3 / scale()) {
-      textDrag.moved = true;
+    if (Math.hypot(x - itemDrag.startX, y - itemDrag.startY) > 3 / scale()) {
+      itemDrag.moved = true;
     }
-    if (textDrag.moved) {
-      app.drag_text(x, y);
+    if (itemDrag.moved) {
+      app.drag_item(x, y);
       redrawAnnotations();
     }
     return;
+  }
+  // Hover feedback for the select tool.
+  if (!drawing && pdfDoc &&
+      document.querySelector("#toolbar .tool.active")?.dataset.tool === "select") {
+    const [x, y] = pageCoords(ev);
+    els.annoCanvas.style.cursor = app.find_item(pageNum, x, y) >= 0 ? "move" : "default";
   }
   if (!drawing) return;
   const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
@@ -217,12 +285,12 @@ function endStroke(ev) {
   if (ev.pointerId !== undefined && els.annoCanvas.hasPointerCapture(ev.pointerId)) {
     els.annoCanvas.releasePointerCapture(ev.pointerId);
   }
-  if (textDrag) {
-    const { id, moved } = textDrag;
-    textDrag = null;
-    app.end_text_drag();
-    if (!moved) {
-      // A plain click on an existing note opens it for editing.
+  if (itemDrag) {
+    const { id, moved } = itemDrag;
+    itemDrag = null;
+    app.end_item_drag();
+    if (!moved && app.is_text(pageNum, id)) {
+      // A plain click on a text note opens it for editing.
       const pos = app.text_pos(pageNum, id);
       if (pos.length === 2) {
         openTextEditor(pos[0], pos[1], app.text_content(pageNum, id), id);
@@ -240,7 +308,7 @@ function endStroke(ev) {
 els.annoCanvas.addEventListener("pointerup", endStroke);
 els.annoCanvas.addEventListener("pointercancel", () => {
   drawing = false;
-  textDrag = null;
+  itemDrag = null;
   app.pointer_cancel();
   redrawAnnotations();
 });
@@ -248,7 +316,7 @@ els.annoCanvas.addEventListener("pointercancel", () => {
 // ---------- text notes (place / edit / drag) ----------
 
 let pendingText = null; // {x, y, editId} in page coords
-let textDrag = null;    // {id, startX, startY, moved}
+let itemDrag = null;    // {id, startX, startY, moved}
 
 function openTextEditor(pageX, pageY, initial, editId) {
   commitTextInput();
@@ -325,6 +393,30 @@ async function loadJsonFile(file) {
     status("Could not read file.");
     return;
   }
+  // Check for mismatches BEFORE loading, and let the user decide.
+  // (Only two top-level fields are inspected; the real, strict parsing
+  // and validation happen in Rust.)
+  try {
+    const peek = JSON.parse(text);
+    const fileSha = typeof peek?.pdf_sha256 === "string" ? peek.pdf_sha256 : "";
+    const filePages = Array.isArray(peek?.pages) ? peek.pages.length : 0;
+    const currentSha = app.pdf_sha256();
+    const warnings = [];
+    if (fileSha && currentSha && fileSha !== currentSha.trim()) {
+      warnings.push("• It was saved for a DIFFERENT PDF — annotations may not line up.");
+    }
+    if (pdfDoc && filePages > pdfDoc.numPages) {
+      warnings.push(`• It has annotations on ${filePages} pages, but this PDF has only ` +
+        `${pdfDoc.numPages}. Extra pages stay in the file but won't be shown.`);
+    }
+    if (warnings.length &&
+        !window.confirm(`Before loading this work file:\n\n${warnings.join("\n")}\n\nLoad it anyway?`)) {
+      status("Load cancelled.");
+      return;
+    }
+  } catch {
+    /* let the strict Rust parser produce the real error below */
+  }
   const currentSha = app.pdf_sha256();
   try {
     app.load_json(text);
@@ -332,13 +424,8 @@ async function loadJsonFile(file) {
     status(`Could not load annotations: ${e}`);
     return;
   }
-  const loadedSha = app.pdf_sha256();
-  if (loadedSha && currentSha && loadedSha !== currentSha) {
-    status("Warning: these annotations were made on a different PDF.");
-  } else {
-    status("Annotations loaded.");
-  }
   app.set_pdf_sha256(currentSha); // keep hash of the actually-open PDF
+  status("Annotations loaded.");
   await renderPage();
 }
 
@@ -507,28 +594,90 @@ for (const s of document.querySelectorAll("#colors .swatch")) {
 
 els.btn.undo.addEventListener("click", () => { app.undo(); redrawAnnotations(); });
 els.btn.redo.addEventListener("click", () => { app.redo(); redrawAnnotations(); });
-els.btn.prev.addEventListener("click", () => { if (pageNum > 0) { pageNum--; renderPage(); } });
-els.btn.next.addEventListener("click", () => {
-  if (pdfDoc && pageNum < pdfDoc.numPages - 1) { pageNum++; renderPage(); }
+function goToPage(n, scrollTo = "top") {
+  if (!pdfDoc) return;
+  const clamped = Math.min(Math.max(0, n), pdfDoc.numPages - 1);
+  if (clamped === pageNum) {
+    els.pageInput.value = String(pageNum + 1);
+    return;
+  }
+  pageNum = clamped;
+  renderPage().then(() => {
+    els.viewer.scrollTop = scrollTo === "bottom" ? els.viewer.scrollHeight : 0;
+  });
+}
+
+els.btn.prev.addEventListener("click", () => goToPage(pageNum - 1));
+els.btn.next.addEventListener("click", () => goToPage(pageNum + 1));
+
+els.pageInput.addEventListener("change", () => {
+  const n = parseInt(els.pageInput.value, 10);
+  if (Number.isFinite(n)) goToPage(n - 1);
+  else els.pageInput.value = String(pageNum + 1);
 });
-els.btn.zoomIn.addEventListener("click", () => {
-  if (zoomIdx < ZOOM_STEPS.length - 1) { zoomIdx++; renderPage(); }
-});
-els.btn.zoomOut.addEventListener("click", () => {
-  if (zoomIdx > 0) { zoomIdx--; renderPage(); }
+els.pageInput.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") els.pageInput.blur();
+  ev.stopPropagation();
 });
 
-const TOOL_KEYS = { p: "pen", h: "highlighter", t: "text", e: "eraser" };
+const ZOOM_STEP = 1.25;
+function nudgeZoom(factor) {
+  zoomMode = String(clampZoom(currentScale * factor));
+  renderPage();
+}
+els.btn.zoomIn.addEventListener("click", () => nudgeZoom(ZOOM_STEP));
+els.btn.zoomOut.addEventListener("click", () => nudgeZoom(1 / ZOOM_STEP));
+els.zoomSelect.addEventListener("change", () => {
+  zoomMode = els.zoomSelect.value;
+  renderPage();
+});
+
+// Re-render on resize: fit modes track the window, and devicePixelRatio
+// changes (browser zoom) re-rasterize so the page never goes fuzzy.
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => renderPage(), 150);
+});
+
+const TOOL_KEYS = { v: "select", p: "pen", h: "highlighter", t: "text", e: "eraser" };
 
 document.addEventListener("keydown", (ev) => {
-  if (ev.target === els.textInput) return;
+  if (ev.target === els.textInput || ev.target === els.pageInput) return;
   const mod = ev.ctrlKey || ev.metaKey;
-  if (mod && ev.key.toLowerCase() === "z") {
+  const key = ev.key.toLowerCase();
+  // Word/Docs-style: Ctrl+Z undo, Ctrl+Y or Ctrl+Shift+Z redo, Ctrl+S save.
+  if (mod && key === "z") {
     ev.preventDefault();
     if (ev.shiftKey) app.redo(); else app.undo();
     redrawAnnotations();
-  } else if (!mod && TOOL_KEYS[ev.key.toLowerCase()]) {
-    document.querySelector(`#toolbar [data-tool="${TOOL_KEYS[ev.key.toLowerCase()]}"]`)?.click();
+  } else if (mod && key === "y") {
+    ev.preventDefault();
+    app.redo();
+    redrawAnnotations();
+  } else if (mod && key === "s") {
+    ev.preventDefault();
+    if (!els.btn.save.disabled) downloadJson();
+  } else if (!mod && TOOL_KEYS[key]) {
+    document.querySelector(`#toolbar [data-tool="${TOOL_KEYS[key]}"]`)?.click();
+  } else if (ev.key === "PageDown" || ev.key === "PageUp") {
+    if (!pdfDoc) return;
+    const v = els.viewer;
+    const atBottom = v.scrollTop + v.clientHeight >= v.scrollHeight - 2;
+    const atTop = v.scrollTop <= 2;
+    if (ev.key === "PageDown" && atBottom && pageNum < pdfDoc.numPages - 1) {
+      ev.preventDefault();
+      goToPage(pageNum + 1, "top");
+    } else if (ev.key === "PageUp" && atTop && pageNum > 0) {
+      ev.preventDefault();
+      goToPage(pageNum - 1, "bottom");
+    } // otherwise let the browser scroll within the page
+  } else if (ev.key === "Home" && pdfDoc) {
+    ev.preventDefault();
+    goToPage(0);
+  } else if (ev.key === "End" && pdfDoc) {
+    ev.preventDefault();
+    goToPage(pdfDoc.numPages - 1);
   }
 });
 

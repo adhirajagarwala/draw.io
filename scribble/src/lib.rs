@@ -18,11 +18,24 @@ const HIGHLIGHT_ALPHA: f64 = 0.35;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
+    /// Pick, move and edit existing annotations (handled by the host UI
+    /// through the item-drag API; the tool itself draws nothing).
+    Select,
     Pen,
     Highlighter,
     Text,
     Eraser,
     Shape(ShapeKind),
+}
+
+/// State of an in-progress move of an existing item.
+struct DragState {
+    page: usize,
+    id: u64,
+    /// Item as it was when the drag began (for undo and for cancel).
+    original: Item,
+    /// Pointer position where the item was grabbed.
+    grab: (f32, f32),
 }
 
 #[wasm_bindgen]
@@ -42,8 +55,8 @@ pub struct App {
     current_shape: Option<(usize, Shape)>,
     /// Items removed during an in-progress eraser drag.
     erase_pending: Option<(usize, Vec<Item>)>,
-    /// Text note being dragged: (page, id, item state before the drag).
-    text_drag: Option<(usize, u64, Item)>,
+    /// Existing item being moved with the select tool.
+    item_drag: Option<DragState>,
 }
 
 #[wasm_bindgen]
@@ -63,7 +76,7 @@ impl App {
             current: None,
             current_shape: None,
             erase_pending: None,
-            text_drag: None,
+            item_drag: None,
         }
     }
 
@@ -109,6 +122,7 @@ impl App {
 
     pub fn set_tool(&mut self, name: &str) -> bool {
         self.tool = match name {
+            "select" => Tool::Select,
             "pen" => Tool::Pen,
             "highlighter" => Tool::Highlighter,
             "text" => Tool::Text,
@@ -117,6 +131,8 @@ impl App {
             "arrow" => Tool::Shape(ShapeKind::Arrow),
             "tick" => Tool::Shape(ShapeKind::Tick),
             "cross" => Tool::Shape(ShapeKind::Cross),
+            "rect" => Tool::Shape(ShapeKind::Rect),
+            "fillrect" => Tool::Shape(ShapeKind::FillRect),
             _ => return false,
         };
         true
@@ -185,7 +201,9 @@ impl App {
                 self.erase_pending = Some((page, Vec::new()));
                 self.erase_at(page, x, y, erase_radius);
             }
-            Tool::Text => {}
+            // Select and Text presses are orchestrated by the host UI via
+            // find_item / begin_item_drag / add_text.
+            Tool::Select | Tool::Text => {}
         }
     }
 
@@ -242,10 +260,10 @@ impl App {
     pub fn pointer_cancel(&mut self) {
         self.current = None;
         self.current_shape = None;
-        // A cancelled text drag reverts to where the note started.
-        if let Some((page, id, old)) = self.text_drag.take() {
-            self.remove_by_id(page, id);
-            self.re_add(page, vec![old]);
+        // A cancelled move reverts the item to where it started.
+        if let Some(drag) = self.item_drag.take() {
+            self.remove_by_id(drag.page, drag.id);
+            self.re_add(drag.page, vec![drag.original]);
         }
         // Committed erasures stay; record them so undo works.
         if let Some((page, removed)) = self.erase_pending.take() {
@@ -271,11 +289,7 @@ impl App {
         if !x.is_finite() || !y.is_finite() {
             return Err("invalid position".to_string());
         }
-        let content: String = content
-            .chars()
-            .filter(|c| !c.is_control() || *c == '\n')
-            .take(MAX_TEXT_LEN)
-            .collect();
+        let content = sanitize_text(content);
         if content.trim().is_empty() {
             return Ok(());
         }
@@ -299,8 +313,8 @@ impl App {
     // Item ids cross the WASM boundary as f64 (avoids BigInt friction in JS);
     // every id is validated as a non-negative integer before use.
 
-    /// Topmost text note at (x, y), or -1 if there is none.
-    pub fn find_text(&self, page: usize, x: f32, y: f32) -> f64 {
+    /// Topmost item of any kind at (x, y), or -1 if there is none.
+    pub fn find_item(&self, page: usize, x: f32, y: f32) -> f64 {
         let Some(p) = self.doc.pages.get(page) else {
             return -1.0;
         };
@@ -310,11 +324,19 @@ impl App {
         p.items
             .iter()
             .rev()
-            .find_map(|item| match item {
-                Item::Text(t) if text_hit(t, x, y, 3.0) => Some(t.id as f64),
-                _ => None,
+            .find(|item| match item {
+                Item::Stroke(s) => stroke_hit(s, x, y, 4.0),
+                Item::Text(t) => text_hit(t, x, y, 4.0),
+                Item::Shape(s) => shape_hit(s, x, y, 4.0),
             })
+            .map(|item| item.id() as f64)
             .unwrap_or(-1.0)
+    }
+
+    /// True if the item with `id` is a text note (the host opens an editor
+    /// for these on click instead of just moving them).
+    pub fn is_text(&self, page: usize, id: f64) -> bool {
+        self.find_text_item(page, id).is_some()
     }
 
     /// Content of the text note with `id`, or "" if it doesn't exist.
@@ -331,62 +353,71 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// Start dragging a text note. Returns false if the id is unknown.
-    pub fn begin_text_drag(&mut self, page: usize, id: f64) -> bool {
+    /// Start moving an existing item (any kind). `x`, `y` is the grab point.
+    /// Returns false if the id is unknown.
+    pub fn begin_item_drag(&mut self, page: usize, id: f64, x: f32, y: f32) -> bool {
+        if !x.is_finite() || !y.is_finite() {
+            return false;
+        }
         let Some(id) = checked_id(id) else {
             return false;
         };
         let Some(p) = self.doc.pages.get(page) else {
             return false;
         };
-        match p.items.iter().find(|it| it.id() == id) {
-            Some(item @ Item::Text(_)) => {
-                self.text_drag = Some((page, id, item.clone()));
-                true
-            }
-            _ => false,
-        }
+        let Some(item) = p.items.iter().find(|it| it.id() == id) else {
+            return false;
+        };
+        self.item_drag = Some(DragState {
+            page,
+            id,
+            original: item.clone(),
+            grab: (x, y),
+        });
+        true
     }
 
-    /// Move the dragged text note to (x, y). No-op if no drag is active.
-    pub fn drag_text(&mut self, x: f32, y: f32) {
+    /// Move the dragged item with the pointer. The translation is clamped so
+    /// the item's bounding box stays on the page (no distortion: the whole
+    /// item moves rigidly from its original geometry).
+    pub fn drag_item(&mut self, x: f32, y: f32) {
         if !x.is_finite() || !y.is_finite() {
             return;
         }
-        let Some((page, id, _)) = self.text_drag else {
+        let Some(drag) = &self.item_drag else {
             return;
         };
-        let (px, py) = self.clamp_to_page(page, x, y);
+        let (page, id, grab) = (drag.page, drag.id, drag.grab);
+        let original = drag.original.clone();
+        let Some(p) = self.doc.pages.get(page) else {
+            return;
+        };
+        let (dx, dy) = clamp_translation(&original, x - grab.0, y - grab.1, p.width, p.height);
+        let moved = translate_item(&original, dx, dy);
         if let Some(p) = self.doc.pages.get_mut(page) {
-            for item in &mut p.items {
-                if let Item::Text(t) = item {
-                    if t.id == id {
-                        t.pos = [px, py];
-                    }
-                }
+            if let Some(slot) = p.items.iter_mut().find(|it| it.id() == id) {
+                *slot = moved;
             }
         }
     }
 
-    /// Finish a drag, recording it as a single undoable step.
-    pub fn end_text_drag(&mut self) {
-        let Some((page, id, old)) = self.text_drag.take() else {
+    /// Finish a move, recording it as a single undoable step.
+    pub fn end_item_drag(&mut self) {
+        let Some(drag) = self.item_drag.take() else {
             return;
         };
-        let Some(p) = self.doc.pages.get(page) else {
+        let Some(p) = self.doc.pages.get(drag.page) else {
             return;
         };
-        let Some(new) = p.items.iter().find(|it| it.id() == id).cloned() else {
+        let Some(new) = p.items.iter().find(|it| it.id() == drag.id).cloned() else {
             return;
         };
-        if let (Item::Text(a), Item::Text(b)) = (&old, &new) {
-            if a.pos == b.pos {
-                return; // nothing moved
-            }
+        if item_geometry_eq(&drag.original, &new) {
+            return; // nothing moved
         }
         self.history.push(Command::Replace {
-            page,
-            old: Box::new(old),
+            page: drag.page,
+            old: Box::new(drag.original),
             new: Box::new(new),
         });
         self.dirty = true;
@@ -402,11 +433,7 @@ impl App {
             .iter()
             .position(|it| it.id() == id && matches!(it, Item::Text(_)))
             .ok_or("no such text note")?;
-        let content: String = content
-            .chars()
-            .filter(|c| !c.is_control() || *c == '\n')
-            .take(MAX_TEXT_LEN)
-            .collect();
+        let content = sanitize_text(content);
         let old = p.items[idx].clone();
         if content.trim().is_empty() {
             p.items.remove(idx);
@@ -647,6 +674,77 @@ fn checked_id(id: f64) -> Option<u64> {
     (id.is_finite() && id >= 0.0 && id.fract() == 0.0 && id < 2f64.powi(53)).then_some(id as u64)
 }
 
+// ---------- rigid moves ----------
+
+/// Axis-aligned bounding box of an item: `[min_x, min_y, max_x, max_y]`.
+fn item_bbox(item: &Item) -> [f32; 4] {
+    match item {
+        Item::Stroke(s) => {
+            let mut bb = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+            for p in &s.points {
+                bb[0] = bb[0].min(p[0]);
+                bb[1] = bb[1].min(p[1]);
+                bb[2] = bb[2].max(p[0]);
+                bb[3] = bb[3].max(p[1]);
+            }
+            bb
+        }
+        Item::Text(t) => {
+            let w = t.content.chars().count() as f32 * t.size * 0.6;
+            [t.pos[0], t.pos[1] - t.size, t.pos[0] + w, t.pos[1]]
+        }
+        Item::Shape(s) => [
+            s.rect[0].min(s.rect[2]),
+            s.rect[1].min(s.rect[3]),
+            s.rect[0].max(s.rect[2]),
+            s.rect[1].max(s.rect[3]),
+        ],
+    }
+}
+
+/// Clamp a translation so the item's bounding box stays within the page.
+fn clamp_translation(item: &Item, dx: f32, dy: f32, w: f32, h: f32) -> (f32, f32) {
+    let bb = item_bbox(item);
+    (
+        dx.clamp(-bb[0], (w - bb[2]).max(-bb[0])),
+        dy.clamp(-bb[1], (h - bb[3]).max(-bb[1])),
+    )
+}
+
+/// Move an item rigidly by (dx, dy) without changing its shape.
+fn translate_item(item: &Item, dx: f32, dy: f32) -> Item {
+    let mut out = item.clone();
+    match &mut out {
+        Item::Stroke(s) => {
+            for p in &mut s.points {
+                p[0] += dx;
+                p[1] += dy;
+            }
+        }
+        Item::Text(t) => {
+            t.pos[0] += dx;
+            t.pos[1] += dy;
+        }
+        Item::Shape(s) => {
+            s.rect[0] += dx;
+            s.rect[1] += dy;
+            s.rect[2] += dx;
+            s.rect[3] += dy;
+        }
+    }
+    out
+}
+
+/// True if two items have identical geometry (used to skip no-op moves).
+fn item_geometry_eq(a: &Item, b: &Item) -> bool {
+    match (a, b) {
+        (Item::Stroke(x), Item::Stroke(y)) => x.points == y.points,
+        (Item::Text(x), Item::Text(y)) => x.pos == y.pos,
+        (Item::Shape(x), Item::Shape(y)) => x.rect == y.rect,
+        _ => false,
+    }
+}
+
 // ---------- hit testing ----------
 
 fn dist_sq_point_segment(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
@@ -705,10 +803,23 @@ fn draw_shape(ctx: &CanvasRenderingContext2d, s: &Shape) {
     let (lo_x, hi_x) = (x0.min(x1), x0.max(x1));
     let (lo_y, hi_y) = (y0.min(y1), y0.max(y1));
     ctx.save();
+    if s.kind == ShapeKind::FillRect {
+        // Highlight box: translucent marker tint over the region.
+        ctx.set_global_alpha(HIGHLIGHT_ALPHA);
+        ctx.set_global_composite_operation("multiply").ok();
+        ctx.set_fill_style_str(s.color.highlight_css());
+        ctx.fill_rect(lo_x, lo_y, hi_x - lo_x, hi_y - lo_y);
+        ctx.restore();
+        return;
+    }
     ctx.set_stroke_style_str(s.color.css());
     ctx.set_line_width(f64::from(s.width));
     ctx.begin_path();
     match s.kind {
+        ShapeKind::FillRect => unreachable!("handled above"),
+        ShapeKind::Rect => {
+            ctx.rect(lo_x, lo_y, hi_x - lo_x, hi_y - lo_y);
+        }
         ShapeKind::Circle => {
             let (cx, cy) = ((lo_x + hi_x) / 2.0, (lo_y + hi_y) / 2.0);
             let (rx, ry) = ((hi_x - lo_x) / 2.0, (hi_y - lo_y) / 2.0);
@@ -750,8 +861,11 @@ fn draw_stroke(ctx: &CanvasRenderingContext2d, s: &Stroke) {
     if s.kind == PenKind::Highlighter {
         ctx.set_global_alpha(HIGHLIGHT_ALPHA);
         ctx.set_global_composite_operation("multiply").ok();
+        // Marker tints: dark pen colors make unreadable highlights.
+        ctx.set_stroke_style_str(s.color.highlight_css());
+    } else {
+        ctx.set_stroke_style_str(s.color.css());
     }
-    ctx.set_stroke_style_str(s.color.css());
     ctx.set_line_width(s.width as f64);
     ctx.begin_path();
     ctx.move_to(s.points[0][0] as f64, s.points[0][1] as f64);
@@ -928,15 +1042,16 @@ mod tests {
     }
 
     #[test]
-    fn text_drag_is_one_undo_step() {
+    fn item_drag_is_one_undo_step() {
         let mut a = app_with_page();
         a.add_text(0, 100.0, 100.0, "note").unwrap();
-        let id = a.find_text(0, 102.0, 95.0);
+        let id = a.find_item(0, 102.0, 95.0);
         assert!(id >= 0.0);
-        assert!(a.begin_text_drag(0, id));
-        a.drag_text(200.0, 220.0);
-        a.drag_text(300.0, 320.0);
-        a.end_text_drag();
+        assert!(a.is_text(0, id));
+        assert!(a.begin_item_drag(0, id, 102.0, 95.0));
+        a.drag_item(202.0, 215.0);
+        a.drag_item(302.0, 315.0);
+        a.end_item_drag();
         assert_eq!(a.text_pos(0, id), vec![300.0, 320.0]);
         a.undo();
         assert_eq!(a.text_pos(0, id), vec![100.0, 100.0]);
@@ -945,10 +1060,37 @@ mod tests {
     }
 
     #[test]
+    fn stroke_moves_rigidly_and_stays_on_page() {
+        let mut a = app_with_page();
+        a.pointer_down(0, 10.0, 10.0, 8.0);
+        a.pointer_move(50.0, 20.0, 8.0);
+        a.pointer_up();
+        let id = a.find_item(0, 30.0, 15.0);
+        assert!(id >= 0.0);
+        assert!(!a.is_text(0, id));
+        a.begin_item_drag(0, id, 30.0, 15.0);
+        // Try to drag far off the page; translation must be clamped.
+        a.drag_item(-500.0, -500.0);
+        a.end_item_drag();
+        if let Item::Stroke(s) = &a.doc.pages[0].items[0] {
+            assert_eq!(s.points[0], [0.0, 0.0]); // hit the page corner, intact shape
+            assert_eq!(s.points[1], [40.0, 10.0]);
+        } else {
+            panic!("expected stroke");
+        }
+        a.undo();
+        if let Item::Stroke(s) = &a.doc.pages[0].items[0] {
+            assert_eq!(s.points[0], [10.0, 10.0]);
+        } else {
+            panic!("expected stroke");
+        }
+    }
+
+    #[test]
     fn text_edit_and_delete_via_update() {
         let mut a = app_with_page();
         a.add_text(0, 50.0, 50.0, "old").unwrap();
-        let id = a.find_text(0, 52.0, 46.0);
+        let id = a.find_item(0, 52.0, 46.0);
         a.update_text(0, id, "new words").unwrap();
         assert_eq!(a.text_content(0, id), "new words");
         a.undo();
@@ -964,23 +1106,52 @@ mod tests {
     fn bogus_ids_rejected() {
         let mut a = app_with_page();
         a.add_text(0, 50.0, 50.0, "x").unwrap();
-        assert!(!a.begin_text_drag(0, -1.0));
-        assert!(!a.begin_text_drag(0, 1.5));
-        assert!(!a.begin_text_drag(0, f64::NAN));
+        assert!(!a.begin_item_drag(0, -1.0, 0.0, 0.0));
+        assert!(!a.begin_item_drag(0, 1.5, 0.0, 0.0));
+        assert!(!a.begin_item_drag(0, f64::NAN, 0.0, 0.0));
         assert!(a.update_text(0, 99.0, "y").is_err());
-        assert_eq!(a.find_text(0, 500.0, 500.0), -1.0);
+        assert_eq!(a.find_item(0, 500.0, 500.0), -1.0);
     }
 
     #[test]
     fn cancelled_drag_reverts() {
         let mut a = app_with_page();
         a.add_text(0, 100.0, 100.0, "note").unwrap();
-        let id = a.find_text(0, 102.0, 95.0);
-        a.begin_text_drag(0, id);
-        a.drag_text(400.0, 400.0);
+        let id = a.find_item(0, 102.0, 95.0);
+        a.begin_item_drag(0, id, 102.0, 95.0);
+        a.drag_item(400.0, 400.0);
         a.pointer_cancel();
         assert_eq!(a.text_pos(0, id), vec![100.0, 100.0]);
-        assert!(!a.can_undo() || a.text_pos(0, id) == vec![100.0, 100.0]);
+    }
+
+    #[test]
+    fn highlight_box_and_rect_export() {
+        let mut a = app_with_page();
+        a.set_tool("fillrect");
+        a.set_color("green");
+        a.pointer_down(0, 20.0, 30.0, 8.0);
+        a.pointer_move(120.0, 60.0, 8.0);
+        a.pointer_up();
+        a.set_tool("rect");
+        a.pointer_down(0, 200.0, 200.0, 8.0);
+        a.pointer_move(260.0, 240.0, 8.0);
+        a.pointer_up();
+        let ops = a.export_pdf_ops(0);
+        assert!(ops.contains("re f"), "filled highlight box");
+        assert!(ops.contains("re\n"), "outlined rect");
+        assert!(ops.contains(&format!("/{} gs", a.highlight_gstate_name())));
+    }
+
+    #[test]
+    fn text_input_strips_bidi_overrides() {
+        let mut a = app_with_page();
+        a.add_text(0, 10.0, 10.0, "abc\u{202E}def\u{200B}g")
+            .unwrap();
+        if let Item::Text(t) = &a.doc.pages[0].items[0] {
+            assert_eq!(t.content, "abcdefg");
+        } else {
+            panic!("expected text");
+        }
     }
 
     #[test]

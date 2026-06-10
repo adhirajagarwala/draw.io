@@ -120,12 +120,43 @@ button { font: inherit; }
 .btn.primary:active:not(:disabled) { background: #14181b; }
 
 .readout {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
-  min-width: 46px;
   text-align: center;
 }
+
+#page-input {
+  width: 42px;
+  height: 28px;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fafbfc;
+  color: var(--ink);
+  -moz-appearance: textfield;
+}
+#page-input::-webkit-outer-spin-button,
+#page-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+#page-input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+
+#zoom-select {
+  height: 30px;
+  font: inherit;
+  font-size: 12.5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fafbfc;
+  color: var(--ink);
+  padding: 0 4px;
+}
+#zoom-select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+#zoom-select:disabled, #page-input:disabled { opacity: 0.4; }
 
 /* width picker */
 .btn.width { min-width: 30px; padding: 0 6px; }

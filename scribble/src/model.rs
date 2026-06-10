@@ -46,6 +46,30 @@ impl Color {
         }
     }
 
+    /// Lighter, saturated tints used by the highlighter and highlight boxes.
+    /// Dark pen colors make unreadable highlights, so each color maps to a
+    /// marker-style tint instead (matching [`Color::highlight_css`]).
+    pub fn highlight_rgb(self) -> (f32, f32, f32) {
+        match self {
+            Color::Black => (0.62, 0.62, 0.62),
+            Color::Red => (0.957, 0.561, 0.694),
+            Color::Blue => (0.310, 0.765, 0.969),
+            Color::Green => (0.565, 0.933, 0.565),
+            Color::Yellow => (0.976, 0.816, 0.000),
+        }
+    }
+
+    /// CSS form of [`Color::highlight_rgb`]. Closed enum — fixed strings only.
+    pub fn highlight_css(self) -> &'static str {
+        match self {
+            Color::Black => "#9e9e9e",
+            Color::Red => "#f48fb1",
+            Color::Blue => "#4fc3f7",
+            Color::Green => "#90ee90",
+            Color::Yellow => "#f9d000",
+        }
+    }
+
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "black" => Some(Color::Black),
@@ -90,6 +114,10 @@ pub enum ShapeKind {
     Arrow,
     Tick,
     Cross,
+    /// Outlined rectangle.
+    Rect,
+    /// Filled translucent rectangle (a "highlight box" over a region).
+    FillRect,
 }
 
 /// A drag-placed marker. `rect` is `[x0, y0, x1, y1]` from drag start to end,
@@ -168,6 +196,30 @@ fn finite(v: f32) -> bool {
     v.is_finite()
 }
 
+/// Characters that must never appear in note text: control characters
+/// (except newline) and Unicode bidirectional/format controls, which can
+/// visually reorder surrounding text — a classic spoofing vector when the
+/// note is later rendered in a PDF or any other viewer.
+pub fn is_forbidden_text_char(c: char) -> bool {
+    (c.is_control() && c != '\n')
+        || matches!(
+            c,
+            '\u{200B}'..='\u{200F}'      // zero-width + LRM/RLM
+            | '\u{202A}'..='\u{202E}'    // LRE/RLE/PDF/LRO/RLO
+            | '\u{2066}'..='\u{2069}'    // LRI/RLI/FSI/PDI
+            | '\u{FEFF}'                 // BOM / zero-width no-break space
+        )
+}
+
+/// Strip forbidden characters and cap length. Used for every path that
+/// accepts text typed by (or loaded for) the user.
+pub fn sanitize_text(s: &str) -> String {
+    s.chars()
+        .filter(|c| !is_forbidden_text_char(*c))
+        .take(MAX_TEXT_LEN)
+        .collect()
+}
+
 /// Strict validation of a deserialized document. Rejects on any violation;
 /// never partially applies. Coordinates are clamped to page bounds.
 pub fn validate(doc: &mut Document) -> Result<(), String> {
@@ -231,8 +283,8 @@ pub fn validate(doc: &mut Document) -> Result<(), String> {
                     if t.content.chars().count() > MAX_TEXT_LEN {
                         return Err("text too long".into());
                     }
-                    if t.content.chars().any(|c| c.is_control() && c != '\n') {
-                        return Err("control characters in text".into());
+                    if t.content.chars().any(is_forbidden_text_char) {
+                        return Err("forbidden characters in text".into());
                     }
                     if !finite(t.size) || !finite(t.pos[0]) || !finite(t.pos[1]) {
                         return Err("non-finite text values".into());
@@ -352,6 +404,31 @@ mod tests {
             size: 12.0,
         })]);
         assert!(validate(&mut d2).is_err());
+    }
+
+    #[test]
+    fn sanitize_strips_hostile_characters() {
+        // Controls (NUL, bell, escape, DEL), bidi overrides, zero-width
+        // characters, and the BOM are all removed; newline survives.
+        let hostile = "a\u{0}\u{7}\u{1b}\u{7f}b\u{202E}evil\u{2066}c\u{200B}\u{FEFF}\nd";
+        assert_eq!(sanitize_text(hostile), "abevilc\nd");
+        // Length cap applies after filtering.
+        assert_eq!(
+            sanitize_text(&"x".repeat(MAX_TEXT_LEN + 50)).len(),
+            MAX_TEXT_LEN
+        );
+    }
+
+    #[test]
+    fn validate_rejects_bidi_in_loaded_files() {
+        let mut d = doc_with(vec![Item::Text(Text {
+            id: 1,
+            pos: [10.0, 10.0],
+            content: "pay \u{202E}001\u{202C} dollars".into(),
+            color: Color::Black,
+            size: 12.0,
+        })]);
+        assert!(validate(&mut d).is_err());
     }
 
     #[test]
