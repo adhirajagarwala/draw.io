@@ -42,6 +42,8 @@ pub struct App {
     current_shape: Option<(usize, Shape)>,
     /// Items removed during an in-progress eraser drag.
     erase_pending: Option<(usize, Vec<Item>)>,
+    /// Text note being dragged: (page, id, item state before the drag).
+    text_drag: Option<(usize, u64, Item)>,
 }
 
 #[wasm_bindgen]
@@ -61,6 +63,7 @@ impl App {
             current: None,
             current_shape: None,
             erase_pending: None,
+            text_drag: None,
         }
     }
 
@@ -235,10 +238,15 @@ impl App {
         }
     }
 
-    /// Cancel any in-progress stroke/shape/erase (e.g. pointer left the canvas).
+    /// Cancel any in-progress stroke/shape/drag/erase (e.g. pointer lost).
     pub fn pointer_cancel(&mut self) {
         self.current = None;
         self.current_shape = None;
+        // A cancelled text drag reverts to where the note started.
+        if let Some((page, id, old)) = self.text_drag.take() {
+            self.remove_by_id(page, id);
+            self.re_add(page, vec![old]);
+        }
         // Committed erasures stay; record them so undo works.
         if let Some((page, removed)) = self.erase_pending.take() {
             if !removed.is_empty() {
@@ -286,6 +294,154 @@ impl App {
         Ok(())
     }
 
+    // ---------- text move / edit ----------
+    //
+    // Item ids cross the WASM boundary as f64 (avoids BigInt friction in JS);
+    // every id is validated as a non-negative integer before use.
+
+    /// Topmost text note at (x, y), or -1 if there is none.
+    pub fn find_text(&self, page: usize, x: f32, y: f32) -> f64 {
+        let Some(p) = self.doc.pages.get(page) else {
+            return -1.0;
+        };
+        if !x.is_finite() || !y.is_finite() {
+            return -1.0;
+        }
+        p.items
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                Item::Text(t) if text_hit(t, x, y, 3.0) => Some(t.id as f64),
+                _ => None,
+            })
+            .unwrap_or(-1.0)
+    }
+
+    /// Content of the text note with `id`, or "" if it doesn't exist.
+    pub fn text_content(&self, page: usize, id: f64) -> String {
+        self.find_text_item(page, id)
+            .map(|t| t.content.clone())
+            .unwrap_or_default()
+    }
+
+    /// Position `[x, y]` of the text note with `id`, or empty if missing.
+    pub fn text_pos(&self, page: usize, id: f64) -> Vec<f32> {
+        self.find_text_item(page, id)
+            .map(|t| t.pos.to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Start dragging a text note. Returns false if the id is unknown.
+    pub fn begin_text_drag(&mut self, page: usize, id: f64) -> bool {
+        let Some(id) = checked_id(id) else {
+            return false;
+        };
+        let Some(p) = self.doc.pages.get(page) else {
+            return false;
+        };
+        match p.items.iter().find(|it| it.id() == id) {
+            Some(item @ Item::Text(_)) => {
+                self.text_drag = Some((page, id, item.clone()));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Move the dragged text note to (x, y). No-op if no drag is active.
+    pub fn drag_text(&mut self, x: f32, y: f32) {
+        if !x.is_finite() || !y.is_finite() {
+            return;
+        }
+        let Some((page, id, _)) = self.text_drag else {
+            return;
+        };
+        let (px, py) = self.clamp_to_page(page, x, y);
+        if let Some(p) = self.doc.pages.get_mut(page) {
+            for item in &mut p.items {
+                if let Item::Text(t) = item {
+                    if t.id == id {
+                        t.pos = [px, py];
+                    }
+                }
+            }
+        }
+    }
+
+    /// Finish a drag, recording it as a single undoable step.
+    pub fn end_text_drag(&mut self) {
+        let Some((page, id, old)) = self.text_drag.take() else {
+            return;
+        };
+        let Some(p) = self.doc.pages.get(page) else {
+            return;
+        };
+        let Some(new) = p.items.iter().find(|it| it.id() == id).cloned() else {
+            return;
+        };
+        if let (Item::Text(a), Item::Text(b)) = (&old, &new) {
+            if a.pos == b.pos {
+                return; // nothing moved
+            }
+        }
+        self.history.push(Command::Replace {
+            page,
+            old: Box::new(old),
+            new: Box::new(new),
+        });
+        self.dirty = true;
+    }
+
+    /// Replace the content of an existing text note. Empty content deletes
+    /// the note. Either way the change is a single undoable step.
+    pub fn update_text(&mut self, page: usize, id: f64, content: &str) -> Result<(), String> {
+        let id = checked_id(id).ok_or("invalid id")?;
+        let p = self.doc.pages.get_mut(page).ok_or("no such page")?;
+        let idx = p
+            .items
+            .iter()
+            .position(|it| it.id() == id && matches!(it, Item::Text(_)))
+            .ok_or("no such text note")?;
+        let content: String = content
+            .chars()
+            .filter(|c| !c.is_control() || *c == '\n')
+            .take(MAX_TEXT_LEN)
+            .collect();
+        let old = p.items[idx].clone();
+        if content.trim().is_empty() {
+            p.items.remove(idx);
+            self.history.push(Command::Remove {
+                page,
+                items: vec![old],
+            });
+        } else {
+            if let Item::Text(t) = &mut p.items[idx] {
+                t.content = content;
+            }
+            let new = p.items[idx].clone();
+            self.history.push(Command::Replace {
+                page,
+                old: Box::new(old),
+                new: Box::new(new),
+            });
+        }
+        self.dirty = true;
+        Ok(())
+    }
+
+    fn find_text_item(&self, page: usize, id: f64) -> Option<&Text> {
+        let id = checked_id(id)?;
+        self.doc
+            .pages
+            .get(page)?
+            .items
+            .iter()
+            .find_map(|it| match it {
+                Item::Text(t) if t.id == id => Some(t),
+                _ => None,
+            })
+    }
+
     // ---------- undo / redo ----------
 
     pub fn undo(&mut self) {
@@ -293,6 +449,10 @@ impl App {
             match cmd {
                 Command::Add { page, item } => self.remove_by_id(page, item.id()),
                 Command::Remove { page, items } => self.re_add(page, items),
+                Command::Replace { page, old, new } => {
+                    self.remove_by_id(page, new.id());
+                    self.re_add(page, vec![*old]);
+                }
             }
             self.dirty = true;
         }
@@ -306,6 +466,10 @@ impl App {
                     for it in &items {
                         self.remove_by_id(page, it.id());
                     }
+                }
+                Command::Replace { page, old, new } => {
+                    self.remove_by_id(page, old.id());
+                    self.re_add(page, vec![*new]);
                 }
             }
             self.dirty = true;
@@ -475,6 +639,12 @@ impl Default for App {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Validate an item id received from JS as f64 (must be a non-negative
+/// integer exactly representable in the f64 range we hand out).
+fn checked_id(id: f64) -> Option<u64> {
+    (id.is_finite() && id >= 0.0 && id.fract() == 0.0 && id < 2f64.powi(53)).then_some(id as u64)
 }
 
 // ---------- hit testing ----------
@@ -755,6 +925,62 @@ mod tests {
         b.pointer_down(0, 50.0, 50.0, 8.0);
         b.pointer_up();
         assert!(b.doc.pages[0].items.is_empty());
+    }
+
+    #[test]
+    fn text_drag_is_one_undo_step() {
+        let mut a = app_with_page();
+        a.add_text(0, 100.0, 100.0, "note").unwrap();
+        let id = a.find_text(0, 102.0, 95.0);
+        assert!(id >= 0.0);
+        assert!(a.begin_text_drag(0, id));
+        a.drag_text(200.0, 220.0);
+        a.drag_text(300.0, 320.0);
+        a.end_text_drag();
+        assert_eq!(a.text_pos(0, id), vec![300.0, 320.0]);
+        a.undo();
+        assert_eq!(a.text_pos(0, id), vec![100.0, 100.0]);
+        a.redo();
+        assert_eq!(a.text_pos(0, id), vec![300.0, 320.0]);
+    }
+
+    #[test]
+    fn text_edit_and_delete_via_update() {
+        let mut a = app_with_page();
+        a.add_text(0, 50.0, 50.0, "old").unwrap();
+        let id = a.find_text(0, 52.0, 46.0);
+        a.update_text(0, id, "new words").unwrap();
+        assert_eq!(a.text_content(0, id), "new words");
+        a.undo();
+        assert_eq!(a.text_content(0, id), "old");
+        // empty content deletes, and that's undoable too
+        a.update_text(0, id, "   ").unwrap();
+        assert_eq!(a.doc.pages[0].items.len(), 0);
+        a.undo();
+        assert_eq!(a.text_content(0, id), "old");
+    }
+
+    #[test]
+    fn bogus_ids_rejected() {
+        let mut a = app_with_page();
+        a.add_text(0, 50.0, 50.0, "x").unwrap();
+        assert!(!a.begin_text_drag(0, -1.0));
+        assert!(!a.begin_text_drag(0, 1.5));
+        assert!(!a.begin_text_drag(0, f64::NAN));
+        assert!(a.update_text(0, 99.0, "y").is_err());
+        assert_eq!(a.find_text(0, 500.0, 500.0), -1.0);
+    }
+
+    #[test]
+    fn cancelled_drag_reverts() {
+        let mut a = app_with_page();
+        a.add_text(0, 100.0, 100.0, "note").unwrap();
+        let id = a.find_text(0, 102.0, 95.0);
+        a.begin_text_drag(0, id);
+        a.drag_text(400.0, 400.0);
+        a.pointer_cancel();
+        assert_eq!(a.text_pos(0, id), vec![100.0, 100.0]);
+        assert!(!a.can_undo() || a.text_pos(0, id) == vec![100.0, 100.0]);
     }
 
     #[test]

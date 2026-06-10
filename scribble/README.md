@@ -25,7 +25,9 @@ feature uses WebCrypto, which requires a secure context — localhost counts.)
 - Tools: Pen (P), Highlighter (H), Text (T), Eraser (E), plus tick, cross,
   circle, and arrow markers (click to place, or drag to size). 5 colors,
   3 line thicknesses.
-- Text tool: click the page, type, press Enter (Esc cancels).
+- Text tool: click the page, type, press Enter (Esc cancels). With the text
+  tool active, click an existing note to edit it (clearing the text deletes
+  it) or drag it to move it — moves and edits are single undo steps.
 - Eraser removes whole strokes/notes/marks it touches; everything is undoable
   (Ctrl/Cmd+Z, Shift for redo).
 - **Save work** downloads `annotations-<timestamp>.json`. **Resume** restores

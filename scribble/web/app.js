@@ -154,6 +154,16 @@ function pageCoords(ev) {
 
 const eraseRadius = () => 10 / scale();
 
+// setPointerCapture can throw (e.g. the pointer is already gone) — never
+// let that abort an input handler mid-state-change.
+function capturePointer(ev) {
+  try {
+    els.annoCanvas.setPointerCapture(ev.pointerId);
+  } catch {
+    /* capture is an optimization, not a requirement */
+  }
+}
+
 els.annoCanvas.addEventListener("pointerdown", (ev) => {
   if (!pdfDoc || ev.button !== 0) return;
   const tool = document.querySelector("#toolbar .tool.active")?.dataset.tool;
@@ -162,17 +172,38 @@ els.annoCanvas.addEventListener("pointerdown", (ev) => {
     // Prevent the click's default focus behavior from stealing focus
     // back from the text input (which would instantly commit/close it).
     ev.preventDefault();
-    showTextInput(ev, x, y);
+    const id = app.find_text(pageNum, x, y);
+    if (id >= 0) {
+      // Existing note: drag to move; release without moving to edit.
+      commitTextInput();
+      if (app.begin_text_drag(pageNum, id)) {
+        textDrag = { id, startX: x, startY: y, moved: false };
+        capturePointer(ev);
+      }
+      return;
+    }
+    openTextEditor(x, y, "", null);
     return;
   }
   commitTextInput();
-  els.annoCanvas.setPointerCapture(ev.pointerId);
+  capturePointer(ev);
   drawing = true;
   app.pointer_down(pageNum, x, y, eraseRadius());
   redrawAnnotations();
 });
 
 els.annoCanvas.addEventListener("pointermove", (ev) => {
+  if (textDrag) {
+    const [x, y] = pageCoords(ev);
+    if (Math.hypot(x - textDrag.startX, y - textDrag.startY) > 3 / scale()) {
+      textDrag.moved = true;
+    }
+    if (textDrag.moved) {
+      app.drag_text(x, y);
+      redrawAnnotations();
+    }
+    return;
+  }
   if (!drawing) return;
   const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
   for (const e of events) {
@@ -183,34 +214,49 @@ els.annoCanvas.addEventListener("pointermove", (ev) => {
 });
 
 function endStroke(ev) {
-  if (!drawing) return;
-  drawing = false;
-  app.pointer_up();
   if (ev.pointerId !== undefined && els.annoCanvas.hasPointerCapture(ev.pointerId)) {
     els.annoCanvas.releasePointerCapture(ev.pointerId);
   }
+  if (textDrag) {
+    const { id, moved } = textDrag;
+    textDrag = null;
+    app.end_text_drag();
+    if (!moved) {
+      // A plain click on an existing note opens it for editing.
+      const pos = app.text_pos(pageNum, id);
+      if (pos.length === 2) {
+        openTextEditor(pos[0], pos[1], app.text_content(pageNum, id), id);
+      }
+    }
+    redrawAnnotations();
+    return;
+  }
+  if (!drawing) return;
+  drawing = false;
+  app.pointer_up();
   redrawAnnotations();
 }
 
 els.annoCanvas.addEventListener("pointerup", endStroke);
-els.annoCanvas.addEventListener("pointercancel", (ev) => {
+els.annoCanvas.addEventListener("pointercancel", () => {
   drawing = false;
+  textDrag = null;
   app.pointer_cancel();
   redrawAnnotations();
 });
 
-// ---------- text blurbs ----------
+// ---------- text notes (place / edit / drag) ----------
 
-let pendingText = null; // {x, y} in page coords
+let pendingText = null; // {x, y, editId} in page coords
+let textDrag = null;    // {id, startX, startY, moved}
 
-function showTextInput(ev, x, y) {
+function openTextEditor(pageX, pageY, initial, editId) {
   commitTextInput();
-  pendingText = { x, y };
-  const r = els.annoCanvas.getBoundingClientRect();
-  const wr = els.wrap.getBoundingClientRect();
-  els.textInput.style.left = `${ev.clientX - wr.left}px`;
-  els.textInput.style.top = `${ev.clientY - wr.top}px`;
-  els.textInput.value = "";
+  pendingText = { x: pageX, y: pageY, editId };
+  // The input is positioned inside #page-wrap, which the canvas fills.
+  els.textInput.style.left = `${pageX * scale()}px`;
+  els.textInput.style.top = `${(pageY - 18) * scale()}px`;
+  els.textInput.value = initial;
   els.textInput.hidden = false;
   // Defer focus until after the pointer event sequence settles.
   setTimeout(() => els.textInput.focus(), 0);
@@ -221,13 +267,16 @@ function commitTextInput() {
     hideTextInput();
     return;
   }
+  const { x, y, editId } = pendingText;
   const value = els.textInput.value; // .value only — never innerHTML
-  if (value.trim()) {
-    try {
-      app.add_text(pageNum, pendingText.x, pendingText.y, value);
-    } catch (e) {
-      status(String(e));
+  try {
+    if (editId !== null && editId !== undefined) {
+      app.update_text(pageNum, editId, value); // empty value deletes the note
+    } else if (value.trim()) {
+      app.add_text(pageNum, x, y, value);
     }
+  } catch (e) {
+    status(String(e));
   }
   hideTextInput();
   redrawAnnotations();
@@ -491,6 +540,12 @@ window.addEventListener("beforeunload", (ev) => {
 });
 
 // ---------- boot ----------
+
+// Read-only debug handle, opt-in via ?debug (used by tests; harmless: the
+// page is fully client-side and the user already owns all state).
+if (new URLSearchParams(location.search).has("debug")) {
+  Object.defineProperty(window, "__app", { get: () => app });
+}
 
 init()
   .then(() => {

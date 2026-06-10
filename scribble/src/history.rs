@@ -11,6 +11,12 @@ pub enum Command {
     Add { page: usize, item: Item },
     /// Items were removed from `page` (eraser).
     Remove { page: usize, items: Vec<Item> },
+    /// An item on `page` was replaced in place (text moved or edited).
+    Replace {
+        page: usize,
+        old: Box<Item>,
+        new: Box<Item>,
+    },
 }
 
 #[derive(Default)]

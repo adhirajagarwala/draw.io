@@ -95,6 +95,20 @@ function passStringToWasm0(arg, malloc, realloc) {
     return ptr;
 }
 
+let cachedFloat32ArrayMemory0 = null;
+
+function getFloat32ArrayMemory0() {
+    if (cachedFloat32ArrayMemory0 === null || cachedFloat32ArrayMemory0.byteLength === 0) {
+        cachedFloat32ArrayMemory0 = new Float32Array(wasm.memory.buffer);
+    }
+    return cachedFloat32ArrayMemory0;
+}
+
+function getArrayF32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
 const AppFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_app_free(ptr >>> 0, 1));
@@ -150,6 +164,21 @@ export class App {
         }
     }
     /**
+     * Replace the content of an existing text note. Empty content deletes
+     * the note. Either way the change is a single undoable step.
+     * @param {number} page
+     * @param {number} id
+     * @param {string} content
+     */
+    update_text(page, id, content) {
+        const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.app_update_text(this.__wbg_ptr, page, id, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
      * @param {number} page
      * @param {number} x
      * @param {number} y
@@ -165,6 +194,30 @@ export class App {
      */
     pointer_move(x, y, erase_radius) {
         wasm.app_pointer_move(this.__wbg_ptr, x, y, erase_radius);
+    }
+    /**
+     * Content of the text note with `id`, or "" if it doesn't exist.
+     * @param {number} page
+     * @param {number} id
+     * @returns {string}
+     */
+    text_content(page, id) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.app_text_content(this.__wbg_ptr, page, id);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Finish a drag, recording it as a single undoable step.
+     */
+    end_text_drag() {
+        wasm.app_end_text_drag(this.__wbg_ptr);
     }
     /**
      * Pen / shape stroke width by named size.
@@ -197,7 +250,7 @@ export class App {
         }
     }
     /**
-     * Cancel any in-progress stroke/shape/erase (e.g. pointer left the canvas).
+     * Cancel any in-progress stroke/shape/drag/erase (e.g. pointer lost).
      */
     pointer_cancel() {
         wasm.app_pointer_cancel(this.__wbg_ptr);
@@ -228,6 +281,16 @@ export class App {
         } finally {
             wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
+    }
+    /**
+     * Start dragging a text note. Returns false if the id is unknown.
+     * @param {number} page
+     * @param {number} id
+     * @returns {boolean}
+     */
+    begin_text_drag(page, id) {
+        const ret = wasm.app_begin_text_drag(this.__wbg_ptr, page, id);
+        return ret !== 0;
     }
     /**
      * @returns {string}
@@ -310,6 +373,37 @@ export class App {
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.app_set_tool(this.__wbg_ptr, ptr0, len0);
         return ret !== 0;
+    }
+    /**
+     * Position `[x, y]` of the text note with `id`, or empty if missing.
+     * @param {number} page
+     * @param {number} id
+     * @returns {Float32Array}
+     */
+    text_pos(page, id) {
+        const ret = wasm.app_text_pos(this.__wbg_ptr, page, id);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * Move the dragged text note to (x, y). No-op if no drag is active.
+     * @param {number} x
+     * @param {number} y
+     */
+    drag_text(x, y) {
+        wasm.app_drag_text(this.__wbg_ptr, x, y);
+    }
+    /**
+     * Topmost text note at (x, y), or -1 if there is none.
+     * @param {number} page
+     * @param {number} x
+     * @param {number} y
+     * @returns {number}
+     */
+    find_text(page, x, y) {
+        const ret = wasm.app_find_text(this.__wbg_ptr, page, x, y);
+        return ret;
     }
     /**
      * Load annotations from JSON. Input is treated as hostile: size-capped,
@@ -471,6 +565,7 @@ function __wbg_init_memory(imports, memory) {
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     __wbg_init.__wbindgen_wasm_module = module;
+    cachedFloat32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
 
 

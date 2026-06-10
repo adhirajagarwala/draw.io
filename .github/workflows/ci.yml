@@ -28,7 +28,9 @@ jobs:
         run: cargo fmt --check
       - name: WASM release build
         run: cargo build --release --target wasm32-unknown-unknown
+      # rustsec/audit-check only works at the repo root; run cargo-audit
+      # directly inside scribble/ where Cargo.lock lives.
       - name: Security audit
-        uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
