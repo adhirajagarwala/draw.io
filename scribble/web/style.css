@@ -199,6 +199,9 @@ button { font: inherit; }
   min-height: 0;
 }
 
+/* `display: flex` on the panels would defeat the hidden attribute. */
+#thumbs[hidden], #notes-pane[hidden], #splitter[hidden] { display: none; }
+
 #thumbs {
   width: 138px;
   flex: none;
