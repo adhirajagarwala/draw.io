@@ -6,7 +6,12 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; img-src 'self' blob:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
   <title>Scribble — annotate your question paper</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <!-- ?v= queries bust browser caches: python http.server sends no cache
+       headers, and a stale app.js running against a fresh .wasm was the
+       single biggest source of "it broke after an update". Bump APP_VERSION
+       in app.js and these together on every release. -->
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
   <header id="toolbar">
@@ -188,6 +193,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=3"></script>
 </body>
 </html>
