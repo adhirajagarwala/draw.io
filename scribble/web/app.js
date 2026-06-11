@@ -3,9 +3,9 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "3";
+const APP_VERSION = "4";
 
-import init, { App } from "./pkg/scribble.js?v=3";
+import init, { App } from "./pkg/scribble.js?v=4";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -872,6 +872,14 @@ async function buildNotesPages() {
     cur = { w, h, ops: "", images: [] };
     yTop = margin;
   };
+  // Push the current accumulation page only if it holds real content.
+  const flush = () => {
+    if (cur.images.length || yTop > margin + 1) {
+      pages.push(cur);
+      cur = { w, h, ops: "", images: [] };
+      yTop = margin;
+    }
+  };
   const remaining = () => h - margin - yTop;
 
   cur.ops += app.note_text_block_ops("Notes", margin, h - margin, 16) ;
@@ -879,7 +887,15 @@ async function buildNotesPages() {
 
   for (let i = 0; i < total; i++) {
     const kind = app.note_kind(i);
-    if (kind === "text") {
+    if (kind === "sketch") {
+      // A sketch exports as its own full page in its own coordinate space;
+      // its annotations are crisp PDF vectors (no rasterization).
+      const dims = app.sketch_size(i);
+      if (dims.length === 2) {
+        flush();
+        pages.push({ w: dims[0], h: dims[1], ops: app.sketch_export_ops(i), images: [] });
+      }
+    } else if (kind === "text") {
       const lines = wrapLine(app.note_text(i), cols);
       let idx = 0;
       while (idx < lines.length) {
@@ -927,7 +943,7 @@ async function buildNotesPages() {
       yTop += 10;
     }
   }
-  pages.push(cur);
+  flush();
   return pages;
 }
 
@@ -1115,12 +1131,21 @@ document.addEventListener("keydown", (ev) => {
   } else if (mod && key === "s") {
     ev.preventDefault();
     if (!els.btn.save.disabled) downloadJson();
-  } else if ((ev.key === "Delete" || ev.key === "Backspace") && selectedId >= 0) {
-    ev.preventDefault();
-    app.delete_item(pageNum, selectedId);
-    setSelection(-1);
-  } else if (ev.key === "Escape" && selectedId >= 0) {
-    setSelection(-1);
+  } else if ((ev.key === "Delete" || ev.key === "Backspace")) {
+    if (selectedId >= 0) {
+      ev.preventDefault();
+      app.delete_item(pageNum, selectedId);
+      setSelection(-1);
+    } else if (activeSketch && activeSketch.selected >= 0) {
+      ev.preventDefault();
+      activeSketch.remove();
+    }
+  } else if (ev.key === "Escape") {
+    if (selectedId >= 0) setSelection(-1);
+    if (activeSketch && activeSketch.selected >= 0) {
+      activeSketch.selected = -1;
+      activeSketch.draw();
+    }
   } else if (!mod && TOOL_KEYS[key]) {
     document.querySelector(`#toolbar [data-tool="${TOOL_KEYS[key]}"]`)?.click();
   } else if (ev.key === "PageDown" || ev.key === "PageUp") {
@@ -1183,17 +1208,217 @@ function blockActions(i, total) {
   return wrap;
 }
 
+// A self-contained drawing surface for a sketch note. It reuses the SAME
+// Rust annotation engine as the PDF view via the `*_sketch` API — only the
+// thin pointer→engine wiring is local here, so it cannot affect the PDF path.
+class SketchView {
+  constructor(noteIdx, canvas) {
+    this.note = noteIdx;
+    this.canvas = canvas;
+    const dims = app.sketch_size(noteIdx); // [w, h] in points
+    this.w = dims[0] || 400;
+    this.h = dims[1] || 300;
+    this.selected = -1;
+    this.state = null; // {mode, ...}
+    this.scale = 1;
+    this.layout();
+    canvas.addEventListener("pointerdown", (e) => this.down(e));
+    canvas.addEventListener("pointermove", (e) => this.move(e));
+    canvas.addEventListener("pointerup", (e) => this.up(e));
+    canvas.addEventListener("pointercancel", () => this.cancel());
+    this.draw();
+  }
+
+  layout() {
+    const avail = Math.max(120, els.notesList.clientWidth - 28);
+    this.scale = Math.min(avail / this.w, 2);
+    const r = dpr();
+    this.canvas.width = Math.round(this.w * this.scale * r);
+    this.canvas.height = Math.round(this.h * this.scale * r);
+    this.canvas.style.width = `${Math.round(this.w * this.scale)}px`;
+    this.canvas.style.height = `${Math.round(this.h * this.scale)}px`;
+  }
+
+  coords(ev) {
+    const r = this.canvas.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return [0, 0];
+    return [((ev.clientX - r.left) / r.width) * this.w,
+            ((ev.clientY - r.top) / r.height) * this.h];
+  }
+
+  draw() {
+    const ctx = this.canvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    app.render_sketch(ctx, this.note, this.scale * dpr());
+    // selection box + handles (same look as the PDF view)
+    if (this.selected >= 0) {
+      const bb = app.item_bbox_of_sketch(this.note, this.selected);
+      if (bb.length === 4) {
+        const k = this.scale * dpr();
+        ctx.save();
+        ctx.strokeStyle = "#2f5fde";
+        ctx.lineWidth = 1.5 * dpr();
+        ctx.setLineDash([5 * dpr(), 4 * dpr()]);
+        ctx.strokeRect(bb[0] * k - 4, bb[1] * k - 4, (bb[2] - bb[0]) * k + 8, (bb[3] - bb[1]) * k + 8);
+        ctx.setLineDash([]);
+        ctx.fillStyle = "#fff";
+        const hs = 7 * dpr();
+        for (const [hx, hy] of this.corners(bb)) {
+          ctx.beginPath(); ctx.rect(hx * k - hs / 2, hy * k - hs / 2, hs, hs); ctx.fill(); ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+    scheduleSketchExportRefresh();
+  }
+
+  corners(bb) { return [[bb[0], bb[1]], [bb[2], bb[1]], [bb[2], bb[3]], [bb[0], bb[3]]]; }
+
+  handleAt(x, y) {
+    if (this.selected < 0) return -1;
+    const bb = app.item_bbox_of_sketch(this.note, this.selected);
+    if (bb.length !== 4) return -1;
+    const tol = (7 + 3) / this.scale;
+    return this.corners(bb).findIndex(([hx, hy]) => Math.abs(x - hx) <= tol && Math.abs(y - hy) <= tol);
+  }
+
+  down(ev) {
+    if (ev.button !== 0) return;
+    activeSketch = this;       // Delete/Escape route here
+    setSelection(-1);          // clear any PDF selection
+    const tool = activeTool();
+    const [x, y] = this.coords(ev);
+    this.canvas.setPointerCapture?.(ev.pointerId);
+    if (tool === "text") {
+      ev.preventDefault();
+      this.openText(ev, x, y, "", -1);
+      return;
+    }
+    if (tool === "select") {
+      const h = this.handleAt(x, y);
+      if (h >= 0 && app.begin_item_drag_sketch(this.note, this.selected, x, y)) {
+        const bb = app.item_bbox_of_sketch(this.note, this.selected);
+        this.state = { mode: "resize", anchor: this.corners(bb)[(h + 2) % 4], bb,
+                       uniform: app.item_kind_sketch(this.note, this.selected) !== "shape" };
+        return;
+      }
+      const id = app.find_item_sketch(this.note, x, y);
+      this.selected = id;
+      if (id >= 0 && app.begin_item_drag_sketch(this.note, id, x, y)) {
+        this.state = { mode: "move", id, sx: x, sy: y, moved: false };
+      }
+      this.draw();
+      return;
+    }
+    // drawing tools (snip is PDF-only and ignored on sketches)
+    if (tool === "snip" || tool === "pagetext") return;
+    this.state = { mode: "draw" };
+    app.pointer_down_sketch(this.note, x, y, 10 / this.scale);
+    this.draw();
+  }
+
+  move(ev) {
+    if (!this.state) return;
+    const [x, y] = this.coords(ev);
+    if (this.state.mode === "resize") {
+      const [ax, ay] = this.state.anchor, bb = this.state.bb;
+      const w0 = Math.max(1e-3, Math.abs(bb[2] - bb[0])), h0 = Math.max(1e-3, Math.abs(bb[3] - bb[1]));
+      let sx = Math.abs(x - ax) / w0, sy = Math.abs(y - ay) / h0;
+      if (this.state.uniform) sx = sy = Math.max(sx, sy);
+      app.scale_dragged_item(ax, ay, sx, sy);
+    } else if (this.state.mode === "move") {
+      if (Math.hypot(x - this.state.sx, y - this.state.sy) > 3 / this.scale) this.state.moved = true;
+      if (this.state.moved) app.drag_item(x, y);
+    } else if (this.state.mode === "draw") {
+      app.pointer_move(x, y, 10 / this.scale);
+    }
+    this.draw();
+  }
+
+  up(ev) {
+    this.canvas.releasePointerCapture?.(ev.pointerId);
+    const s = this.state;
+    this.state = null;
+    if (!s) return;
+    if (s.mode === "draw") app.pointer_up();
+    else if (s.mode === "move") {
+      app.end_item_drag();
+      if (!s.moved && app.is_text_sketch(this.note, s.id)) {
+        const pos = app.text_pos_sketch(this.note, s.id);
+        if (pos.length === 2) this.openText(ev, pos[0], pos[1], app.text_content_sketch(this.note, s.id), s.id);
+      }
+    } else if (s.mode === "resize") app.end_item_drag();
+    this.draw();
+  }
+
+  cancel() { this.state = null; app.pointer_cancel(); this.draw(); }
+
+  remove() {
+    if (this.selected >= 0) { app.delete_item_sketch(this.note, this.selected); this.selected = -1; this.draw(); }
+  }
+
+  openText(ev, x, y, initial, editId) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.maxLength = 500;
+    input.value = initial;
+    input.className = "sketch-text-input";
+    const r = this.canvas.getBoundingClientRect();
+    input.style.left = `${x * this.scale}px`;
+    input.style.top = `${y * this.scale - 18}px`;
+    this.canvas.parentElement.appendChild(input);
+    setTimeout(() => input.focus(), 0);
+    const commit = () => {
+      const v = input.value;
+      try {
+        if (editId >= 0) app.update_text_sketch(this.note, editId, v);
+        else if (v.trim()) app.add_text_sketch(this.note, x, y, v);
+      } catch (e) { status(String(e)); }
+      input.remove();
+      this.draw();
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") commit();
+      else if (e.key === "Escape") input.remove();
+      e.stopPropagation();
+    });
+    input.addEventListener("blur", commit);
+  }
+}
+
+// Sketches change the export's notes pages; refresh that lazily is unneeded,
+// but we keep a hook for symmetry with the PDF thumbnail refresh.
+function scheduleSketchExportRefresh() { /* exports read live state on demand */ }
+
+let sketchViews = [];
+let activeSketch = null; // most-recently-interacted sketch (for Delete/Escape)
+
 function renderNotes() {
   // Revoke old blob URLs before rebuilding.
   for (const img of els.notesList.querySelectorAll("img[data-blob]")) {
     URL.revokeObjectURL(img.src);
   }
+  sketchViews = [];
   els.notesList.textContent = "";
   const total = app.notes_len();
   for (let i = 0; i < total; i++) {
     const kind = app.note_kind(i);
     const div = document.createElement("div");
     div.className = "note-block";
+    if (kind === "sketch") {
+      const holder = document.createElement("div");
+      holder.className = "sketch-holder";
+      const canvas = document.createElement("canvas");
+      canvas.className = "sketch-canvas";
+      holder.appendChild(canvas);
+      div.appendChild(holder);
+      div.appendChild(blockActions(i, total));
+      els.notesList.appendChild(div);
+      sketchViews.push(new SketchView(i, canvas));
+      continue;
+    }
     if (kind === "text") {
       const ta = document.createElement("textarea");
       ta.value = app.note_text(i);
@@ -1246,6 +1471,28 @@ els.btn.addNote.addEventListener("click", () => {
   }
 });
 
+$("btn-add-sketch").addEventListener("click", () => {
+  try {
+    // A4-ish portrait canvas; it scales to fit the notes pane.
+    app.add_sketch_note(420, 560);
+    renderNotes();
+    els.notesList.scrollTop = els.notesList.scrollHeight;
+    status("Blank canvas added — draw on it with any tool.");
+  } catch (e) {
+    status(String(e));
+  }
+});
+
+// Re-fit sketch canvases when the notes pane width changes.
+let sketchRelayoutTimer;
+function relayoutSketches() {
+  clearTimeout(sketchRelayoutTimer);
+  sketchRelayoutTimer = setTimeout(() => {
+    for (const v of sketchViews) { v.layout(); v.draw(); }
+  }, 120);
+}
+window.addEventListener("resize", relayoutSketches);
+
 // Splitter: drag to resize the notes pane; double-click to reset.
 let splitDrag = null;
 els.splitter.addEventListener("pointerdown", (ev) => {
@@ -1256,6 +1503,7 @@ els.splitter.addEventListener("pointermove", (ev) => {
   if (!splitDrag) return;
   const w = splitDrag.startW + (splitDrag.startX - ev.clientX);
   els.notesPane.style.width = `${Math.max(220, Math.min(window.innerWidth * 0.6, w))}px`;
+  relayoutSketches();
 });
 els.splitter.addEventListener("pointerup", () => { splitDrag = null; });
 els.splitter.addEventListener("dblclick", () => { els.notesPane.style.width = ""; });

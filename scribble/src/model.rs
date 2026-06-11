@@ -214,8 +214,12 @@ impl Page {
     }
 }
 
-/// A block in the side-by-side working document ("notes"): either a chunk
-/// of plain text or a clipping snipped from the paper (stored as base64 PNG).
+/// A block in the side-by-side working document ("notes"):
+/// - `Text`: a chunk of plain text;
+/// - `Clipping`: a region snipped from the paper (base64 PNG);
+/// - `Sketch`: a blank annotation canvas you draw on with the full toolset.
+///   Its `surface` holds the same [`Page`] structure as a PDF page, so every
+///   tool works on it without any special-casing.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum NoteBlock {
@@ -227,6 +231,18 @@ pub enum NoteBlock {
         source_page: u32,
         caption: String,
     },
+    Sketch {
+        surface: Page,
+    },
+}
+
+/// A drawable surface: either a PDF page (by index) or a sketch note (by its
+/// index in `Document::notes`). Not serialized — it only addresses live
+/// state and the in-memory undo history.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Surface {
+    Pdf(usize),
+    Sketch(usize),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -343,80 +359,101 @@ pub fn validate(doc: &mut Document) -> Result<(), String> {
                     return Err("invalid clipping caption".into());
                 }
             }
+            // Sketch surfaces are validated in the surface loop below.
+            NoteBlock::Sketch { .. } => {}
         }
     }
     let mut seen_ids = std::collections::HashSet::new();
     for page in &mut doc.pages {
-        if !finite(page.width) || !finite(page.height) {
-            return Err("non-finite page size".into());
+        validate_page(page, &mut seen_ids)?;
+    }
+    // Sketch surfaces are full pages and get the identical treatment, sharing
+    // the same id-uniqueness namespace as PDF-page annotations.
+    for block in &mut doc.notes {
+        if let NoteBlock::Sketch { surface } = block {
+            validate_page(surface, &mut seen_ids)?;
         }
-        if page.width < 0.0
-            || page.height < 0.0
-            || page.width > MAX_PAGE_DIM
-            || page.height > MAX_PAGE_DIM
-        {
-            return Err("page size out of range".into());
+    }
+    Ok(())
+}
+
+/// Validate and clamp a single drawing surface (PDF page or sketch).
+fn validate_page(
+    page: &mut Page,
+    seen_ids: &mut std::collections::HashSet<u64>,
+) -> Result<(), String> {
+    if !finite(page.width) || !finite(page.height) {
+        return Err("non-finite page size".into());
+    }
+    if page.width < 0.0
+        || page.height < 0.0
+        || page.width > MAX_PAGE_DIM
+        || page.height > MAX_PAGE_DIM
+    {
+        return Err("page size out of range".into());
+    }
+    if page.items.len() > MAX_ITEMS_PER_PAGE {
+        return Err("too many items on a page".into());
+    }
+    let (w, h) = (page.width.max(1.0), page.height.max(1.0));
+    for item in &mut page.items {
+        if !seen_ids.insert(item.id()) {
+            return Err("duplicate item id".into());
         }
-        if page.items.len() > MAX_ITEMS_PER_PAGE {
-            return Err("too many items on a page".into());
-        }
-        let (w, h) = (page.width.max(1.0), page.height.max(1.0));
-        for item in &mut page.items {
-            if !seen_ids.insert(item.id()) {
-                return Err("duplicate item id".into());
+        match item {
+            Item::Stroke(s) => {
+                if s.points.is_empty() || s.points.len() > MAX_POINTS_PER_STROKE {
+                    return Err("stroke point count out of range".into());
+                }
+                if !finite(s.width) {
+                    return Err("non-finite stroke width".into());
+                }
+                s.width = s.width.clamp(MIN_STROKE_WIDTH, MAX_STROKE_WIDTH);
+                for p in &mut s.points {
+                    if !finite(p[0]) || !finite(p[1]) {
+                        return Err("non-finite stroke point".into());
+                    }
+                    p[0] = p[0].clamp(0.0, w);
+                    p[1] = p[1].clamp(0.0, h);
+                }
             }
-            match item {
-                Item::Stroke(s) => {
-                    if s.points.is_empty() || s.points.len() > MAX_POINTS_PER_STROKE {
-                        return Err("stroke point count out of range".into());
-                    }
-                    if !finite(s.width) {
-                        return Err("non-finite stroke width".into());
-                    }
-                    s.width = s.width.clamp(MIN_STROKE_WIDTH, MAX_STROKE_WIDTH);
-                    for p in &mut s.points {
-                        if !finite(p[0]) || !finite(p[1]) {
-                            return Err("non-finite stroke point".into());
-                        }
-                        p[0] = p[0].clamp(0.0, w);
-                        p[1] = p[1].clamp(0.0, h);
-                    }
+            Item::Shape(s) => {
+                if !finite(s.width) || s.rect.iter().any(|v| !finite(*v)) {
+                    return Err("non-finite shape values".into());
                 }
-                Item::Shape(s) => {
-                    if !finite(s.width) || s.rect.iter().any(|v| !finite(*v)) {
-                        return Err("non-finite shape values".into());
-                    }
-                    s.width = s.width.clamp(MIN_STROKE_WIDTH, MAX_STROKE_WIDTH);
-                    s.rect[0] = s.rect[0].clamp(0.0, w);
-                    s.rect[1] = s.rect[1].clamp(0.0, h);
-                    s.rect[2] = s.rect[2].clamp(0.0, w);
-                    s.rect[3] = s.rect[3].clamp(0.0, h);
+                s.width = s.width.clamp(MIN_STROKE_WIDTH, MAX_STROKE_WIDTH);
+                s.rect[0] = s.rect[0].clamp(0.0, w);
+                s.rect[1] = s.rect[1].clamp(0.0, h);
+                s.rect[2] = s.rect[2].clamp(0.0, w);
+                s.rect[3] = s.rect[3].clamp(0.0, h);
+            }
+            Item::Text(t) => {
+                if t.content.chars().count() > MAX_TEXT_LEN {
+                    return Err("text too long".into());
                 }
-                Item::Text(t) => {
-                    if t.content.chars().count() > MAX_TEXT_LEN {
-                        return Err("text too long".into());
-                    }
-                    if t.content.chars().any(is_forbidden_text_char) {
-                        return Err("forbidden characters in text".into());
-                    }
-                    if !finite(t.size) || !finite(t.pos[0]) || !finite(t.pos[1]) {
-                        return Err("non-finite text values".into());
-                    }
-                    t.size = t.size.clamp(MIN_TEXT_SIZE, MAX_TEXT_SIZE);
-                    t.pos[0] = t.pos[0].clamp(0.0, w);
-                    t.pos[1] = t.pos[1].clamp(0.0, h);
+                if t.content.chars().any(is_forbidden_text_char) {
+                    return Err("forbidden characters in text".into());
                 }
+                if !finite(t.size) || !finite(t.pos[0]) || !finite(t.pos[1]) {
+                    return Err("non-finite text values".into());
+                }
+                t.size = t.size.clamp(MIN_TEXT_SIZE, MAX_TEXT_SIZE);
+                t.pos[0] = t.pos[0].clamp(0.0, w);
+                t.pos[1] = t.pos[1].clamp(0.0, h);
             }
         }
     }
     Ok(())
 }
 
-/// Highest item id in the document (0 if none).
+/// Highest item id across all surfaces (PDF pages and sketches); 0 if none.
 pub fn max_id(doc: &Document) -> u64 {
-    doc.pages
-        .iter()
-        .flat_map(|p| p.items.iter().map(Item::id))
+    let pdf = doc.pages.iter().flat_map(|p| p.items.iter().map(Item::id));
+    let sketch = doc.notes.iter().filter_map(|b| match b {
+        NoteBlock::Sketch { surface } => Some(surface),
+        _ => None,
+    });
+    pdf.chain(sketch.flat_map(|p| p.items.iter().map(Item::id)))
         .max()
         .unwrap_or(0)
 }

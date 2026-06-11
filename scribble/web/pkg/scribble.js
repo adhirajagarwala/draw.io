@@ -152,7 +152,6 @@ export class App {
         wasm.app_pointer_up(this.__wbg_ptr);
     }
     /**
-     * Delete an item as a single undoable step. Returns false if missing.
      * @param {number} page
      * @param {number} id
      * @returns {boolean}
@@ -194,8 +193,18 @@ export class App {
         return ret !== 0;
     }
     /**
-     * Replace the content of an existing text note. Empty content deletes
-     * the note. Either way the change is a single undoable step.
+     * `[width, height]` of a sketch note's canvas, or empty if not a sketch.
+     * @param {number} i
+     * @returns {Float32Array}
+     */
+    sketch_size(i) {
+        const ret = wasm.app_sketch_size(this.__wbg_ptr, i);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * Replace the content of an existing text note (empty content deletes it).
      * @param {number} page
      * @param {number} id
      * @param {string} content
@@ -227,8 +236,6 @@ export class App {
         return ret[0] >>> 0;
     }
     /**
-     * Bounding box `[x0, y0, x1, y1]` of the item, or empty if missing.
-     * Used by the host to draw selection handles.
      * @param {number} page
      * @param {number} id
      * @returns {Float32Array}
@@ -256,6 +263,7 @@ export class App {
         }
     }
     /**
+     * Pointer press on a PDF page.
      * @param {number} page
      * @param {number} x
      * @param {number} y
@@ -273,7 +281,6 @@ export class App {
         wasm.app_pointer_move(this.__wbg_ptr, x, y, erase_radius);
     }
     /**
-     * Content of the text note with `id`, or "" if it doesn't exist.
      * @param {number} page
      * @param {number} id
      * @returns {string}
@@ -305,10 +312,19 @@ export class App {
         return ret[0] >>> 0;
     }
     /**
-     * Finish a move, recording it as a single undoable step.
+     * Finish a move/resize, recording it as a single undoable step.
      */
     end_item_drag() {
         wasm.app_end_item_drag(this.__wbg_ptr);
+    }
+    /**
+     * Draw all annotations for a sketch note onto the (cleared) canvas.
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {number} note
+     * @param {number} scale
+     */
+    render_sketch(ctx, note, scale) {
+        wasm.app_render_sketch(this.__wbg_ptr, ctx, note, scale);
     }
     /**
      * Pen / shape stroke width by named size.
@@ -339,6 +355,15 @@ export class App {
         } finally {
             wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
+    }
+    /**
+     * @param {number} note
+     * @param {number} id
+     * @returns {boolean}
+     */
+    is_text_sketch(note, id) {
+        const ret = wasm.app_is_text_sketch(this.__wbg_ptr, note, id);
+        return ret !== 0;
     }
     /**
      * Cancel any in-progress stroke/shape/drag/erase (e.g. pointer lost).
@@ -374,8 +399,36 @@ export class App {
         }
     }
     /**
+     * Append a blank sketch canvas of the given size. Returns its index.
+     * Annotations on it are NOT undone by this call's history (they have
+     * their own commands once drawn).
+     * @param {number} width
+     * @param {number} height
+     * @returns {number}
+     */
+    add_sketch_note(width, height) {
+        const ret = wasm.app_add_sketch_note(this.__wbg_ptr, width, height);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] >>> 0;
+    }
+    /**
+     * @param {number} note
+     * @param {number} x
+     * @param {number} y
+     * @param {string} content
+     */
+    add_text_sketch(note, x, y, content) {
+        const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.app_add_text_sketch(this.__wbg_ptr, note, x, y, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
      * Start moving an existing item (any kind). `x`, `y` is the grab point.
-     * Returns false if the id is unknown.
      * @param {number} page
      * @param {number} id
      * @param {number} x
@@ -385,6 +438,44 @@ export class App {
     begin_item_drag(page, id, x, y) {
         const ret = wasm.app_begin_item_drag(this.__wbg_ptr, page, id, x, y);
         return ret !== 0;
+    }
+    /**
+     * @param {number} note
+     * @param {number} id
+     * @returns {Float32Array}
+     */
+    text_pos_sketch(note, id) {
+        const ret = wasm.app_text_pos_sketch(this.__wbg_ptr, note, id);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @param {number} note
+     * @param {number} x
+     * @param {number} y
+     * @returns {number}
+     */
+    find_item_sketch(note, x, y) {
+        const ret = wasm.app_find_item_sketch(this.__wbg_ptr, note, x, y);
+        return ret;
+    }
+    /**
+     * @param {number} note
+     * @param {number} id
+     * @returns {string}
+     */
+    item_kind_sketch(note, id) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.app_item_kind_sketch(this.__wbg_ptr, note, id);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
     }
     /**
      * @param {number} i
@@ -407,9 +498,33 @@ export class App {
         }
     }
     /**
+     * PDF vector operators for a sketch note's annotations (for export).
+     * @param {number} i
+     * @returns {string}
+     */
+    sketch_export_ops(i) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.app_sketch_export_ops(this.__wbg_ptr, i);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @param {number} note
+     * @param {number} id
+     * @returns {boolean}
+     */
+    delete_item_sketch(note, id) {
+        const ret = wasm.app_delete_item_sketch(this.__wbg_ptr, note, id);
+        return ret !== 0;
+    }
+    /**
      * Scale the item under drag about an anchor point (a resize preview).
-     * Factors are clamped; text scales its font size by the larger factor.
-     * Commit/undo semantics are identical to a move (end_item_drag).
      * @param {number} anchor_x
      * @param {number} anchor_y
      * @param {number} sx
@@ -417,6 +532,30 @@ export class App {
      */
     scale_dragged_item(anchor_x, anchor_y, sx, sy) {
         wasm.app_scale_dragged_item(this.__wbg_ptr, anchor_x, anchor_y, sx, sy);
+    }
+    /**
+     * @param {number} note
+     * @param {number} id
+     * @param {string} content
+     */
+    update_text_sketch(note, id, content) {
+        const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.app_update_text_sketch(this.__wbg_ptr, note, id, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {number} note
+     * @param {number} id
+     * @returns {Float32Array}
+     */
+    item_bbox_of_sketch(note, id) {
+        const ret = wasm.app_item_bbox_of_sketch(this.__wbg_ptr, note, id);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
     }
     /**
      * PDF ops for a pre-wrapped block of note text on an exported notes
@@ -439,6 +578,33 @@ export class App {
             return getStringFromWasm0(ret[0], ret[1]);
         } finally {
             wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Pointer press on a sketch note (by its index in the notes list).
+     * @param {number} note
+     * @param {number} x
+     * @param {number} y
+     * @param {number} erase_radius
+     */
+    pointer_down_sketch(note, x, y, erase_radius) {
+        wasm.app_pointer_down_sketch(this.__wbg_ptr, note, x, y, erase_radius);
+    }
+    /**
+     * @param {number} note
+     * @param {number} id
+     * @returns {string}
+     */
+    text_content_sketch(note, id) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.app_text_content_sketch(this.__wbg_ptr, note, id);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
     }
     /**
@@ -468,6 +634,17 @@ export class App {
             wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
     }
+    /**
+     * @param {number} note
+     * @param {number} id
+     * @param {number} x
+     * @param {number} y
+     * @returns {boolean}
+     */
+    begin_item_drag_sketch(note, id, x, y) {
+        const ret = wasm.app_begin_item_drag_sketch(this.__wbg_ptr, note, id, x, y);
+        return ret !== 0;
+    }
     constructor() {
         const ret = wasm.app_new();
         this.__wbg_ptr = ret >>> 0;
@@ -481,8 +658,7 @@ export class App {
         wasm.app_undo(this.__wbg_ptr);
     }
     /**
-     * Draw all annotations for `page` onto the (already cleared) annotation
-     * canvas context at the given zoom scale.
+     * Draw all annotations for a PDF page onto the (cleared) canvas.
      * @param {CanvasRenderingContext2D} ctx
      * @param {number} page
      * @param {number} scale
@@ -491,8 +667,6 @@ export class App {
         wasm.app_render(this.__wbg_ptr, ctx, page, scale);
     }
     /**
-     * True if the item with `id` is a text note (the host opens an editor
-     * for these on click instead of just moving them).
      * @param {number} page
      * @param {number} id
      * @returns {boolean}
@@ -563,7 +737,6 @@ export class App {
         return ret !== 0;
     }
     /**
-     * Position `[x, y]` of the text note with `id`, or empty if missing.
      * @param {number} page
      * @param {number} id
      * @returns {Float32Array}
@@ -594,9 +767,7 @@ export class App {
         }
     }
     /**
-     * Move the dragged item with the pointer. The translation is clamped so
-     * the item's bounding box stays on the page (no distortion: the whole
-     * item moves rigidly from its original geometry).
+     * Move the dragged item with the pointer (rigid, clamped to its surface).
      * @param {number} x
      * @param {number} y
      */
@@ -604,7 +775,6 @@ export class App {
         wasm.app_drag_item(this.__wbg_ptr, x, y);
     }
     /**
-     * Topmost item of any kind at (x, y), or -1 if there is none.
      * @param {number} page
      * @param {number} x
      * @param {number} y
@@ -615,8 +785,6 @@ export class App {
         return ret;
     }
     /**
-     * Kind of the item ("stroke" | "text" | "shape" | ""), for the host to
-     * decide e.g. whether resizing must stay uniform.
      * @param {number} page
      * @param {number} id
      * @returns {string}
@@ -658,7 +826,7 @@ export class App {
         return ret !== 0;
     }
     /**
-     * "text" | "clipping" | "" (out of range).
+     * "text" | "clipping" | "sketch" | "" (out of range).
      * @param {number} i
      * @returns {string}
      */

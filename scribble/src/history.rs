@@ -1,19 +1,19 @@
 //! Bounded undo/redo command stack.
 
-use crate::model::Item;
+use crate::model::{Item, Surface};
 use std::collections::VecDeque;
 
 pub const MAX_HISTORY: usize = 200;
 
 #[derive(Clone, Debug)]
 pub enum Command {
-    /// An item was added to `page`.
-    Add { page: usize, item: Item },
-    /// Items were removed from `page` (eraser).
-    Remove { page: usize, items: Vec<Item> },
-    /// An item on `page` was replaced in place (text moved or edited).
+    /// An item was added to `surface`.
+    Add { surface: Surface, item: Item },
+    /// Items were removed from `surface` (eraser/delete).
+    Remove { surface: Surface, items: Vec<Item> },
+    /// An item on `surface` was replaced in place (moved, resized or edited).
     Replace {
-        page: usize,
+        surface: Surface,
         old: Box<Item>,
         new: Box<Item>,
     },
@@ -60,5 +60,21 @@ impl History {
     pub fn clear(&mut self) {
         self.undo.clear();
         self.redo.clear();
+    }
+
+    /// True if any queued command targets a sketch surface (whose note index
+    /// can shift when notes are added, removed, or reordered).
+    pub fn references_sketch(&self) -> bool {
+        let is_sketch = |c: &Command| {
+            matches!(
+                match c {
+                    Command::Add { surface, .. } => surface,
+                    Command::Remove { surface, .. } => surface,
+                    Command::Replace { surface, .. } => surface,
+                },
+                Surface::Sketch(_)
+            )
+        };
+        self.undo.iter().any(is_sketch) || self.redo.iter().any(is_sketch)
     }
 }

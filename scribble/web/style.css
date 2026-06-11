@@ -338,6 +338,34 @@ button { font: inherit; }
 }
 .block-actions button:hover { color: var(--ink); }
 
+/* sketch note block: a blank canvas drawn on with the full toolset */
+.sketch-holder {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+.sketch-canvas {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  touch-action: none;
+  cursor: crosshair;
+  box-shadow: 0 1px 3px rgba(20, 24, 28, 0.12);
+}
+.sketch-text-input {
+  position: absolute;
+  font: inherit;
+  font-size: 14px;
+  padding: 2px 6px;
+  border: 1.5px solid var(--accent);
+  border-radius: 5px;
+  background: #fffdf2;
+  min-width: 120px;
+  z-index: 6;
+  outline: none;
+}
+
 /* PDF.js text layer (active only with the Page-text tool) */
 #text-layer {
   position: absolute;

@@ -30,7 +30,7 @@ enum Tool {
 
 /// State of an in-progress move of an existing item.
 struct DragState {
-    page: usize,
+    surface: Surface,
     id: u64,
     /// Item as it was when the drag began (for undo and for cancel).
     original: Item,
@@ -49,12 +49,12 @@ pub struct App {
     text_size: f32,
     next_id: u64,
     dirty: bool,
-    /// In-progress stroke: (page index, stroke).
-    current: Option<(usize, Stroke)>,
-    /// In-progress drag-placed shape: (page index, shape).
-    current_shape: Option<(usize, Shape)>,
-    /// Items removed during an in-progress eraser drag.
-    erase_pending: Option<(usize, Vec<Item>)>,
+    /// In-progress stroke: (surface, stroke).
+    current: Option<(Surface, Stroke)>,
+    /// In-progress drag-placed shape: (surface, shape).
+    current_shape: Option<(Surface, Shape)>,
+    /// Items removed during an in-progress eraser drag: (surface, items).
+    erase_pending: Option<(Surface, Vec<Item>)>,
     /// Existing item being moved or resized with the select tool.
     item_drag: Option<DragState>,
     /// Active color palette (display preference; files store color names).
@@ -183,8 +183,18 @@ impl App {
 
     // ---------- pointer input (page coordinates, scale 1) ----------
 
+    /// Pointer press on a PDF page.
     pub fn pointer_down(&mut self, page: usize, x: f32, y: f32, erase_radius: f32) {
-        if page >= self.doc.pages.len() || !x.is_finite() || !y.is_finite() {
+        self.pointer_down_on(Surface::Pdf(page), x, y, erase_radius);
+    }
+
+    /// Pointer press on a sketch note (by its index in the notes list).
+    pub fn pointer_down_sketch(&mut self, note: usize, x: f32, y: f32, erase_radius: f32) {
+        self.pointer_down_on(Surface::Sketch(note), x, y, erase_radius);
+    }
+
+    fn pointer_down_on(&mut self, surface: Surface, x: f32, y: f32, erase_radius: f32) {
+        if !self.surface_exists(surface) || !x.is_finite() || !y.is_finite() {
             return;
         }
         match self.tool {
@@ -194,9 +204,9 @@ impl App {
                 } else {
                     (PenKind::Highlighter, self.hl_width)
                 };
-                let (px, py) = self.clamp_to_page(page, x, y);
+                let (px, py) = self.clamp_to_page(surface, x, y);
                 self.current = Some((
-                    page,
+                    surface,
                     Stroke {
                         id: self.next_id,
                         kind,
@@ -207,9 +217,9 @@ impl App {
                 ));
             }
             Tool::Shape(kind) => {
-                let (px, py) = self.clamp_to_page(page, x, y);
+                let (px, py) = self.clamp_to_page(surface, x, y);
                 self.current_shape = Some((
-                    page,
+                    surface,
                     Shape {
                         id: self.next_id,
                         kind,
@@ -220,8 +230,8 @@ impl App {
                 ));
             }
             Tool::Eraser => {
-                self.erase_pending = Some((page, Vec::new()));
-                self.erase_at(page, x, y, erase_radius);
+                self.erase_pending = Some((surface, Vec::new()));
+                self.erase_at(surface, x, y, erase_radius);
             }
             // Select and Text presses are orchestrated by the host UI via
             // find_item / begin_item_drag / add_text.
@@ -233,29 +243,29 @@ impl App {
         if !x.is_finite() || !y.is_finite() {
             return;
         }
-        if let Some((page, _)) = self.current {
-            let (px, py) = self.clamp_to_page(page, x, y);
+        if let Some((surface, _)) = self.current {
+            let (px, py) = self.clamp_to_page(surface, x, y);
             if let Some((_, s)) = &mut self.current {
                 if s.points.len() < MAX_POINTS_PER_STROKE {
                     s.points.push([px, py]);
                 }
             }
-        } else if let Some((page, _)) = self.current_shape {
-            let (px, py) = self.clamp_to_page(page, x, y);
+        } else if let Some((surface, _)) = self.current_shape {
+            let (px, py) = self.clamp_to_page(surface, x, y);
             if let Some((_, s)) = &mut self.current_shape {
                 s.rect[2] = px;
                 s.rect[3] = py;
             }
-        } else if let Some((page, _)) = self.erase_pending {
-            self.erase_at(page, x, y, erase_radius);
+        } else if let Some((surface, _)) = self.erase_pending {
+            self.erase_at(surface, x, y, erase_radius);
         }
     }
 
     pub fn pointer_up(&mut self) {
-        if let Some((page, stroke)) = self.current.take() {
-            self.commit(page, Item::Stroke(stroke));
+        if let Some((surface, stroke)) = self.current.take() {
+            self.commit(surface, Item::Stroke(stroke));
         }
-        if let Some((page, mut shape)) = self.current_shape.take() {
+        if let Some((surface, mut shape)) = self.current_shape.take() {
             // A click without a drag places a sensibly sized default marker.
             const MIN_DRAG: f32 = 4.0;
             const DEFAULT_SIZE: f32 = 18.0;
@@ -265,12 +275,12 @@ impl App {
                 shape.rect[2] = shape.rect[0] + DEFAULT_SIZE;
                 shape.rect[3] = shape.rect[1] - DEFAULT_SIZE;
             }
-            self.commit(page, Item::Shape(shape));
+            self.commit(surface, Item::Shape(shape));
         }
-        if let Some((page, removed)) = self.erase_pending.take() {
+        if let Some((surface, removed)) = self.erase_pending.take() {
             if !removed.is_empty() {
                 self.history.push(Command::Remove {
-                    page,
+                    surface,
                     items: removed,
                 });
                 self.dirty = true;
@@ -284,14 +294,14 @@ impl App {
         self.current_shape = None;
         // A cancelled move reverts the item to where it started.
         if let Some(drag) = self.item_drag.take() {
-            self.remove_by_id(drag.page, drag.id);
-            self.re_add(drag.page, vec![drag.original]);
+            self.remove_by_id(drag.surface, drag.id);
+            self.re_add(drag.surface, vec![drag.original]);
         }
         // Committed erasures stay; record them so undo works.
-        if let Some((page, removed)) = self.erase_pending.take() {
+        if let Some((surface, removed)) = self.erase_pending.take() {
             if !removed.is_empty() {
                 self.history.push(Command::Remove {
-                    page,
+                    surface,
                     items: removed,
                 });
                 self.dirty = true;
@@ -302,11 +312,32 @@ impl App {
     // ---------- text ----------
 
     pub fn add_text(&mut self, page: usize, x: f32, y: f32, content: &str) -> Result<(), String> {
-        if page >= self.doc.pages.len() {
-            return Err("no such page".to_string());
+        self.add_text_on(Surface::Pdf(page), x, y, content)
+    }
+
+    pub fn add_text_sketch(
+        &mut self,
+        note: usize,
+        x: f32,
+        y: f32,
+        content: &str,
+    ) -> Result<(), String> {
+        self.add_text_on(Surface::Sketch(note), x, y, content)
+    }
+
+    fn add_text_on(
+        &mut self,
+        surface: Surface,
+        x: f32,
+        y: f32,
+        content: &str,
+    ) -> Result<(), String> {
+        let full = matches!(self.page_ref(surface), Some(p) if p.items.len() >= MAX_ITEMS_PER_PAGE);
+        if self.page_ref(surface).is_none() {
+            return Err("no such surface".to_string());
         }
-        if self.doc.pages[page].items.len() >= MAX_ITEMS_PER_PAGE {
-            return Err("page is full".to_string());
+        if full {
+            return Err("surface is full".to_string());
         }
         if !x.is_finite() || !y.is_finite() {
             return Err("invalid position".to_string());
@@ -315,7 +346,7 @@ impl App {
         if content.trim().is_empty() {
             return Ok(());
         }
-        let (px, py) = self.clamp_to_page(page, x, y);
+        let (px, py) = self.clamp_to_page(surface, x, y);
         let item = Item::Text(Text {
             id: self.next_id,
             pos: [px, py],
@@ -324,9 +355,7 @@ impl App {
             size: self.text_size,
         });
         self.next_id += 1;
-        self.doc.pages[page].items.push(item.clone());
-        self.history.push(Command::Add { page, item });
-        self.dirty = true;
+        self.commit(surface, item);
         Ok(())
     }
 
@@ -335,9 +364,17 @@ impl App {
     // Item ids cross the WASM boundary as f64 (avoids BigInt friction in JS);
     // every id is validated as a non-negative integer before use.
 
-    /// Topmost item of any kind at (x, y), or -1 if there is none.
+    // PDF-page selection API. Each method has a `*_sketch` twin targeting a
+    // note sketch; both delegate to one surface-generic implementation.
+
     pub fn find_item(&self, page: usize, x: f32, y: f32) -> f64 {
-        let Some(p) = self.doc.pages.get(page) else {
+        self.find_item_on(Surface::Pdf(page), x, y)
+    }
+    pub fn find_item_sketch(&self, note: usize, x: f32, y: f32) -> f64 {
+        self.find_item_on(Surface::Sketch(note), x, y)
+    }
+    fn find_item_on(&self, surface: Surface, x: f32, y: f32) -> f64 {
+        let Some(p) = self.page_ref(surface) else {
             return -1.0;
         };
         if !x.is_finite() || !y.is_finite() {
@@ -355,43 +392,57 @@ impl App {
             .unwrap_or(-1.0)
     }
 
-    /// True if the item with `id` is a text note (the host opens an editor
-    /// for these on click instead of just moving them).
     pub fn is_text(&self, page: usize, id: f64) -> bool {
-        self.find_text_item(page, id).is_some()
+        self.find_text_item(Surface::Pdf(page), id).is_some()
+    }
+    pub fn is_text_sketch(&self, note: usize, id: f64) -> bool {
+        self.find_text_item(Surface::Sketch(note), id).is_some()
     }
 
-    /// Content of the text note with `id`, or "" if it doesn't exist.
     pub fn text_content(&self, page: usize, id: f64) -> String {
-        self.find_text_item(page, id)
+        self.find_text_item(Surface::Pdf(page), id)
+            .map(|t| t.content.clone())
+            .unwrap_or_default()
+    }
+    pub fn text_content_sketch(&self, note: usize, id: f64) -> String {
+        self.find_text_item(Surface::Sketch(note), id)
             .map(|t| t.content.clone())
             .unwrap_or_default()
     }
 
-    /// Position `[x, y]` of the text note with `id`, or empty if missing.
     pub fn text_pos(&self, page: usize, id: f64) -> Vec<f32> {
-        self.find_text_item(page, id)
+        self.find_text_item(Surface::Pdf(page), id)
+            .map(|t| t.pos.to_vec())
+            .unwrap_or_default()
+    }
+    pub fn text_pos_sketch(&self, note: usize, id: f64) -> Vec<f32> {
+        self.find_text_item(Surface::Sketch(note), id)
             .map(|t| t.pos.to_vec())
             .unwrap_or_default()
     }
 
     /// Start moving an existing item (any kind). `x`, `y` is the grab point.
-    /// Returns false if the id is unknown.
     pub fn begin_item_drag(&mut self, page: usize, id: f64, x: f32, y: f32) -> bool {
+        self.begin_item_drag_on(Surface::Pdf(page), id, x, y)
+    }
+    pub fn begin_item_drag_sketch(&mut self, note: usize, id: f64, x: f32, y: f32) -> bool {
+        self.begin_item_drag_on(Surface::Sketch(note), id, x, y)
+    }
+    fn begin_item_drag_on(&mut self, surface: Surface, id: f64, x: f32, y: f32) -> bool {
         if !x.is_finite() || !y.is_finite() {
             return false;
         }
         let Some(id) = checked_id(id) else {
             return false;
         };
-        let Some(p) = self.doc.pages.get(page) else {
+        let Some(p) = self.page_ref(surface) else {
             return false;
         };
         let Some(item) = p.items.iter().find(|it| it.id() == id) else {
             return false;
         };
         self.item_drag = Some(DragState {
-            page,
+            surface,
             id,
             original: item.clone(),
             grab: (x, y),
@@ -399,9 +450,7 @@ impl App {
         true
     }
 
-    /// Move the dragged item with the pointer. The translation is clamped so
-    /// the item's bounding box stays on the page (no distortion: the whole
-    /// item moves rigidly from its original geometry).
+    /// Move the dragged item with the pointer (rigid, clamped to its surface).
     pub fn drag_item(&mut self, x: f32, y: f32) {
         if !x.is_finite() || !y.is_finite() {
             return;
@@ -409,43 +458,47 @@ impl App {
         let Some(drag) = &self.item_drag else {
             return;
         };
-        let (page, id, grab) = (drag.page, drag.id, drag.grab);
+        let (surface, id, grab) = (drag.surface, drag.id, drag.grab);
         let original = drag.original.clone();
-        let Some(p) = self.doc.pages.get(page) else {
+        let Some(p) = self.page_ref(surface) else {
             return;
         };
         let (dx, dy) = clamp_translation(&original, x - grab.0, y - grab.1, p.width, p.height);
         let moved = translate_item(&original, dx, dy);
-        if let Some(p) = self.doc.pages.get_mut(page) {
+        if let Some(p) = self.page_mut(surface) {
             if let Some(slot) = p.items.iter_mut().find(|it| it.id() == id) {
                 *slot = moved;
             }
         }
     }
 
-    /// Bounding box `[x0, y0, x1, y1]` of the item, or empty if missing.
-    /// Used by the host to draw selection handles.
     pub fn item_bbox_of(&self, page: usize, id: f64) -> Vec<f32> {
+        self.item_bbox_on(Surface::Pdf(page), id)
+    }
+    pub fn item_bbox_of_sketch(&self, note: usize, id: f64) -> Vec<f32> {
+        self.item_bbox_on(Surface::Sketch(note), id)
+    }
+    fn item_bbox_on(&self, surface: Surface, id: f64) -> Vec<f32> {
         let Some(id) = checked_id(id) else {
             return Vec::new();
         };
-        self.doc
-            .pages
-            .get(page)
+        self.page_ref(surface)
             .and_then(|p| p.items.iter().find(|it| it.id() == id))
             .map(|it| item_bbox(it).to_vec())
             .unwrap_or_default()
     }
 
-    /// Kind of the item ("stroke" | "text" | "shape" | ""), for the host to
-    /// decide e.g. whether resizing must stay uniform.
     pub fn item_kind(&self, page: usize, id: f64) -> String {
+        self.item_kind_on(Surface::Pdf(page), id)
+    }
+    pub fn item_kind_sketch(&self, note: usize, id: f64) -> String {
+        self.item_kind_on(Surface::Sketch(note), id)
+    }
+    fn item_kind_on(&self, surface: Surface, id: f64) -> String {
         let Some(id) = checked_id(id) else {
             return String::new();
         };
-        self.doc
-            .pages
-            .get(page)
+        self.page_ref(surface)
             .and_then(|p| p.items.iter().find(|it| it.id() == id))
             .map(|it| match it {
                 Item::Stroke(_) => "stroke",
@@ -457,8 +510,6 @@ impl App {
     }
 
     /// Scale the item under drag about an anchor point (a resize preview).
-    /// Factors are clamped; text scales its font size by the larger factor.
-    /// Commit/undo semantics are identical to a move (end_item_drag).
     pub fn scale_dragged_item(&mut self, anchor_x: f32, anchor_y: f32, sx: f32, sy: f32) {
         if !anchor_x.is_finite() || !anchor_y.is_finite() || !sx.is_finite() || !sy.is_finite() {
             return;
@@ -467,10 +518,10 @@ impl App {
         let Some(drag) = &self.item_drag else {
             return;
         };
-        let (page, id) = (drag.page, drag.id);
+        let (surface, id) = (drag.surface, drag.id);
         let original = drag.original.clone();
         let scaled = scale_item(&original, anchor_x, anchor_y, sx, sy);
-        let Some(p) = self.doc.pages.get_mut(page) else {
+        let Some(p) = self.page_mut(surface) else {
             return;
         };
         let (w, h) = (p.width.max(1.0), p.height.max(1.0));
@@ -479,12 +530,17 @@ impl App {
         }
     }
 
-    /// Delete an item as a single undoable step. Returns false if missing.
     pub fn delete_item(&mut self, page: usize, id: f64) -> bool {
+        self.delete_item_on(Surface::Pdf(page), id)
+    }
+    pub fn delete_item_sketch(&mut self, note: usize, id: f64) -> bool {
+        self.delete_item_on(Surface::Sketch(note), id)
+    }
+    fn delete_item_on(&mut self, surface: Surface, id: f64) -> bool {
         let Some(id) = checked_id(id) else {
             return false;
         };
-        let Some(p) = self.doc.pages.get_mut(page) else {
+        let Some(p) = self.page_mut(surface) else {
             return false;
         };
         let Some(idx) = p.items.iter().position(|it| it.id() == id) else {
@@ -492,19 +548,19 @@ impl App {
         };
         let removed = p.items.remove(idx);
         self.history.push(Command::Remove {
-            page,
+            surface,
             items: vec![removed],
         });
         self.dirty = true;
         true
     }
 
-    /// Finish a move, recording it as a single undoable step.
+    /// Finish a move/resize, recording it as a single undoable step.
     pub fn end_item_drag(&mut self) {
         let Some(drag) = self.item_drag.take() else {
             return;
         };
-        let Some(p) = self.doc.pages.get(drag.page) else {
+        let Some(p) = self.page_ref(drag.surface) else {
             return;
         };
         let Some(new) = p.items.iter().find(|it| it.id() == drag.id).cloned() else {
@@ -514,29 +570,39 @@ impl App {
             return; // nothing moved
         }
         self.history.push(Command::Replace {
-            page: drag.page,
+            surface: drag.surface,
             old: Box::new(drag.original),
             new: Box::new(new),
         });
         self.dirty = true;
     }
 
-    /// Replace the content of an existing text note. Empty content deletes
-    /// the note. Either way the change is a single undoable step.
+    /// Replace the content of an existing text note (empty content deletes it).
     pub fn update_text(&mut self, page: usize, id: f64, content: &str) -> Result<(), String> {
+        self.update_text_on(Surface::Pdf(page), id, content)
+    }
+    pub fn update_text_sketch(
+        &mut self,
+        note: usize,
+        id: f64,
+        content: &str,
+    ) -> Result<(), String> {
+        self.update_text_on(Surface::Sketch(note), id, content)
+    }
+    fn update_text_on(&mut self, surface: Surface, id: f64, content: &str) -> Result<(), String> {
         let id = checked_id(id).ok_or("invalid id")?;
-        let p = self.doc.pages.get_mut(page).ok_or("no such page")?;
+        let content = sanitize_text(content);
+        let p = self.page_mut(surface).ok_or("no such surface")?;
         let idx = p
             .items
             .iter()
             .position(|it| it.id() == id && matches!(it, Item::Text(_)))
             .ok_or("no such text note")?;
-        let content = sanitize_text(content);
         let old = p.items[idx].clone();
         if content.trim().is_empty() {
             p.items.remove(idx);
             self.history.push(Command::Remove {
-                page,
+                surface,
                 items: vec![old],
             });
         } else {
@@ -545,7 +611,7 @@ impl App {
             }
             let new = p.items[idx].clone();
             self.history.push(Command::Replace {
-                page,
+                surface,
                 old: Box::new(old),
                 new: Box::new(new),
             });
@@ -554,11 +620,9 @@ impl App {
         Ok(())
     }
 
-    fn find_text_item(&self, page: usize, id: f64) -> Option<&Text> {
+    fn find_text_item(&self, surface: Surface, id: f64) -> Option<&Text> {
         let id = checked_id(id)?;
-        self.doc
-            .pages
-            .get(page)?
+        self.page_ref(surface)?
             .items
             .iter()
             .find_map(|it| match it {
@@ -577,12 +641,29 @@ impl App {
         self.doc.notes.len()
     }
 
-    /// "text" | "clipping" | "" (out of range).
+    /// "text" | "clipping" | "sketch" | "" (out of range).
     pub fn note_kind(&self, i: usize) -> String {
         match self.doc.notes.get(i) {
             Some(NoteBlock::Text { .. }) => "text".into(),
             Some(NoteBlock::Clipping { .. }) => "clipping".into(),
+            Some(NoteBlock::Sketch { .. }) => "sketch".into(),
             None => String::new(),
+        }
+    }
+
+    /// `[width, height]` of a sketch note's canvas, or empty if not a sketch.
+    pub fn sketch_size(&self, i: usize) -> Vec<f32> {
+        match self.doc.notes.get(i) {
+            Some(NoteBlock::Sketch { surface }) => vec![surface.width, surface.height],
+            _ => Vec::new(),
+        }
+    }
+
+    /// PDF vector operators for a sketch note's annotations (for export).
+    pub fn sketch_export_ops(&self, i: usize) -> String {
+        match self.doc.notes.get(i) {
+            Some(NoteBlock::Sketch { surface }) => export::page_ops(surface, self.palette),
+            _ => String::new(),
         }
     }
 
@@ -612,6 +693,33 @@ impl App {
             Some(NoteBlock::Clipping { source_page, .. }) => *source_page as i32,
             _ => -1,
         }
+    }
+
+    /// Append a blank sketch canvas of the given size. Returns its index.
+    /// Annotations on it are NOT undone by this call's history (they have
+    /// their own commands once drawn).
+    pub fn add_sketch_note(&mut self, width: f32, height: f32) -> Result<usize, String> {
+        if self.doc.notes.len() >= MAX_NOTE_BLOCKS {
+            return Err("notes are full".into());
+        }
+        if !width.is_finite()
+            || !height.is_finite()
+            || width <= 0.0
+            || height <= 0.0
+            || width > MAX_PAGE_DIM
+            || height > MAX_PAGE_DIM
+        {
+            return Err("invalid sketch size".into());
+        }
+        self.doc.notes.push(NoteBlock::Sketch {
+            surface: Page {
+                width,
+                height,
+                items: Vec::new(),
+            },
+        });
+        self.dirty = true;
+        Ok(self.doc.notes.len() - 1)
     }
 
     /// Append an empty/with-content text block. Returns its index.
@@ -676,6 +784,9 @@ impl App {
     pub fn remove_note(&mut self, i: usize) -> bool {
         if i < self.doc.notes.len() {
             self.doc.notes.remove(i);
+            // Undo history addresses sketch surfaces by note index; removing a
+            // block invalidates those indices, so drop history to stay sound.
+            self.discard_history_referencing_sketches();
             self.dirty = true;
             true
         } else {
@@ -689,10 +800,30 @@ impl App {
         let j = i as i64 + delta as i64;
         if i < len && j >= 0 && (j as usize) < len {
             self.doc.notes.swap(i, j as usize);
+            self.discard_history_referencing_sketches();
             self.dirty = true;
             true
         } else {
             false
+        }
+    }
+
+    /// Drop the undo history if it references any sketch surface (whose index
+    /// just changed). PDF-only histories are common and kept untouched.
+    fn discard_history_referencing_sketches(&mut self) {
+        if self.history.references_sketch() {
+            self.history.clear();
+        }
+        // An in-progress sketch interaction is also invalidated.
+        if matches!(self.current, Some((Surface::Sketch(_), _)))
+            || matches!(self.current_shape, Some((Surface::Sketch(_), _)))
+            || matches!(self.erase_pending, Some((Surface::Sketch(_), _)))
+            || matches!(&self.item_drag, Some(d) if matches!(d.surface, Surface::Sketch(_)))
+        {
+            self.current = None;
+            self.current_shape = None;
+            self.erase_pending = None;
+            self.item_drag = None;
         }
     }
 
@@ -712,11 +843,11 @@ impl App {
     pub fn undo(&mut self) {
         if let Some(cmd) = self.history.pop_undo() {
             match cmd {
-                Command::Add { page, item } => self.remove_by_id(page, item.id()),
-                Command::Remove { page, items } => self.re_add(page, items),
-                Command::Replace { page, old, new } => {
-                    self.remove_by_id(page, new.id());
-                    self.re_add(page, vec![*old]);
+                Command::Add { surface, item } => self.remove_by_id(surface, item.id()),
+                Command::Remove { surface, items } => self.re_add(surface, items),
+                Command::Replace { surface, old, new } => {
+                    self.remove_by_id(surface, new.id());
+                    self.re_add(surface, vec![*old]);
                 }
             }
             self.dirty = true;
@@ -726,15 +857,15 @@ impl App {
     pub fn redo(&mut self) {
         if let Some(cmd) = self.history.pop_redo() {
             match cmd {
-                Command::Add { page, item } => self.re_add(page, vec![item]),
-                Command::Remove { page, items } => {
+                Command::Add { surface, item } => self.re_add(surface, vec![item]),
+                Command::Remove { surface, items } => {
                     for it in &items {
-                        self.remove_by_id(page, it.id());
+                        self.remove_by_id(surface, it.id());
                     }
                 }
-                Command::Replace { page, old, new } => {
-                    self.remove_by_id(page, old.id());
-                    self.re_add(page, vec![*new]);
+                Command::Replace { surface, old, new } => {
+                    self.remove_by_id(surface, old.id());
+                    self.re_add(surface, vec![*new]);
                 }
             }
             self.dirty = true;
@@ -771,7 +902,9 @@ impl App {
         self.doc = doc;
         self.history.clear();
         self.current = None;
+        self.current_shape = None;
         self.erase_pending = None;
+        self.item_drag = None;
         self.dirty = false;
         Ok(())
     }
@@ -786,10 +919,18 @@ impl App {
 
     // ---------- rendering ----------
 
-    /// Draw all annotations for `page` onto the (already cleared) annotation
-    /// canvas context at the given zoom scale.
+    /// Draw all annotations for a PDF page onto the (cleared) canvas.
     pub fn render(&self, ctx: &CanvasRenderingContext2d, page: usize, scale: f64) {
-        let Some(p) = self.doc.pages.get(page) else {
+        self.render_surface(ctx, Surface::Pdf(page), scale);
+    }
+
+    /// Draw all annotations for a sketch note onto the (cleared) canvas.
+    pub fn render_sketch(&self, ctx: &CanvasRenderingContext2d, note: usize, scale: f64) {
+        self.render_surface(ctx, Surface::Sketch(note), scale);
+    }
+
+    fn render_surface(&self, ctx: &CanvasRenderingContext2d, surface: Surface, scale: f64) {
+        let Some(p) = self.page_ref(surface) else {
             return;
         };
         if !(0.05..=20.0).contains(&scale) {
@@ -802,13 +943,13 @@ impl App {
         for item in &p.items {
             draw_item(ctx, item, self.palette);
         }
-        if let Some((cur_page, stroke)) = &self.current {
-            if *cur_page == page {
+        if let Some((s, stroke)) = &self.current {
+            if *s == surface {
                 draw_stroke(ctx, stroke, self.palette);
             }
         }
-        if let Some((cur_page, shape)) = &self.current_shape {
-            if *cur_page == page {
+        if let Some((s, shape)) = &self.current_shape {
+            if *s == surface {
                 draw_shape(ctx, shape, self.palette);
             }
         }
@@ -838,8 +979,33 @@ impl App {
 
     // ---------- internals ----------
 
-    fn clamp_to_page(&self, page: usize, x: f32, y: f32) -> (f32, f32) {
-        match self.doc.pages.get(page) {
+    /// Resolve a surface to its [`Page`], if it exists.
+    fn page_ref(&self, s: Surface) -> Option<&Page> {
+        match s {
+            Surface::Pdf(i) => self.doc.pages.get(i),
+            Surface::Sketch(i) => match self.doc.notes.get(i) {
+                Some(NoteBlock::Sketch { surface }) => Some(surface),
+                _ => None,
+            },
+        }
+    }
+
+    fn page_mut(&mut self, s: Surface) -> Option<&mut Page> {
+        match s {
+            Surface::Pdf(i) => self.doc.pages.get_mut(i),
+            Surface::Sketch(i) => match self.doc.notes.get_mut(i) {
+                Some(NoteBlock::Sketch { surface }) => Some(surface),
+                _ => None,
+            },
+        }
+    }
+
+    fn surface_exists(&self, s: Surface) -> bool {
+        self.page_ref(s).is_some()
+    }
+
+    fn clamp_to_page(&self, s: Surface, x: f32, y: f32) -> (f32, f32) {
+        match self.page_ref(s) {
             Some(p) if p.width > 0.0 && p.height > 0.0 => {
                 (x.clamp(0.0, p.width), y.clamp(0.0, p.height))
             }
@@ -847,24 +1013,26 @@ impl App {
         }
     }
 
-    /// Append a finished item to its page and record it for undo.
-    fn commit(&mut self, page: usize, item: Item) {
+    /// Append a finished item to its surface and record it for undo.
+    fn commit(&mut self, surface: Surface, item: Item) {
         self.next_id = self.next_id.max(item.id() + 1);
-        if page < self.doc.pages.len() && self.doc.pages[page].items.len() < MAX_ITEMS_PER_PAGE {
-            self.doc.pages[page].items.push(item.clone());
-            self.history.push(Command::Add { page, item });
-            self.dirty = true;
+        if let Some(p) = self.page_mut(surface) {
+            if p.items.len() < MAX_ITEMS_PER_PAGE {
+                p.items.push(item.clone());
+                self.history.push(Command::Add { surface, item });
+                self.dirty = true;
+            }
         }
     }
 
-    fn remove_by_id(&mut self, page: usize, id: u64) {
-        if let Some(p) = self.doc.pages.get_mut(page) {
+    fn remove_by_id(&mut self, surface: Surface, id: u64) {
+        if let Some(p) = self.page_mut(surface) {
             p.items.retain(|it| it.id() != id);
         }
     }
 
-    fn re_add(&mut self, page: usize, items: Vec<Item>) {
-        if let Some(p) = self.doc.pages.get_mut(page) {
+    fn re_add(&mut self, surface: Surface, items: Vec<Item>) {
+        if let Some(p) = self.page_mut(surface) {
             for item in items {
                 if p.items.len() < MAX_ITEMS_PER_PAGE {
                     p.items.push(item);
@@ -873,13 +1041,13 @@ impl App {
         }
     }
 
-    fn erase_at(&mut self, page: usize, x: f32, y: f32, radius: f32) {
+    fn erase_at(&mut self, surface: Surface, x: f32, y: f32, radius: f32) {
         let radius = if radius.is_finite() {
             radius.clamp(1.0, 100.0)
         } else {
             8.0
         };
-        let Some(p) = self.doc.pages.get_mut(page) else {
+        let Some(p) = self.page_mut(surface) else {
             return;
         };
         let mut removed = Vec::new();
@@ -1539,6 +1707,127 @@ mod tests {
         let ops = a.note_text_block_ops("line (1)\n) Tj /evil (", 50.0, 700.0, 11.0);
         assert!(ops.contains(r"(line \(1\)) Tj"));
         assert!(ops.contains(r"(\) Tj /evil \() Tj"));
+    }
+
+    #[test]
+    fn draw_on_sketch_note_with_full_toolset() {
+        let mut a = app_with_page();
+        let n = a.add_sketch_note(400.0, 300.0).unwrap();
+        assert_eq!(a.note_kind(n), "sketch");
+        assert_eq!(a.sketch_size(n), vec![400.0, 300.0]);
+        // pen on the sketch
+        a.set_tool("pen");
+        a.pointer_down_sketch(n, 10.0, 10.0, 8.0);
+        a.pointer_move(80.0, 60.0, 8.0);
+        a.pointer_up();
+        // text on the sketch
+        a.add_text_sketch(n, 20.0, 40.0, "label").unwrap();
+        // a box on the sketch
+        a.set_tool("rect");
+        a.pointer_down_sketch(n, 100.0, 100.0, 8.0);
+        a.pointer_move(200.0, 180.0, 8.0);
+        a.pointer_up();
+        // The sketch surface now holds 3 items; the PDF page holds none.
+        // (45, 35) is the midpoint of the pen stroke (10,10)->(80,60).
+        let id = a.find_item_sketch(n, 45.0, 35.0);
+        assert!(id >= 0.0);
+        assert_eq!(
+            a.find_item(0, 45.0, 35.0),
+            -1.0,
+            "PDF page must be untouched"
+        );
+        // export emits vector ops for the sketch
+        assert!(a.sketch_export_ops(n).contains(" l\n"));
+    }
+
+    #[test]
+    fn sketch_undo_redo_is_isolated_from_pdf() {
+        let mut a = app_with_page();
+        let n = a.add_sketch_note(400.0, 300.0).unwrap();
+        // draw on PDF, then on sketch
+        a.set_tool("pen");
+        a.pointer_down(0, 5.0, 5.0, 8.0);
+        a.pointer_up();
+        a.pointer_down_sketch(n, 5.0, 5.0, 8.0);
+        a.pointer_up();
+        // undo removes the sketch stroke (last action), PDF stroke remains
+        a.undo();
+        assert_eq!(a.find_item_sketch(n, 5.0, 5.0), -1.0);
+        assert!(a.find_item(0, 5.0, 5.0) >= 0.0);
+        a.redo();
+        assert!(a.find_item_sketch(n, 5.0, 5.0) >= 0.0);
+    }
+
+    #[test]
+    fn sketch_move_resize_delete() {
+        let mut a = app_with_page();
+        let n = a.add_sketch_note(400.0, 300.0).unwrap();
+        a.add_text_sketch(n, 50.0, 50.0, "x").unwrap();
+        let id = a.find_item_sketch(n, 52.0, 46.0);
+        // move
+        a.begin_item_drag_sketch(n, id, 50.0, 50.0);
+        a.drag_item(150.0, 120.0);
+        a.end_item_drag();
+        assert_eq!(a.text_pos_sketch(n, id), vec![150.0, 120.0]);
+        // resize (text grows font)
+        a.begin_item_drag_sketch(n, id, 150.0, 120.0);
+        a.scale_dragged_item(150.0, 120.0, 1.5, 1.5);
+        a.end_item_drag();
+        // delete
+        assert!(a.delete_item_sketch(n, id));
+        assert_eq!(a.find_item_sketch(n, 150.0, 120.0), -1.0);
+        a.undo(); // brings it back
+        assert!(a.find_item_sketch(n, 150.0, 120.0) >= 0.0);
+    }
+
+    #[test]
+    fn sketch_survives_save_load_and_validates() {
+        let mut a = app_with_page();
+        let n = a.add_sketch_note(400.0, 300.0).unwrap();
+        a.set_tool("pen");
+        a.pointer_down_sketch(n, 10.0, 10.0, 8.0);
+        a.pointer_move(50.0, 50.0, 8.0);
+        a.pointer_up();
+        let json = a.save_json().unwrap();
+        let mut b = App::new();
+        b.load_json(&json).unwrap();
+        assert_eq!(b.note_kind(n), "sketch");
+        assert!(b.find_item_sketch(n, 30.0, 30.0) >= 0.0);
+        // ids stay globally unique after load (next_id past the max)
+        b.add_sketch_note(100.0, 100.0).unwrap();
+    }
+
+    #[test]
+    fn removing_a_note_clears_sketch_history_safely() {
+        let mut a = app_with_page();
+        let n0 = a.add_sketch_note(400.0, 300.0).unwrap();
+        a.add_text_note("between").unwrap();
+        let n2 = a.add_sketch_note(400.0, 300.0).unwrap();
+        a.set_tool("pen");
+        a.pointer_down_sketch(n2, 10.0, 10.0, 8.0);
+        a.pointer_up();
+        assert!(a.can_undo());
+        // Removing the earlier sketch shifts n2's index; history must be
+        // dropped rather than left pointing at the wrong surface.
+        assert!(a.remove_note(n0));
+        assert!(!a.can_undo(), "sketch-referencing history discarded");
+        // The shifted sketch is still intact and drawable.
+        let shifted = 1; // n2 moved from index 2 to 1
+        assert_eq!(a.note_kind(shifted), "sketch");
+        a.pointer_down_sketch(shifted, 20.0, 20.0, 8.0);
+        a.pointer_up();
+        assert!(a.find_item_sketch(shifted, 20.0, 20.0) >= 0.0);
+    }
+
+    #[test]
+    fn sketch_validation_rejects_hostile_surface() {
+        // A loaded sketch with a non-finite stroke point is rejected.
+        let json = r#"{"version":1,"pdf_sha256":"","pages":[],"notes":[
+            {"type":"Sketch","surface":{"width":400,"height":300,"items":[
+              {"type":"Stroke","Stroke":{"id":1,"kind":"Pen","color":"Red","width":2,"points":[[1,"x"]]}}
+            ]}}]}"#;
+        let mut b = App::new();
+        assert!(b.load_json(json).is_err());
     }
 
     #[test]

@@ -21,14 +21,22 @@ feature uses WebCrypto, which requires a secure context — localhost counts.)
 
 ## Usage
 
-New in this version: a **Select tool (V)** with move/resize (corner handles;
+Feature highlights: a **Select tool (V)** with move/resize (corner handles;
 strokes and text scale uniformly) and Delete; a **Snip tool (S)** that copies
 any dragged region — image *and* the PDF text inside it — into a side-by-side
-**Notes pane** (movable splitter) whose blocks export as extra pages in the
-final PDF; a **Page-text tool (I)** for selecting the PDF's own text; a page
-**thumbnails sidebar** showing your marks; a **colorblind-safe palette**
-toggle (green→brown, red→vermillion; files store color names, not pixels);
-and a **larger-controls** toggle.
+**Notes pane** (movable splitter); a **Page-text tool (I)** for selecting the
+PDF's own text; a page **thumbnails sidebar** showing your marks; a
+**colorblind-safe palette** toggle (green→brown, red→vermillion; files store
+color names, not pixels); and a **larger-controls** toggle.
+
+**Notes you can draw on.** The Notes pane holds three kinds of block: text,
+snipped clippings, and **blank sketch canvases** (＋ Draw). A sketch is a full
+annotation surface — the *same* pen, highlighter, shapes, text, eraser,
+select/move/resize/delete and undo work on it, because the Rust engine treats
+PDF pages and sketches as interchangeable "surfaces" (no duplicated logic).
+Everything — paper annotations, text notes, clippings, and sketches — is saved
+in one work file and laid out into the **Export PDF**: paper pages first, then
+your notes (text/clippings) and each sketch as its own crisp vector page.
 
 
 - **Open PDF** → pick the question paper.
@@ -57,8 +65,9 @@ wasm-bindgen target/wasm32-unknown-unknown/release/scribble.wasm \
   --target web --out-dir web/pkg --no-typescript
 ```
 
-Checks: `cargo test` (21 tests), `cargo clippy --all-targets -- -D warnings`,
-`cargo fmt --check`, `cargo audit` (all run in CI).
+Checks: `cargo test` (44 tests), `cargo clippy --all-targets -- -D warnings`,
+`cargo fmt --check`, `cargo audit` (all run in CI). Security model and threat
+analysis: see [`../SECURITY.md`](../SECURITY.md).
 
 ## Security design
 
@@ -88,9 +97,9 @@ Checks: `cargo test` (21 tests), `cargo clippy --all-targets -- -D warnings`,
 ```
 scribble/
 ├── Cargo.toml
-├── src/lib.rs        # WASM API: tools, input, undo/redo, render, save/load
-├── src/model.rs      # document model + strict validation (+ tests)
-├── src/history.rs    # bounded undo/redo command stack
+├── src/lib.rs        # WASM API: surfaces, tools, undo/redo, render, save/load
+├── src/model.rs      # document model, Surface, strict validation (+ tests)
+├── src/history.rs    # bounded undo/redo command stack (keyed by surface)
 ├── src/export.rs     # vector PDF operator generation (+ injection tests)
 └── web/
     ├── index.html    # CSP, toolbar, layered canvases
