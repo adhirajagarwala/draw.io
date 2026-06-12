@@ -3,9 +3,9 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "4";
+const APP_VERSION = "5";
 
-import init, { App } from "./pkg/scribble.js?v=4";
+import init, { App } from "./pkg/scribble.js?v=5";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1075,6 +1075,28 @@ function goToPage(n, scrollTo = "top") {
 
 els.btn.prev.addEventListener("click", () => goToPage(pageNum - 1));
 els.btn.next.addEventListener("click", () => goToPage(pageNum + 1));
+
+// Trackpad / wheel paging: scroll past the bottom of a page to advance, past
+// the top to go back. Within a tall (zoomed) page, normal scrolling works and
+// only the edges flip pages. A cooldown stops one momentum flick from skipping
+// several pages; Ctrl/Cmd+wheel is left to the browser (pinch-zoom).
+let lastWheelFlip = 0;
+els.viewer.addEventListener("wheel", (ev) => {
+  if (!pdfDoc || ev.ctrlKey || ev.metaKey) return;
+  if (Math.abs(ev.deltaY) < 4) return;
+  const v = els.viewer;
+  const atBottom = v.scrollTop + v.clientHeight >= v.scrollHeight - 2;
+  const atTop = v.scrollTop <= 2;
+  const now = Date.now();
+  if (now - lastWheelFlip < 550) return; // one flick = one page
+  if (ev.deltaY > 0 && atBottom && pageNum < pdfDoc.numPages - 1) {
+    lastWheelFlip = now;
+    goToPage(pageNum + 1, "top");
+  } else if (ev.deltaY < 0 && atTop && pageNum > 0) {
+    lastWheelFlip = now;
+    goToPage(pageNum - 1, "bottom");
+  }
+}, { passive: true });
 
 els.pageInput.addEventListener("change", () => {
   const n = parseInt(els.pageInput.value, 10);
