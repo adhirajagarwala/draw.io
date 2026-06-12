@@ -3,9 +3,9 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "5";
+const APP_VERSION = "6";
 
-import init, { App } from "./pkg/scribble.js?v=5";
+import init, { App } from "./pkg/scribble.js?v=6";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -321,6 +321,10 @@ async function openPdf(file) {
     els.btn.notes.disabled = false;
     selectedId = -1;
     els.thumbs.textContent = "";
+    // Show the page thumbnails by default for any multi-page document (they're
+    // the primary way to see where your marks are and to jump around).
+    els.thumbs.hidden = doc.numPages <= 1;
+    els.btn.thumbs.classList.toggle("active", !els.thumbs.hidden);
     if (!els.thumbs.hidden) await buildThumbnails();
     renderNotes();
     await renderPage();
@@ -1605,6 +1609,7 @@ function scheduleThumbRefresh() {
 
 els.btn.thumbs.addEventListener("click", async () => {
   els.thumbs.hidden = !els.thumbs.hidden;
+  els.btn.thumbs.classList.toggle("active", !els.thumbs.hidden);
   if (!els.thumbs.hidden && els.thumbs.childElementCount === 0) {
     await buildThumbnails();
   }

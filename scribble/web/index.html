@@ -11,7 +11,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
   <header id="toolbar">
@@ -49,8 +49,9 @@
         <svg viewBox="0 0 24 24"><path d="M4 8V4h4"/><path d="M16 4h4v4"/><path d="M20 16v4h-4"/><path d="M8 20H4v-4"/><rect x="9" y="9" width="6" height="6"/></svg>
         Snip
       </button>
-      <button class="btn tool" data-tool="pagetext" title="Page text — select and copy the PDF's own text (shortcut: I)">
-        <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+      <button class="btn tool" data-tool="pagetext" title="Copy text — select the paper's own text with your cursor and copy it (shortcut: I)">
+        <svg viewBox="0 0 24 24"><path d="M5 5h7M8.5 5v14M6 19h5"/><path d="M14 11h6M14 11l-2 4M20 11l2 4M13 19h5"/></svg>
+        Copy text
       </button>
     </div>
 
@@ -196,6 +197,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=5"></script>
+  <script type="module" src="app.js?v=6"></script>
 </body>
 </html>
