@@ -3,9 +3,9 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "6";
+const APP_VERSION = "7";
 
-import init, { App } from "./pkg/scribble.js?v=6";
+import init, { App } from "./pkg/scribble.js?v=7";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -51,6 +51,10 @@ const els = {
   notesList: $("notes-list"),
   splitter: $("splitter"),
   textLayer: $("text-layer"),
+  contextBar: $("context-bar"),
+  docControls: $("doc-controls"),
+  widths: $("widths"),
+  widthDivider: $("width-divider"),
   status: $("status"),
   btn: {
     open: $("btn-open"), save: $("btn-save"), load: $("btn-load"),
@@ -68,7 +72,7 @@ const els = {
 // tool while they're active).
 const JS_TOOLS = new Set(["snip", "pagetext"]);
 const activeTool = () =>
-  document.querySelector("#toolbar .tool.active")?.dataset.tool;
+  document.querySelector(".tool.active")?.dataset.tool;
 
 let app;            // WASM App
 let pdfDoc = null;  // PDF.js document
@@ -319,6 +323,8 @@ async function openPdf(file) {
     els.zoomSelect.disabled = false;
     els.btn.thumbs.disabled = false;
     els.btn.notes.disabled = false;
+    els.docControls.hidden = false;
+    updateContextBar(activeTool());
     selectedId = -1;
     els.thumbs.textContent = "";
     // Show the page thumbnails by default for any multi-page document (they're
@@ -362,7 +368,7 @@ function capturePointer(ev) {
 
 els.annoCanvas.addEventListener("pointerdown", (ev) => {
   if (!pdfDoc || ev.button !== 0) return;
-  const tool = document.querySelector("#toolbar .tool.active")?.dataset.tool;
+  const tool = document.querySelector(".tool.active")?.dataset.tool;
   const [x, y] = pageCoords(ev);
   if (tool === "snip") {
     ev.preventDefault();
@@ -1023,7 +1029,7 @@ els.fileJson.addEventListener("change", () => {
   if (f) loadJsonFile(f);
 });
 
-for (const b of document.querySelectorAll("#toolbar .tool")) {
+for (const b of document.querySelectorAll(".tool")) {
   b.addEventListener("click", () => {
     commitTextInput();
     const name = b.dataset.tool;
@@ -1032,11 +1038,12 @@ for (const b of document.querySelectorAll("#toolbar .tool")) {
     } else if (!app.set_tool(name)) {
       return;
     }
-    document.querySelectorAll("#toolbar .tool").forEach((x) => x.classList.remove("active"));
+    document.querySelectorAll(".tool").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     document.body.classList.toggle("textselect", name === "pagetext");
     if (name !== "select") setSelection(-1);
     els.annoCanvas.style.cursor = name === "snip" ? "crosshair" : "";
+    updateContextBar(name);
     // Build/tear down the selectable text layer as the tool toggles.
     if (name === "pagetext" && pdfDoc) {
       pdfDoc.getPage(pageNum + 1).then(buildTextLayer);
@@ -1044,6 +1051,25 @@ for (const b of document.querySelectorAll("#toolbar .tool")) {
       els.textLayer.textContent = "";
     }
   });
+}
+
+// Tools that use a colour. Width applies to freehand + stroked shapes only
+// (not the text note, which has its own size, nor the solid shade box).
+const MARKING_TOOLS = new Set([
+  "pen", "highlighter", "text", "tick", "cross", "circle", "arrow", "rect", "fillrect",
+]);
+const WIDTH_TOOLS = new Set(["pen", "highlighter", "tick", "cross", "circle", "arrow", "rect"]);
+
+// Show the contextual colour/thickness bar only when a marking tool is active
+// and a document is open — so it never distracts during select/snip/etc.
+function updateContextBar(tool) {
+  const show = !!pdfDoc && MARKING_TOOLS.has(tool);
+  els.contextBar.hidden = !show;
+  if (show) {
+    const w = WIDTH_TOOLS.has(tool);
+    els.widths.style.display = w ? "flex" : "none";
+    els.widthDivider.style.display = w ? "" : "none";
+  }
 }
 
 for (const b of document.querySelectorAll("#widths .width")) {
@@ -1173,7 +1199,7 @@ document.addEventListener("keydown", (ev) => {
       activeSketch.draw();
     }
   } else if (!mod && TOOL_KEYS[key]) {
-    document.querySelector(`#toolbar [data-tool="${TOOL_KEYS[key]}"]`)?.click();
+    document.querySelector(`[data-tool="${TOOL_KEYS[key]}"]`)?.click();
   } else if (ev.key === "PageDown" || ev.key === "PageUp") {
     if (!pdfDoc) return;
     const v = els.viewer;
