@@ -3,9 +3,9 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "9";
+const APP_VERSION = "11";
 
-import init, { App } from "./pkg/scribble.js?v=9";
+import init, { App } from "./pkg/scribble.js?v=11";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -38,6 +38,7 @@ const els = {
   placeholder: $("placeholder"),
   wrap: $("page-wrap"),
   pdfCanvas: $("pdf-canvas"),
+  htmlFrame: $("html-frame"),
   annoCanvas: $("anno-canvas"),
   textInput: $("text-input"),
   filePdf: $("file-pdf"),
@@ -76,6 +77,7 @@ const activeTool = () =>
 
 let app;            // WASM App
 let pdfDoc = null;  // PDF.js document
+let docMode = "pdf"; // "pdf" | "html" — what kind of document is open
 let pageNum = 0;    // 0-based current page
 let drawing = false;
 let renderTask = null;
@@ -87,6 +89,9 @@ let basePage = { w: 1, h: 1 }; // current page size in PDF points
 
 const scale = () => currentScale;
 const dpr = () => Math.max(1, Math.min(4, window.devicePixelRatio || 1));
+
+// A drawable document (PDF or uploaded HTML) is currently open.
+const docOpen = () => !!pdfDoc || (docMode === "html" && !els.wrap.hidden);
 
 // All PDF.js page renders (viewer, thumbnails, export) go through one lock.
 // PDF.js rejects overlapping renders ("Cannot use the same canvas…"), and the
@@ -310,6 +315,10 @@ async function openPdf(file) {
     }
     if (pdfDoc) await pdfDoc.destroy();
     pdfDoc = doc;
+    docMode = "pdf";
+    els.htmlFrame.hidden = true;
+    els.htmlFrame.srcdoc = "";
+    els.pdfCanvas.hidden = false;
     app = new App(); // fresh document per PDF
     if (hash) app.set_pdf_sha256(hash);
     pageNum = 0;
@@ -341,6 +350,104 @@ async function openPdf(file) {
   }
 }
 
+// ---------- HTML loading ----------
+
+const MAX_HTML_BYTES = 5 * 1024 * 1024;
+const HTML_MAX_PAGE_H = 6000; // cap canvas-backed page height (browser limits)
+
+async function openHtml(file) {
+  if (file.size > MAX_HTML_BYTES) {
+    status("HTML file too large (max 5 MB).");
+    return;
+  }
+  let text;
+  try {
+    text = await file.text();
+  } catch {
+    status("Couldn't read that file.");
+    return;
+  }
+  try {
+    if (pdfDoc) { try { await pdfDoc.destroy(); } catch { /* ignore */ } pdfDoc = null; }
+    docMode = "html";
+    app = new App();
+    pageNum = 0;
+    zoomMode = "1";
+    currentScale = 1;
+    selectedId = -1;
+
+    // The uploaded HTML renders in a same-origin sandboxed iframe with NO
+    // script permission, so embedded scripts never run — it shows as static
+    // content and can't do anything. The annotation canvas sits on top.
+    els.placeholder.hidden = true;
+    els.wrap.hidden = false;
+    els.pdfCanvas.hidden = true;
+    els.textLayer.textContent = "";
+    els.htmlFrame.hidden = false;
+    await new Promise((resolve) => {
+      els.htmlFrame.onload = () => resolve();
+      els.htmlFrame.srcdoc = text;
+      // Fallback in case onload doesn't fire promptly.
+      setTimeout(resolve, 1200);
+    });
+
+    layoutHtmlPage();
+
+    els.btn.save.disabled = false;
+    els.btn.load.disabled = false;
+    els.btn.notes.disabled = false;
+    els.btn.export.disabled = true;   // export not supported for HTML yet
+    els.btn.thumbs.disabled = true;
+    els.thumbs.hidden = true;
+    els.btn.thumbs.classList.remove("active");
+    els.docControls.hidden = false;
+    els.pageInput.disabled = true;
+    els.zoomSelect.disabled = true;
+    els.pageInput.value = "1";
+    els.pageCount.textContent = "/ 1";
+    els.btn.prev.disabled = true;
+    els.btn.next.disabled = true;
+    els.btn.zoomIn.disabled = true;
+    els.btn.zoomOut.disabled = true;
+    updateContextBar(activeTool());
+    renderNotes();
+    status("HTML loaded. Scribble away!");
+  } catch (e) {
+    console.error("openHtml failed:", e);
+    status(`Could not open HTML: ${e?.message || e}`);
+  }
+}
+
+// Lay the HTML out at the viewer's available width, measure its height, and
+// size the overlay annotation canvas to match (1:1 page coordinates = CSS px).
+function layoutHtmlPage() {
+  const avail = Math.max(320, Math.floor(els.viewer.clientWidth - 60));
+  const f = els.htmlFrame;
+  f.style.width = `${avail}px`;
+  f.style.height = "200px"; // temp, so content can lay out to width first
+  let h = 600;
+  try {
+    const d = f.contentDocument;
+    if (d && d.body) {
+      h = Math.max(d.body.scrollHeight, d.documentElement.scrollHeight, 200);
+    }
+  } catch { /* cross-origin shouldn't happen for srcdoc; keep default */ }
+  h = Math.min(h, HTML_MAX_PAGE_H);
+  f.style.height = `${h}px`;
+
+  basePage = { w: avail, h };
+  currentScale = 1;
+  app.ensure_page(0, avail, h);
+
+  const ratio = dpr();
+  els.annoCanvas.hidden = false;
+  els.annoCanvas.width = Math.floor(avail * ratio);
+  els.annoCanvas.height = Math.floor(h * ratio);
+  els.annoCanvas.style.width = `${avail}px`;
+  els.annoCanvas.style.height = `${h}px`;
+  redrawAnnotations();
+}
+
 // ---------- pointer input ----------
 
 function pageCoords(ev) {
@@ -367,7 +474,7 @@ function capturePointer(ev) {
 }
 
 els.annoCanvas.addEventListener("pointerdown", (ev) => {
-  if (!pdfDoc || ev.button !== 0) return;
+  if (!docOpen() || ev.button !== 0) return;
   const tool = document.querySelector(".tool.active")?.dataset.tool;
   const [x, y] = pageCoords(ev);
   if (tool === "snip") {
@@ -452,7 +559,7 @@ els.annoCanvas.addEventListener("pointermove", (ev) => {
     return;
   }
   // Hover feedback for the select tool.
-  if (!drawing && pdfDoc && activeTool() === "select") {
+  if (!drawing && docOpen() && activeTool() === "select") {
     const [x, y] = pageCoords(ev);
     const h = handleAt(x, y);
     els.annoCanvas.style.cursor =
@@ -1020,7 +1127,9 @@ els.btn.export.addEventListener("click", exportPdf);
 els.filePdf.addEventListener("change", () => {
   const f = els.filePdf.files[0];
   els.filePdf.value = "";
-  if (f) openPdf(f);
+  if (!f) return;
+  if (/\.html?$/i.test(f.name) || f.type === "text/html") openHtml(f);
+  else openPdf(f);
 });
 
 els.fileJson.addEventListener("change", () => {
@@ -1063,7 +1172,7 @@ const WIDTH_TOOLS = new Set(["pen", "highlighter", "tick", "cross", "circle", "a
 // Show the contextual colour/thickness bar only when a marking tool is active
 // and a document is open — so it never distracts during select/snip/etc.
 function updateContextBar(tool) {
-  const show = !!pdfDoc && MARKING_TOOLS.has(tool);
+  const show = docOpen() && MARKING_TOOLS.has(tool);
   els.contextBar.hidden = !show;
   if (show) {
     const w = WIDTH_TOOLS.has(tool);
@@ -1155,7 +1264,10 @@ els.zoomSelect.addEventListener("change", () => {
 let resizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => renderPage(), 150);
+  resizeTimer = setTimeout(() => {
+    if (docMode === "html") { if (!els.wrap.hidden) layoutHtmlPage(); }
+    else renderPage();
+  }, 150);
 });
 
 const TOOL_KEYS = {

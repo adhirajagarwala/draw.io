@@ -11,7 +11,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=9">
+  <link rel="stylesheet" href="style.css?v=11">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -23,9 +23,9 @@
       Scribble
     </div>
 
-    <button id="btn-open" class="btn labeled" title="Open a question paper (PDF)">
+    <button id="btn-open" class="btn labeled" title="Open a PDF or HTML file to annotate">
       <svg viewBox="0 0 24 24"><path d="M4 20V4a1 1 0 0 1 1-1h8l6 6v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M13 3v6h6"/></svg>
-      Open PDF
+      Open
     </button>
 
     <div class="topbar-right">
@@ -146,9 +146,11 @@
          pinned while the page scrolls. -->
     <section id="stage">
       <div id="viewer">
-        <p id="placeholder">Open a question paper (PDF) to start scribbling.</p>
+        <p id="placeholder">Open a PDF or HTML file to start scribbling.</p>
         <div id="page-wrap" hidden>
           <canvas id="pdf-canvas"></canvas>
+          <iframe id="html-frame" hidden sandbox="allow-same-origin"
+                  referrerpolicy="no-referrer" title="Uploaded document"></iframe>
           <div id="text-layer"></div>
           <canvas id="anno-canvas"></canvas>
           <input id="text-input" type="text" maxlength="500" hidden
@@ -234,9 +236,9 @@
 
   <div id="status" role="status" aria-live="polite"></div>
 
-  <input id="file-pdf" type="file" accept=".pdf,application/pdf" hidden>
+  <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=9"></script>
+  <script type="module" src="app.js?v=11"></script>
 </body>
 </html>

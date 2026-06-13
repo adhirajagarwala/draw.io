@@ -11,3 +11,4 @@ annotated-*.pdf
 # OS noise
 .DS_Store
 Thumbs.db
+sample.html

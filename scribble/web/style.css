@@ -519,6 +519,16 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
 }
 
 #pdf-canvas { display: block; border-radius: 2px; }
+#pdf-canvas[hidden] { display: none; }
+
+/* uploaded HTML rendered as a drawable page (annotation canvas sits on top) */
+#html-frame {
+  display: block;
+  border: none;
+  background: #fff;
+  pointer-events: none;   /* the annotation canvas above receives all input */
+}
+#html-frame[hidden] { display: none; }
 
 #anno-canvas {
   position: absolute;
