@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "12";
+const APP_VERSION = "13";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -1263,19 +1263,32 @@ function goToPage(n, scrollTo = "top") {
 els.btn.prev.addEventListener("click", () => goToPage(pageNum - 1));
 els.btn.next.addEventListener("click", () => goToPage(pageNum + 1));
 
-// Trackpad / wheel paging: scroll past the bottom of a page to advance, past
-// the top to go back. Within a tall (zoomed) page, normal scrolling works and
-// only the edges flip pages. A cooldown stops one momentum flick from skipping
-// several pages; Ctrl/Cmd+wheel is left to the browser (pinch-zoom).
+// Trackpad / wheel paging. Within a tall page, scrolling works normally and
+// the page simply rests against its top/bottom edge. Flipping to the next or
+// previous page takes a SEPARATE, deliberate scroll once you are ALREADY at
+// the edge — so a single fast flick down a long page rests at the bottom
+// instead of overshooting into the next page; a second flick then flips. A
+// page that fully fits the viewport (nothing to scroll) flips on one
+// deliberate scroll. We detect this by gesture: trackpad momentum arrives as a
+// continuous stream of events, so only the FIRST event after a real pause
+// (a fresh flick) is allowed to flip. Ctrl/Cmd+wheel is left to the browser
+// (pinch-zoom).
+const WHEEL_GESTURE_GAP = 160; // ms of quiet that marks the start of a new flick
+let lastWheelTime = 0;
 let lastWheelFlip = 0;
 els.viewer.addEventListener("wheel", (ev) => {
   if (!pdfDoc || ev.ctrlKey || ev.metaKey) return;
   if (Math.abs(ev.deltaY) < 4) return;
+  const now = Date.now();
+  const newGesture = now - lastWheelTime > WHEEL_GESTURE_GAP;
+  lastWheelTime = now;
+  // Only the first event of a fresh gesture may flip. The rest of a flick's
+  // momentum just scrolls and comes to rest against the edge without flipping.
+  if (!newGesture) return;
+  if (now - lastWheelFlip < 300) return; // backstop: one flick = one page
   const v = els.viewer;
   const atBottom = v.scrollTop + v.clientHeight >= v.scrollHeight - 2;
   const atTop = v.scrollTop <= 2;
-  const now = Date.now();
-  if (now - lastWheelFlip < 550) return; // one flick = one page
   if (ev.deltaY > 0 && atBottom && pageNum < pdfDoc.numPages - 1) {
     lastWheelFlip = now;
     goToPage(pageNum + 1, "top");
