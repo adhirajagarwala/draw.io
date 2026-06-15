@@ -3,6 +3,43 @@
 This file is the standing checklist. The rules here are written down because
 ignoring them has cost real time and broken-looking demos.
 
+## 0. How to work here — plan → critique → execute (every time)
+
+Before writing code for any non-trivial change:
+
+1. **Roadmap.** Write the concrete steps, the files each touches, and how each
+   piece will be verified.
+2. **Critique it.** List what could break, the edge cases, simpler
+   alternatives, the UX/discoverability angle (not just "does it function"),
+   and the single riskiest assumption. Revise the plan in light of that.
+3. **Execute** the revised plan, then verify live (rule 9) before claiming it
+   works.
+
+Skipping this has repeatedly caused rework. Plan first, even when the change
+feels obvious. Also: **ASK before assuming** when scope is ambiguous — this is a
+project rule, not a suggestion.
+
+## Mistakes log — read before testing/shipping (do NOT repeat)
+
+- **Stale cache while testing through the browser.** A plain navigate served a
+  stale `index.html` (page loaded `app.js?v=13` when the file was already v14),
+  which made a working change look broken. Always: (a) bump `APP_VERSION` and
+  the index `?v=` together, (b) when driving the page via the Chrome extension,
+  append a unique `?cb=<n>` to the URL to force a fresh `index.html`, and
+  (c) verify the loaded `APP_VERSION` in the page **before** running any test.
+- **Reading state right after an async render.** Tests read `#page-input`
+  immediately after an async `goToPage`/render and got stale, self-contradictory
+  values. Wait for the render to settle (poll until the canvas/scrollHeight is
+  stable) or assert on a deterministic signal — never read UI state in the same
+  tick as the async action that changes it.
+- **Shipping a feature that worked but wasn't usable.** Continuous scroll first
+  shipped with invisible (white) page gaps and an icon-only, non-discoverable
+  toggle. Build for visual clarity and discoverability — visible page
+  separation, labeled controls — and critique the UX before executing, not after
+  the user complains.
+- **Not planning first.** Jumped straight into implementation without a written,
+  critiqued roadmap. Follow section 0.
+
 ## 1. ALWAYS HARD-REFRESH AFTER ANY CHANGE — Cmd+Shift+R
 
 The dev server is `python3 -m http.server`, which sends **no cache headers**.
