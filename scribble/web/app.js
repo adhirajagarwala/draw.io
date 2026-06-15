@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "13";
+const APP_VERSION = "18";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -67,6 +67,7 @@ const els = {
     palette: $("btn-palette"), big: $("btn-big"),
     addNote: $("btn-add-note"),
   },
+  seg: { paged: $("seg-paged"), cont: $("seg-cont") },
 };
 
 // Tools that exist only in the UI layer (the Rust core stays in a neutral
@@ -81,6 +82,7 @@ let docMode = "pdf"; // "pdf" | "html" — what kind of document is open
 let pageNum = 0;    // 0-based current page
 let drawing = false;
 let renderTask = null;
+let scrollMode = "paged"; // "paged" (one page at a time) | "continuous" (PDF only)
 
 // Zoom: a percentage, or a fit mode recomputed on resize.
 let zoomMode = "1"; // option value from the zoom <select>
@@ -89,6 +91,20 @@ let basePage = { w: 1, h: 1 }; // current page size in PDF points
 
 const scale = () => currentScale;
 const dpr = () => Math.max(1, Math.min(4, window.devicePixelRatio || 1));
+
+// Continuous-scroll layout (PDF only). One tall canvas holds every page stacked;
+// each entry records where its page sits, in CSS px. contRatio is the canvas
+// backing ratio — normally devicePixelRatio, reduced only if the whole stack
+// would exceed the browser's safe single-canvas height. contActiveTopCss is the
+// top of the page the pointer is currently interacting with.
+let contLayout = [];        // [{ base:{w,h}, topCss, hCss, wCss }]
+let contRatio = 1;
+let contActiveTopCss = 0;
+const CONT_GAP = 18;        // CSS px gap shown between stacked pages
+const CONT_MAX_BACKING = 16000; // safe single-canvas height ceiling (px)
+// The on-screen backing ratio in use right now (continuous may cap it).
+const curRatio = () => (scrollMode === "continuous" ? contRatio : dpr());
+const isContinuous = () => scrollMode === "continuous" && docMode === "pdf";
 
 // A drawable document (PDF or uploaded HTML) is currently open.
 const docOpen = () => !!pdfDoc || (docMode === "html" && !els.wrap.hidden);
@@ -161,24 +177,25 @@ function handlePoints(bb) {
   ];
 }
 
-function drawSelection(ctx) {
+function drawSelection(ctx, offY = 0) {
   if (selectedId < 0) return;
   const bb = app.item_bbox_of(pageNum, selectedId);
   if (bb.length !== 4) {
     selectedId = -1;
     return;
   }
-  const k = scale() * dpr();
+  const r = curRatio();
+  const k = scale() * r;
   ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, offY);
   ctx.strokeStyle = "#2f5fde";
-  ctx.lineWidth = 1.5 * dpr();
-  ctx.setLineDash([5 * dpr(), 4 * dpr()]);
+  ctx.lineWidth = 1.5 * r;
+  ctx.setLineDash([5 * r, 4 * r]);
   const pad = 4 * k / scale();
   ctx.strokeRect(bb[0] * k - pad, bb[1] * k - pad, (bb[2] - bb[0]) * k + 2 * pad, (bb[3] - bb[1]) * k + 2 * pad);
   ctx.setLineDash([]);
   ctx.fillStyle = "#ffffff";
-  const hs = HANDLE_PX * dpr();
+  const hs = HANDLE_PX * r;
   for (const [hx, hy] of handlePoints(bb)) {
     ctx.beginPath();
     ctx.rect(hx * k - hs / 2, hy * k - hs / 2, hs, hs);
@@ -203,11 +220,27 @@ function redrawAnnotations() {
   const ctx = els.annoCanvas.getContext("2d");
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, els.annoCanvas.width, els.annoCanvas.height);
-  // Backing store is scale*dpr for crisp output at any devicePixelRatio
-  // (including browser zoom); CSS shrinks it back to `scale`.
-  app.render(ctx, pageNum, scale() * dpr());
-  drawSelection(ctx);
-  drawSnipMarquee(ctx);
+  if (isContinuous()) {
+    // Every page draws into its own slot on the one tall canvas. Rust's render
+    // composes onto the current transform (save + scale), so a per-page
+    // translate lands each page's marks in place.
+    const k = scale() * contRatio;
+    for (let i = 0; i < contLayout.length; i++) {
+      const offY = Math.round(contLayout[i].topCss * contRatio);
+      ctx.setTransform(1, 0, 0, 1, 0, offY);
+      app.render(ctx, i, k);
+    }
+    const aOff = Math.round(contActiveTopCss * contRatio);
+    drawSelection(ctx, aOff);
+    drawSnipMarquee(ctx, aOff);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  } else {
+    // Backing store is scale*dpr for crisp output at any devicePixelRatio
+    // (including browser zoom); CSS shrinks it back to `scale`.
+    app.render(ctx, pageNum, scale() * dpr());
+    drawSelection(ctx);
+    drawSnipMarquee(ctx);
+  }
   els.btn.undo.disabled = !app.can_undo();
   els.btn.redo.disabled = !app.can_redo();
   scheduleThumbRefresh();
@@ -216,6 +249,7 @@ function redrawAnnotations() {
 async function renderPage() {
   if (!pdfDoc) return;
   commitTextInput();
+  els.wrap.classList.remove("continuous"); // single-page sheet styling
   const page = await pdfDoc.getPage(pageNum + 1);
   const base = page.getViewport({ scale: 1 });
   basePage = { w: base.width, h: base.height };
@@ -262,6 +296,145 @@ async function renderPage() {
   if (activeTool() === "pagetext") buildTextLayer(page);
   else els.textLayer.textContent = "";
 }
+
+// ---------- continuous scroll (Apple Preview style, PDF only) ----------
+
+// Render every page stacked into the one tall canvas so the document flows as a
+// single scroll. Each page keeps its own engine surface, so all annotation
+// tools still work — the page under the pointer becomes active on press.
+let contRenderToken = 0;
+async function renderContinuous() {
+  if (!pdfDoc) return;
+  const token = ++contRenderToken;
+  commitTextInput();
+  const bases = [];
+  for (let i = 0; i < pdfDoc.numPages; i++) {
+    const pg = await pdfDoc.getPage(i + 1);
+    const v = pg.getViewport({ scale: 1 });
+    bases.push({ w: v.width, h: v.height });
+    app.ensure_page(i, v.width, v.height);
+  }
+  if (token !== contRenderToken) return;
+  const maxW = Math.max(...bases.map((b) => b.w));
+  // Both fit modes track the widest page when everything is stacked.
+  const s = (zoomMode === "fit-width" || zoomMode === "fit-page")
+    ? clampZoom((els.viewer.clientWidth - FIT_MARGIN) / maxW)
+    : clampZoom(parseFloat(zoomMode) || 1);
+  currentScale = s;
+  contLayout = [];
+  let top = 0;
+  for (const b of bases) {
+    contLayout.push({ base: b, topCss: top, hCss: b.h * s, wCss: b.w * s });
+    top += b.h * s + CONT_GAP;
+  }
+  const totalCss = Math.max(1, top - CONT_GAP);
+  const canvasCssW = maxW * s;
+  // Keep the single backing canvas under the browser's safe height; lower the
+  // backing ratio before giving up, and fall back to paged if even 1x is too
+  // tall (a guard for pathologically long PDFs — exam papers are short).
+  let ratio = dpr();
+  while (ratio > 1 && totalCss * ratio > CONT_MAX_BACKING) ratio -= 1;
+  if (totalCss * ratio > CONT_MAX_BACKING) {
+    status("This PDF is too long for continuous view; showing one page at a time.");
+    scrollMode = "paged";
+    syncScrollUI();
+    await renderPage();
+    return;
+  }
+  contRatio = ratio;
+  if (pageNum >= contLayout.length) pageNum = contLayout.length - 1;
+  basePage = contLayout[pageNum].base;
+  contActiveTopCss = contLayout[pageNum].topCss;
+
+  els.htmlFrame.hidden = true;
+  els.pdfCanvas.hidden = false;
+  els.annoCanvas.hidden = false;
+  els.textLayer.textContent = "";
+  els.wrap.classList.add("continuous"); // transparent bg so gaps + shadows show
+  for (const c of [els.pdfCanvas, els.annoCanvas]) {
+    c.width = Math.max(1, Math.floor(canvasCssW * ratio));
+    c.height = Math.max(1, Math.floor(totalCss * ratio));
+    c.style.width = `${Math.floor(canvasCssW)}px`;
+    c.style.height = `${Math.floor(totalCss)}px`;
+  }
+  // Paint each page raster into its slot via a temp canvas. This avoids relying
+  // on PDF.js transform semantics and keeps the render lock honored per page.
+  const pctx = els.pdfCanvas.getContext("2d");
+  pctx.setTransform(1, 0, 0, 1, 0, 0);
+  pctx.clearRect(0, 0, els.pdfCanvas.width, els.pdfCanvas.height); // gaps stay clear
+  for (let i = 0; i < contLayout.length; i++) {
+    const pg = await pdfDoc.getPage(i + 1);
+    const v = pg.getViewport({ scale: s * ratio });
+    const tmp = document.createElement("canvas");
+    tmp.width = Math.max(1, Math.floor(v.width));
+    tmp.height = Math.max(1, Math.floor(v.height));
+    try {
+      await withRenderLock(() =>
+        pg.render({ canvasContext: tmp.getContext("2d"), viewport: v, intent: "print" }).promise);
+    } catch (e) {
+      if (e?.name !== "RenderingCancelledException") throw e;
+      return;
+    }
+    if (token !== contRenderToken) return; // a newer render supersedes us
+    const slotY = Math.round(contLayout[i].topCss * ratio);
+    // A white sheet with a soft drop-shadow so each page reads as a separate
+    // page; the gaps between sheets stay transparent and show the viewer
+    // background, so you can clearly see where one page ends and the next
+    // begins.
+    pctx.save();
+    pctx.shadowColor = "rgba(20, 24, 28, 0.22)";
+    pctx.shadowBlur = 10 * ratio;
+    pctx.shadowOffsetY = 2 * ratio;
+    pctx.fillStyle = "#ffffff";
+    pctx.fillRect(0, slotY, tmp.width, tmp.height);
+    pctx.restore();
+    pctx.drawImage(tmp, 0, slotY);
+  }
+  els.pageInput.max = String(pdfDoc.numPages);
+  els.pageCount.textContent = `/ ${pdfDoc.numPages}`;
+  els.pageInput.value = String(pageNum + 1);
+  syncZoomSelect();
+  els.btn.zoomOut.disabled = currentScale <= ZOOM_MIN;
+  els.btn.zoomIn.disabled = currentScale >= ZOOM_MAX;
+  els.btn.prev.disabled = pageNum === 0;
+  els.btn.next.disabled = pageNum >= pdfDoc.numPages - 1;
+  redrawAnnotations();
+  markActiveThumb(pageNum);
+}
+
+// Re-render whichever mode is active (used by zoom / resize / load).
+function renderDoc() {
+  return isContinuous() ? renderContinuous() : renderPage();
+}
+
+// Which stacked page sits at the middle of the viewport right now.
+function visiblePage() {
+  if (!contLayout.length) return 0;
+  const aRect = els.annoCanvas.getBoundingClientRect();
+  const vRect = els.viewer.getBoundingClientRect();
+  const topInContent = aRect.top - vRect.top + els.viewer.scrollTop;
+  const y = els.viewer.scrollTop + els.viewer.clientHeight / 2 - topInContent;
+  let vis = 0;
+  for (let i = 0; i < contLayout.length; i++) {
+    if (y >= contLayout[i].topCss) vis = i; else break;
+  }
+  return vis;
+}
+
+// In continuous mode the page readout + thumbnail highlight follow the scroll
+// position; the *active* page for drawing is separate (it follows your press).
+let scrollSyncTimer;
+els.viewer.addEventListener("scroll", () => {
+  if (!isContinuous()) return;
+  clearTimeout(scrollSyncTimer);
+  scrollSyncTimer = setTimeout(() => {
+    const vis = visiblePage();
+    els.pageInput.value = String(vis + 1);
+    if (!els.thumbs.hidden) markActiveThumb(vis);
+    els.btn.prev.disabled = vis === 0;
+    els.btn.next.disabled = vis >= contLayout.length - 1;
+  }, 60);
+}, { passive: true });
 
 // Reflect the effective zoom in the dropdown, even for fit modes.
 function syncZoomSelect() {
@@ -323,6 +496,9 @@ async function openPdf(file) {
     if (hash) app.set_pdf_sha256(hash);
     pageNum = 0;
     zoomMode = "1";
+    scrollMode = "paged"; // default to single-page; user can switch
+    setScrollEnabled(true);
+    syncScrollUI();
     els.placeholder.hidden = true;
     els.wrap.hidden = false;
     els.btn.save.disabled = false;
@@ -373,6 +549,10 @@ async function openHtml(file) {
     app = new App();
     pageNum = 0;
     zoomMode = "1";
+    scrollMode = "paged"; // continuous scroll is PDF-only
+    setScrollEnabled(false);
+    syncScrollUI();
+    els.wrap.classList.remove("continuous");
     currentScale = 1;
     selectedId = -1;
 
@@ -455,10 +635,40 @@ function pageCoords(ev) {
   // robust under devicePixelRatio changes and browser zoom.
   const r = els.annoCanvas.getBoundingClientRect();
   if (r.width < 1 || r.height < 1) return [0, 0];
+  if (isContinuous()) {
+    // The tall canvas holds every page; the active page sits at
+    // contActiveTopCss. Pages are left-aligned at x=0 within the canvas.
+    const pageCssW = basePage.w * scale();
+    const pageCssH = basePage.h * scale();
+    if (pageCssW < 1 || pageCssH < 1) return [0, 0];
+    return [
+      ((ev.clientX - r.left) / pageCssW) * basePage.w,
+      ((ev.clientY - r.top - contActiveTopCss) / pageCssH) * basePage.h,
+    ];
+  }
   return [
     ((ev.clientX - r.left) / r.width) * basePage.w,
     ((ev.clientY - r.top) / r.height) * basePage.h,
   ];
+}
+
+// Continuous mode: which stacked page is under this screen Y, and make it the
+// active page for hit-testing / drawing. Active page = the page you last
+// pressed on; scrolling alone never changes it (so a live selection stays put).
+function pageAtClientY(clientY) {
+  const r = els.annoCanvas.getBoundingClientRect();
+  const y = clientY - r.top;
+  for (let i = 0; i < contLayout.length; i++) {
+    const L = contLayout[i];
+    if (y < L.topCss + L.hCss + CONT_GAP / 2) return i;
+  }
+  return Math.max(0, contLayout.length - 1);
+}
+function setActivePage(i) {
+  if (i < 0 || i >= contLayout.length) return;
+  pageNum = i;
+  basePage = contLayout[i].base;
+  contActiveTopCss = contLayout[i].topCss;
 }
 
 const eraseRadius = () => 10 / scale();
@@ -475,6 +685,7 @@ function capturePointer(ev) {
 
 els.annoCanvas.addEventListener("pointerdown", (ev) => {
   if (!docOpen() || ev.button !== 0) return;
+  if (isContinuous()) setActivePage(pageAtClientY(ev.clientY));
   const tool = document.querySelector(".tool.active")?.dataset.tool;
   const [x, y] = pageCoords(ev);
   if (tool === "snip") {
@@ -640,14 +851,15 @@ function bytesToB64(bytes) {
   return btoa(bin);
 }
 
-function drawSnipMarquee(ctx) {
+function drawSnipMarquee(ctx, offY = 0) {
   if (!snip) return;
-  const k = scale() * dpr();
+  const r = curRatio();
+  const k = scale() * r;
   ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, offY);
   ctx.strokeStyle = "#2f5fde";
-  ctx.lineWidth = 1.5 * dpr();
-  ctx.setLineDash([6 * dpr(), 4 * dpr()]);
+  ctx.lineWidth = 1.5 * r;
+  ctx.setLineDash([6 * r, 4 * r]);
   ctx.strokeRect(
     Math.min(snip.x0, snip.x1) * k,
     Math.min(snip.y0, snip.y1) * k,
@@ -666,7 +878,8 @@ async function finishSnip(r) {
   }
   try {
     // 1. Pixels: copy the region (page + annotations) from the live canvases.
-    const k = scale() * dpr();
+    const k = scale() * curRatio();
+    const offY = isContinuous() ? Math.round(contActiveTopCss * curRatio()) : 0;
     const out = document.createElement("canvas");
     out.width = Math.max(1, Math.round(w * k));
     out.height = Math.max(1, Math.round(h * k));
@@ -674,7 +887,7 @@ async function finishSnip(r) {
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, out.width, out.height);
     for (const src of [els.pdfCanvas, els.annoCanvas]) {
-      ctx.drawImage(src, x0 * k, y0 * k, w * k, h * k, 0, 0, out.width, out.height);
+      ctx.drawImage(src, x0 * k, y0 * k + offY, w * k, h * k, 0, 0, out.width, out.height);
     }
     const blob = await new Promise((res) => out.toBlob(res, "image/png"));
     const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
@@ -722,9 +935,11 @@ let itemDrag = null;    // {id, startX, startY, moved}
 function openTextEditor(pageX, pageY, initial, editId) {
   commitTextInput();
   pendingText = { x: pageX, y: pageY, editId };
-  // The input is positioned inside #page-wrap, which the canvas fills.
+  // The input is positioned inside #page-wrap, which the canvas fills. In
+  // continuous mode the active page is offset down the tall canvas.
+  const offTop = isContinuous() ? contActiveTopCss : 0;
   els.textInput.style.left = `${pageX * scale()}px`;
-  els.textInput.style.top = `${(pageY - 18) * scale()}px`;
+  els.textInput.style.top = `${offTop + (pageY - 18) * scale()}px`;
   els.textInput.value = initial;
   els.textInput.hidden = false;
   // Defer focus until after the pointer event sequence settles.
@@ -1250,6 +1465,17 @@ els.btn.redo.addEventListener("click", () => { app.redo(); redrawAnnotations(); 
 function goToPage(n, scrollTo = "top") {
   if (!pdfDoc) return;
   const clamped = Math.min(Math.max(0, n), pdfDoc.numPages - 1);
+  if (isContinuous()) {
+    // Scroll that page into view; the scroll-sync updates the readout/thumb.
+    const L = contLayout[clamped];
+    if (L) {
+      const aTop = els.annoCanvas.getBoundingClientRect().top
+        - els.viewer.getBoundingClientRect().top + els.viewer.scrollTop;
+      els.viewer.scrollTo({ top: Math.max(0, aTop + L.topCss - 8), behavior: "smooth" });
+    }
+    els.pageInput.value = String(clamped + 1);
+    return;
+  }
   if (clamped === pageNum) {
     els.pageInput.value = String(pageNum + 1);
     return;
@@ -1260,39 +1486,34 @@ function goToPage(n, scrollTo = "top") {
   });
 }
 
-els.btn.prev.addEventListener("click", () => goToPage(pageNum - 1));
-els.btn.next.addEventListener("click", () => goToPage(pageNum + 1));
+const navFrom = () => (isContinuous() ? visiblePage() : pageNum);
+els.btn.prev.addEventListener("click", () => goToPage(navFrom() - 1));
+els.btn.next.addEventListener("click", () => goToPage(navFrom() + 1));
 
-// Trackpad / wheel paging. Within a tall page, scrolling works normally and
-// the page simply rests against its top/bottom edge. Flipping to the next or
-// previous page takes a SEPARATE, deliberate scroll once you are ALREADY at
-// the edge — so a single fast flick down a long page rests at the bottom
-// instead of overshooting into the next page; a second flick then flips. A
-// page that fully fits the viewport (nothing to scroll) flips on one
-// deliberate scroll. We detect this by gesture: trackpad momentum arrives as a
-// continuous stream of events, so only the FIRST event after a real pause
-// (a fresh flick) is allowed to flip. Ctrl/Cmd+wheel is left to the browser
-// (pinch-zoom).
-const WHEEL_GESTURE_GAP = 160; // ms of quiet that marks the start of a new flick
-let lastWheelTime = 0;
+// Trackpad / wheel paging (single-page mode only — continuous mode scrolls
+// natively). Scrolling within a tall page works normally; once you scroll into
+// a generous margin near the bottom (or top) and keep going, it flips to the
+// next (or previous) page. The margin means you don't have to land exactly on
+// the footer for it to advance. A cooldown keeps one flick from skipping
+// several pages. Ctrl/Cmd+wheel is left to the browser (pinch-zoom).
+const WHEEL_FLIP_COOLDOWN = 420; // ms; at most one page-flip per flick
 let lastWheelFlip = 0;
 els.viewer.addEventListener("wheel", (ev) => {
-  if (!pdfDoc || ev.ctrlKey || ev.metaKey) return;
+  if (!pdfDoc || scrollMode === "continuous") return;
+  if (ev.ctrlKey || ev.metaKey) return;
   if (Math.abs(ev.deltaY) < 4) return;
   const now = Date.now();
-  const newGesture = now - lastWheelTime > WHEEL_GESTURE_GAP;
-  lastWheelTime = now;
-  // Only the first event of a fresh gesture may flip. The rest of a flick's
-  // momentum just scrolls and comes to rest against the edge without flipping.
-  if (!newGesture) return;
-  if (now - lastWheelFlip < 300) return; // backstop: one flick = one page
+  if (now - lastWheelFlip < WHEEL_FLIP_COOLDOWN) return;
   const v = els.viewer;
-  const atBottom = v.scrollTop + v.clientHeight >= v.scrollHeight - 2;
-  const atTop = v.scrollTop <= 2;
-  if (ev.deltaY > 0 && atBottom && pageNum < pdfDoc.numPages - 1) {
+  // "Near the edge" rather than exactly on it: a fifth of the viewport (at
+  // least ~140px) counts as the footer/header zone so paging feels responsive.
+  const edge = Math.max(140, Math.round(v.clientHeight * 0.2));
+  const nearBottom = v.scrollTop + v.clientHeight >= v.scrollHeight - edge;
+  const nearTop = v.scrollTop <= edge;
+  if (ev.deltaY > 0 && nearBottom && pageNum < pdfDoc.numPages - 1) {
     lastWheelFlip = now;
     goToPage(pageNum + 1, "top");
-  } else if (ev.deltaY < 0 && atTop && pageNum > 0) {
+  } else if (ev.deltaY < 0 && nearTop && pageNum > 0) {
     lastWheelFlip = now;
     goToPage(pageNum - 1, "bottom");
   }
@@ -1311,14 +1532,44 @@ els.pageInput.addEventListener("keydown", (ev) => {
 const ZOOM_STEP = 1.25;
 function nudgeZoom(factor) {
   zoomMode = String(clampZoom(currentScale * factor));
-  renderPage();
+  renderDoc();
 }
 els.btn.zoomIn.addEventListener("click", () => nudgeZoom(ZOOM_STEP));
 els.btn.zoomOut.addEventListener("click", () => nudgeZoom(1 / ZOOM_STEP));
 els.zoomSelect.addEventListener("change", () => {
   zoomMode = els.zoomSelect.value;
-  renderPage();
+  renderDoc();
 });
+
+// Single-page <-> continuous scroll (PDF only) via a labelled segmented
+// control. Default is single-page. The active segment is highlighted.
+function syncScrollUI() {
+  const on = scrollMode === "continuous";
+  els.seg.paged.classList.toggle("active", !on);
+  els.seg.cont.classList.toggle("active", on);
+}
+function setScrollEnabled(enabled) {
+  els.seg.paged.disabled = !enabled;
+  els.seg.cont.disabled = !enabled;
+}
+async function setScrollMode(mode) {
+  if (docMode !== "pdf" || !pdfDoc || mode === scrollMode) return;
+  commitTextInput();
+  setSelection(-1);
+  if (mode === "continuous") {
+    scrollMode = "continuous";
+    syncScrollUI();
+    await renderContinuous();
+    goToPage(pageNum);          // bring the page you were on into view
+  } else {
+    pageNum = visiblePage();    // keep the page you were reading
+    scrollMode = "paged";
+    syncScrollUI();
+    await renderPage();
+  }
+}
+els.seg.paged.addEventListener("click", () => setScrollMode("paged"));
+els.seg.cont.addEventListener("click", () => setScrollMode("continuous"));
 
 // Re-render on resize: fit modes track the window, and devicePixelRatio
 // changes (browser zoom) re-rasterize so the page never goes fuzzy.
@@ -1327,7 +1578,7 @@ window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     if (docMode === "html") { if (!els.wrap.hidden) layoutHtmlPage(); }
-    else renderPage();
+    else renderDoc();
   }, 150);
 });
 
@@ -1374,7 +1625,7 @@ document.addEventListener("keydown", (ev) => {
   } else if (!mod && TOOL_KEYS[key]) {
     document.querySelector(`[data-tool="${TOOL_KEYS[key]}"]`)?.click();
   } else if (ev.key === "PageDown" || ev.key === "PageUp") {
-    if (!pdfDoc) return;
+    if (!pdfDoc || isContinuous()) return; // continuous: let the browser scroll
     const v = els.viewer;
     const atBottom = v.scrollTop + v.clientHeight >= v.scrollHeight - 2;
     const atTop = v.scrollTop <= 2;
@@ -1793,9 +2044,9 @@ async function renderThumb(i) {
   }
 }
 
-function markActiveThumb() {
+function markActiveThumb(active = pageNum) {
   [...els.thumbs.children].forEach((el, i) =>
-    el.classList.toggle("active", i === pageNum));
+    el.classList.toggle("active", i === active));
 }
 
 // Refresh the current page's thumbnail shortly after edits settle.

@@ -11,7 +11,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=13">
+  <link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -217,6 +217,19 @@
         <button id="btn-zoom-in" class="btn" title="Zoom in" disabled>
           <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
         </button>
+
+        <span class="bar-divider"></span>
+
+        <div id="scroll-mode" class="seg-group" role="group" aria-label="Page view mode">
+          <button id="seg-paged" class="seg active" title="Single page — one page at a time" disabled>
+            <svg viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="16" rx="1"/></svg>
+            <span>Page</span>
+          </button>
+          <button id="seg-cont" class="seg" title="Continuous — scroll through every page" disabled>
+            <svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="7" rx="1"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg>
+            <span>Scroll</span>
+          </button>
+        </div>
       </div>
     </section>
 
@@ -239,6 +252,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=13"></script>
+  <script type="module" src="app.js?v=18"></script>
 </body>
 </html>

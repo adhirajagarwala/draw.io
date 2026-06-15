@@ -518,6 +518,28 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
   background: #fff;
 }
 
+/* Continuous scroll: the tall canvas paints its own white page-sheets and
+   shadows, with transparent gaps between them — so the wrapper drops its single
+   sheet background/shadow and lets each page read separately. */
+#page-wrap.continuous {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+/* Segmented Page / Scroll view-mode switch in the doc-controls bar. */
+.seg-group { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.seg {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; font-size: 12px; font-weight: 600; line-height: 1;
+  background: #fff; color: #5b6470; border: none; cursor: pointer;
+}
+.seg + .seg { border-left: 1px solid var(--line); }
+.seg svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; }
+.seg:hover:not(:disabled) { background: #f4f6f9; }
+.seg.active { background: var(--accent-soft); color: var(--accent); }
+.seg:disabled { opacity: 0.45; cursor: default; }
+
 #pdf-canvas { display: block; border-radius: 2px; }
 #pdf-canvas[hidden] { display: none; }
 
