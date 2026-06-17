@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "18";
+const APP_VERSION = "20";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -105,6 +105,9 @@ const CONT_MAX_BACKING = 16000; // safe single-canvas height ceiling (px)
 // The on-screen backing ratio in use right now (continuous may cap it).
 const curRatio = () => (scrollMode === "continuous" ? contRatio : dpr());
 const isContinuous = () => scrollMode === "continuous" && docMode === "pdf";
+// Honour the OS "reduce motion" setting for programmatic scroll jumps.
+const reducedMotion = () =>
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // A drawable document (PDF or uploaded HTML) is currently open.
 const docOpen = () => !!pdfDoc || (docMode === "html" && !els.wrap.hidden);
@@ -496,7 +499,10 @@ async function openPdf(file) {
     if (hash) app.set_pdf_sha256(hash);
     pageNum = 0;
     zoomMode = "1";
-    scrollMode = "paged"; // default to single-page; user can switch
+    // Default to continuous scroll for multi-page PDFs so "scroll = next page"
+    // works natively out of the box (single page has nothing to scroll between,
+    // so it opens paged). Either way the Page/Scroll switch is one click.
+    scrollMode = doc.numPages > 1 ? "continuous" : "paged";
     setScrollEnabled(true);
     syncScrollUI();
     els.placeholder.hidden = true;
@@ -518,7 +524,7 @@ async function openPdf(file) {
     els.btn.thumbs.classList.toggle("active", !els.thumbs.hidden);
     if (!els.thumbs.hidden) await buildThumbnails();
     renderNotes();
-    await renderPage();
+    if (isContinuous()) await renderContinuous(); else await renderPage();
     status("PDF loaded. Scribble away!");
   } catch (e) {
     console.error("openPdf failed:", e);
@@ -1471,7 +1477,10 @@ function goToPage(n, scrollTo = "top") {
     if (L) {
       const aTop = els.annoCanvas.getBoundingClientRect().top
         - els.viewer.getBoundingClientRect().top + els.viewer.scrollTop;
-      els.viewer.scrollTo({ top: Math.max(0, aTop + L.topCss - 8), behavior: "smooth" });
+      els.viewer.scrollTo({
+        top: Math.max(0, aTop + L.topCss - 8),
+        behavior: reducedMotion() ? "auto" : "smooth",
+      });
     }
     els.pageInput.value = String(clamped + 1);
     return;
@@ -1490,34 +1499,13 @@ const navFrom = () => (isContinuous() ? visiblePage() : pageNum);
 els.btn.prev.addEventListener("click", () => goToPage(navFrom() - 1));
 els.btn.next.addEventListener("click", () => goToPage(navFrom() + 1));
 
-// Trackpad / wheel paging (single-page mode only — continuous mode scrolls
-// natively). Scrolling within a tall page works normally; once you scroll into
-// a generous margin near the bottom (or top) and keep going, it flips to the
-// next (or previous) page. The margin means you don't have to land exactly on
-// the footer for it to advance. A cooldown keeps one flick from skipping
-// several pages. Ctrl/Cmd+wheel is left to the browser (pinch-zoom).
-const WHEEL_FLIP_COOLDOWN = 420; // ms; at most one page-flip per flick
-let lastWheelFlip = 0;
-els.viewer.addEventListener("wheel", (ev) => {
-  if (!pdfDoc || scrollMode === "continuous") return;
-  if (ev.ctrlKey || ev.metaKey) return;
-  if (Math.abs(ev.deltaY) < 4) return;
-  const now = Date.now();
-  if (now - lastWheelFlip < WHEEL_FLIP_COOLDOWN) return;
-  const v = els.viewer;
-  // "Near the edge" rather than exactly on it: a fifth of the viewport (at
-  // least ~140px) counts as the footer/header zone so paging feels responsive.
-  const edge = Math.max(140, Math.round(v.clientHeight * 0.2));
-  const nearBottom = v.scrollTop + v.clientHeight >= v.scrollHeight - edge;
-  const nearTop = v.scrollTop <= edge;
-  if (ev.deltaY > 0 && nearBottom && pageNum < pdfDoc.numPages - 1) {
-    lastWheelFlip = now;
-    goToPage(pageNum + 1, "top");
-  } else if (ev.deltaY < 0 && nearTop && pageNum > 0) {
-    lastWheelFlip = now;
-    goToPage(pageNum - 1, "bottom");
-  }
-}, { passive: true });
+// NB: we deliberately do NOT intercept the wheel to flip pages. Hijacking the
+// wheel ("scroll-jacking") fights the trackpad's native momentum/acceleration
+// and breaks the "I scroll, the page moves" contract — it was the root cause of
+// the bad scroll feel. Single-page mode changes pages only through real
+// controls (prev/next, the page input, thumbnails, PageUp/Down); for fluid
+// reading there is the continuous-scroll mode, which scrolls natively. See
+// CLAUDE.md section 10.
 
 els.pageInput.addEventListener("change", () => {
   const n = parseInt(els.pageInput.value, 10);

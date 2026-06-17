@@ -313,6 +313,9 @@ button { font: inherit; }
   position: absolute;
   inset: 0;
   overflow: auto;
+  /* Keep scrolling inside the viewer: no scroll-chaining to the page behind it
+     and no accidental browser back/forward swipe at the edges. */
+  overscroll-behavior: contain;
   display: flex;
   justify-content: center;
   align-items: flex-start;
