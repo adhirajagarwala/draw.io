@@ -139,6 +139,59 @@ Verify in the actual browser (or a headless Node check for pure logic like the
 PDF writer). Screenshot the result. "It should work" is not "it works" — most
 of the painful moments here came from shipping unverified UI.
 
+## 10. Scrolling — how to make it good (researched, do it this way)
+
+The bad scroll feel came from one root cause: **scroll-jacking**. The
+single-page wheel handler intercepts the wheel event and decides when to flip
+pages. Every UX/engineering source says don't: it breaks the user's muscle
+memory ("I scroll, the page moves"), fights trackpad momentum/acceleration, and
+breaks keyboard, touch, and reduced-motion. Tuning thresholds/cooldowns can't
+fix it — the interception **is** the problem.
+
+Rules going forward:
+
+1. **Never hijack wheel/touch to drive paging.** Don't `preventDefault()` a
+   wheel/touch event to change pages. Let the browser scroll natively — its
+   momentum, acceleration, rubber-band, keyboard and touch handling are already
+   perfect and accessible. (This is why continuous scroll feels right and the
+   page-flip heuristic never will.) Page changes come from real controls:
+   buttons, page input, thumbnail clicks, PageUp/Down, and arrow keys.
+2. **Continuous mode should be virtualized, not one giant canvas.** Real PDF
+   viewers (PDF.js, Nutrient, EmbedPDF) render only the pages in/near the
+   viewport and use sized placeholders for the rest — constant memory, smooth at
+   any length, and no canvas-height ceiling. The current single tall canvas
+   renders *every* page up front and caps out at ~16000px; fine for short exam
+   papers, but the real fix is **per-page placeholder divs + lazy canvas render
+   via `IntersectionObserver`** (render when within ~1 viewport, clear the
+   canvas when far away).
+3. **Lean on CSS the browser already optimizes:**
+   - `content-visibility: auto` + `contain-intrinsic-size: <w> <h>` on each page
+     wrapper → the browser skips rendering offscreen pages (web.dev measured ~7x
+     faster initial render) and the intrinsic size keeps the scrollbar stable.
+     `contain-intrinsic-size: auto <h>` remembers the last real size.
+   - `overscroll-behavior: contain` on `#viewer` → no scroll-chaining / accidental
+     browser back-swipe.
+   - `scroll-behavior: smooth` for go-to-page / thumbnail jumps — but gate it on
+     `prefers-reduced-motion`.
+   - Optional `scroll-snap-type: y proximity` per page for a gentle snap that
+     **never** fights the user (proximity, not mandatory).
+4. **Keep the main thread free at 60fps:** passive listeners (`{passive:true}`)
+   on any scroll/wheel/touch listener; never do layout work directly in a scroll
+   handler — coalesce in `requestAnimationFrame` and separate reads from writes
+   (no layout thrash). Prefer `IntersectionObserver` over a scroll handler for
+   "which page is visible" (drives the page readout/thumbnail) — it avoids
+   per-event geometry reads entirely.
+5. **Crisp but bounded canvas:** render visible page canvases at
+   `devicePixelRatio` for sharpness, but only the visible ones; clear/recycle
+   far-offscreen canvases so memory stays bounded (a scanned-PDF memory blowup is
+   a known PDF.js failure mode).
+
+Sources to re-read if needed: scroll-jacking is bad UX (codeless.co,
+webdesignerdepot, beamtic); PDF.js/virtualized viewers (mozilla/pdf.js,
+nutrient.io, embedpdf.com); web.dev `content-visibility`; MDN
+`overscroll-behavior`, `scroll-snap-type`, `scroll-behavior`; web.dev passive
+listeners + rAF for scroll.
+
 ## Layout / where things live
 
 - `scribble/src/` — Rust core (model, history, export ops, wasm API).
