@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "20";
+const APP_VERSION = "21";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -37,6 +37,7 @@ const $ = (id) => document.getElementById(id);
 const els = {
   placeholder: $("placeholder"),
   wrap: $("page-wrap"),
+  column: $("page-column"),
   pdfCanvas: $("pdf-canvas"),
   htmlFrame: $("html-frame"),
   annoCanvas: $("anno-canvas"),
@@ -498,7 +499,7 @@ async function openPdf(file) {
     app = new App(); // fresh document per PDF
     if (hash) app.set_pdf_sha256(hash);
     pageNum = 0;
-    zoomMode = "1";
+    zoomMode = "fit-width"; // fill the viewer width — 100% leaves a tiny page
     // Default to continuous scroll for multi-page PDFs so "scroll = next page"
     // works natively out of the box (single page has nothing to scroll between,
     // so it opens paged). Either way the Page/Scroll switch is one click.

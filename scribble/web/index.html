@@ -11,7 +11,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=20">
+  <link rel="stylesheet" href="style.css?v=21">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -147,6 +147,7 @@
     <section id="stage">
       <div id="viewer">
         <p id="placeholder">Open a PDF or HTML file to start scribbling.</p>
+        <!-- HTML docs (single page) use this wrapper directly. -->
         <div id="page-wrap" hidden>
           <canvas id="pdf-canvas"></canvas>
           <iframe id="html-frame" hidden sandbox="allow-same-origin"
@@ -156,6 +157,8 @@
           <input id="text-input" type="text" maxlength="500" hidden
                  autocomplete="off" spellcheck="false" placeholder="Type, press Enter">
         </div>
+        <!-- PDF docs: a virtualized column of per-page sheets (built in JS). -->
+        <div id="page-column" hidden></div>
       </div>
 
       <!-- Contextual color + thickness: shown only for marking tools -->
@@ -252,6 +255,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=20"></script>
+  <script type="module" src="app.js?v=21"></script>
 </body>
 </html>

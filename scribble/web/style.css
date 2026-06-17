@@ -530,6 +530,40 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
   border-radius: 0;
 }
 
+/* ---- Per-page virtualized PDF column (Phase 2) ---- */
+#page-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;                       /* the visible gap between page sheets */
+}
+#page-column[hidden] { display: none; }
+
+/* Page mode snaps each sheet into place; Scroll mode is free. The snap target
+   is the scroll container (#viewer). */
+#viewer.snap { scroll-snap-type: y mandatory; }
+
+.cpage {
+  position: relative;
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgba(20, 24, 28, 0.10), 0 6px 24px rgba(20, 24, 28, 0.12);
+  /* Offscreen pages cost nothing to render; the intrinsic size keeps the
+     scrollbar stable. `auto` remembers the real size once rendered. */
+  content-visibility: auto;
+  scroll-snap-align: start;
+  scroll-margin-top: 12px;
+}
+.cpage > canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.cpage > canvas.canno { touch-action: none; cursor: crosshair; }
+body.textselect .cpage > canvas.canno { pointer-events: none; }
+
 /* Segmented Page / Scroll view-mode switch in the doc-controls bar. */
 .seg-group { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
 .seg {
