@@ -541,23 +541,32 @@ button { font: inherit; }
 }
 
 /* PDF.js text layer (active only with the Page-text tool) */
-#text-layer {
+/* PDF.js selectable text layers — the single-page one and the per-page ones in
+   the continuous column behave identically. */
+#text-layer,
+.cpage .ctext {
   position: absolute;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
   line-height: 1;
+  z-index: 4; /* above the page + annotation canvases */
 }
-#text-layer span {
+#text-layer span,
+.cpage .ctext span {
   position: absolute;
   color: transparent;
   white-space: pre;
   transform-origin: 0 0;
   cursor: text;
 }
-#text-layer ::selection { background: rgba(47, 95, 222, 0.35); }
-body.textselect #text-layer { pointer-events: auto; }
+#text-layer ::selection,
+.cpage .ctext ::selection { background: rgba(47, 95, 222, 0.35); }
+body.textselect #text-layer,
+body.textselect .cpage .ctext { pointer-events: auto; }
 body.textselect #anno-canvas { pointer-events: none; }
+/* HTML mode: let the iframe receive selection while Copy-text is active. */
+body.textselect #html-frame { pointer-events: auto; }
 
 /* embedded-mode action buttons (Snip from problem / Grab problem text) */
 .embed-actions { display: flex; gap: 4px; align-items: center; margin-left: 8px; }

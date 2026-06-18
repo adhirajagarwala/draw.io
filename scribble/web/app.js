@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "33";
+const APP_VERSION = "36";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -360,9 +360,11 @@ async function renderContinuous() {
     pdfCanvas.className = "cpdf";
     const annoCanvas = document.createElement("canvas");
     annoCanvas.className = "canno";
-    el.append(pdfCanvas, annoCanvas);
+    const textLayer = document.createElement("div"); // Copy-text selectable layer
+    textLayer.className = "ctext";
+    el.append(pdfCanvas, annoCanvas, textLayer);
     els.column.appendChild(el);
-    const p = { el, pdfCanvas, annoCanvas, base: bases[i], mounted: false };
+    const p = { el, pdfCanvas, annoCanvas, textLayer, base: bases[i], mounted: false };
     cont.pages.push(p);
     // Same page-aware pointer pipeline as the single-page canvas.
     annoCanvas.addEventListener("pointerdown", onAnnoPointerDown);
@@ -383,11 +385,25 @@ async function renderContinuous() {
   els.btn.prev.disabled = pageNum === 0;
   els.btn.next.disabled = pageNum >= cont.pages.length - 1;
   markActiveThumb(pageNum);
-  // Restore the reader's position once layout settles (instant; no animation).
-  if (pageNum > 0) {
-    requestAnimationFrame(() => scrollToContPage(pageNum));
-  } else {
-    els.viewer.scrollTop = 0;
+  // Restore the reader's position and mount the visible pages SYNCHRONOUSLY.
+  // Reading layout (offsetTop / getBoundingClientRect) forces a reflow, and
+  // intent:"print" renders complete without requestAnimationFrame — so pages
+  // render even when the tab isn't being painted (where rAF / the
+  // IntersectionObserver never fire and pages would otherwise stay blank).
+  if (pageNum > 0) scrollToContPage(pageNum); else els.viewer.scrollTop = 0;
+  contMountVisible();
+}
+
+// Mount pages within ~1 viewport of the visible area and free the rest, by pure
+// geometry — a reliable backstop for the IntersectionObserver.
+function contMountVisible() {
+  if (!cont.pages.length) return;
+  const vr = els.viewer.getBoundingClientRect();
+  const margin = els.viewer.clientHeight; // matches the observer's 100% rootMargin
+  for (let i = 0; i < cont.pages.length; i++) {
+    const r = cont.pages[i].el.getBoundingClientRect();
+    const near = r.bottom >= vr.top - margin && r.top <= vr.bottom + margin;
+    if (near) contMount(i); else contUnmount(i);
   }
 }
 
@@ -425,6 +441,7 @@ async function contMount(i) {
   }
   if (token !== cont.token || !p.mounted) return; // rebuilt or scrolled away
   contDrawAnnos(i);
+  if (activeTool() === "pagetext") buildContTextLayer(i); // keep selectable text in sync
 }
 
 // Free a page's canvases when it scrolls far away (keeps memory bounded).
@@ -501,6 +518,7 @@ els.viewer.addEventListener("scroll", () => {
     if (!els.thumbs.hidden) markActiveThumb(vis);
     els.btn.prev.disabled = vis === 0;
     els.btn.next.disabled = vis >= cont.pages.length - 1;
+    contMountVisible(); // backstop in case the observer is throttled
   }, 60);
 }, { passive: true });
 
@@ -1680,12 +1698,9 @@ for (const b of document.querySelectorAll(".tool")) {
     els.annoCanvas.style.cursor = name === "snip" ? "crosshair" : "";
     updateContextBar(name);
     syncAria();
-    // Build/tear down the selectable text layer as the tool toggles.
-    if (name === "pagetext" && pdfDoc) {
-      pdfDoc.getPage(pageNum + 1).then(buildTextLayer);
-    } else {
-      els.textLayer.textContent = "";
-    }
+    // Build/tear down selectable text as the Copy-text tool toggles (works in
+    // single-page PDF, continuous PDF per page, and HTML via direct selection).
+    setCopyText(name === "pagetext");
   });
 }
 
@@ -2398,23 +2413,60 @@ els.btn.thumbs.addEventListener("click", async () => {
 
 let textLayerTask = null;
 
-async function buildTextLayer(page) {
-  els.textLayer.textContent = "";
-  if (textLayerTask?.cancel) textLayerTask.cancel();
+// Build a selectable PDF.js text layer for `page` into `container` at scale
+// factor `sf`. Used for the single-page view and for each continuous .cpage.
+async function buildTextLayer(page, container = els.textLayer, sf = scale()) {
+  container.textContent = "";
+  if (container === els.textLayer && textLayerTask?.cancel) textLayerTask.cancel();
   try {
     const lib = await getPdfjs();
     if (typeof lib.TextLayer !== "function") return; // not in this build
-    const vp = page.getViewport({ scale: scale() });
-    els.textLayer.style.setProperty("--scale-factor", String(scale()));
-    textLayerTask = new lib.TextLayer({
+    const vp = page.getViewport({ scale: sf });
+    container.style.setProperty("--scale-factor", String(sf));
+    const task = new lib.TextLayer({
       textContentSource: page.streamTextContent(),
-      container: els.textLayer,
+      container,
       viewport: vp,
     });
-    await textLayerTask.render();
+    if (container === els.textLayer) textLayerTask = task;
+    await task.render();
   } catch (e) {
     if (e?.name !== "AbortException") console.warn("text layer:", e);
   }
+}
+
+// Build the text layer for one mounted continuous page (Copy-text tool only).
+async function buildContTextLayer(i) {
+  const p = cont.pages[i];
+  if (!p || !p.mounted || !p.textLayer || !pdfDoc) return;
+  try {
+    const page = await pdfDoc.getPage(i + 1);
+    await buildTextLayer(page, p.textLayer, cont.scale);
+  } catch { /* best-effort */ }
+}
+
+// Build/clear selectable text across the whole continuous column.
+function buildAllContTextLayers() {
+  for (let i = 0; i < cont.pages.length; i++) {
+    if (cont.pages[i].mounted) buildContTextLayer(i);
+  }
+}
+function clearAllTextLayers() {
+  els.textLayer.textContent = "";
+  for (const p of cont.pages) if (p.textLayer) p.textLayer.textContent = "";
+}
+
+// Activate/deactivate selectable text for the Copy-text tool across every mode.
+function setCopyText(on) {
+  if (!on) { clearAllTextLayers(); return; }
+  if (docMode === "html") {
+    status("Select text on the page, then ⌘/Ctrl-C to copy.");
+    return; // the iframe text is selected directly (see body.textselect CSS)
+  }
+  if (!pdfDoc) return;
+  status("Select text on the page, then ⌘/Ctrl-C to copy.");
+  if (isContinuous()) buildAllContTextLayers();
+  else pdfDoc.getPage(pageNum + 1).then((pg) => buildTextLayer(pg));
 }
 
 // ---------- accessibility toggles ----------
