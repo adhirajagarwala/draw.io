@@ -576,6 +576,21 @@ button { font: inherit; }
   cursor: crosshair;
   box-shadow: 0 1px 3px rgba(20, 24, 28, 0.12);
 }
+/* Corner grip to resize a sketch on screen (drag). */
+.sketch-resize {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background:
+    linear-gradient(135deg, transparent 50%, var(--muted) 50%, var(--muted) 62%, transparent 62%, transparent 74%, var(--muted) 74%, var(--muted) 86%, transparent 86%);
+  border-radius: 0 0 4px 0;
+  opacity: 0.5;
+}
+.sketch-holder:hover .sketch-resize { opacity: 0.9; }
 .sketch-text-input {
   position: absolute;
   font: inherit;

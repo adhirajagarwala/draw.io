@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "41";
+const APP_VERSION = "42";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -2081,22 +2081,48 @@ class SketchView {
     this.selected = -1;
     this.state = null; // {mode, ...}
     this.scale = 1;
+    this.userScale = null; // null = auto-fit; otherwise the user's drag-resized scale
     this.layout();
     canvas.addEventListener("pointerdown", (e) => this.down(e));
     canvas.addEventListener("pointermove", (e) => this.move(e));
     canvas.addEventListener("pointerup", (e) => this.up(e));
     canvas.addEventListener("pointercancel", () => this.cancel());
+    this.wireResize(canvas.parentElement.querySelector(".sketch-resize"));
     this.draw();
   }
 
   layout() {
     const avail = Math.max(120, els.notesList.clientWidth - 28);
-    this.scale = Math.min(avail / this.w, 2);
+    const auto = Math.min(avail / this.w, 2);
+    // A user-dragged scale overrides the auto-fit (clamped to a sane range).
+    this.scale = this.userScale ? Math.max(0.3, Math.min(4, this.userScale)) : auto;
     const r = dpr();
     this.canvas.width = Math.round(this.w * this.scale * r);
     this.canvas.height = Math.round(this.h * this.scale * r);
     this.canvas.style.width = `${Math.round(this.w * this.scale)}px`;
     this.canvas.style.height = `${Math.round(this.h * this.scale)}px`;
+  }
+
+  // Drag the corner handle to resize the sketch on screen (display scale; the
+  // drawing's own coordinate space is unchanged).
+  wireResize(handle) {
+    if (!handle) return;
+    let rz = null;
+    handle.addEventListener("pointerdown", (e) => {
+      rz = { x: e.clientX, w: this.w * this.scale };
+      handle.setPointerCapture?.(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (!rz) return;
+      this.userScale = Math.max(0.3, Math.min(4, (rz.w + (e.clientX - rz.x)) / this.w));
+      this.layout();
+      this.draw();
+    });
+    const end = () => { rz = null; };
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
   }
 
   coords(ev) {
@@ -2309,7 +2335,10 @@ function renderNotes() {
       holder.className = "sketch-holder";
       const canvas = document.createElement("canvas");
       canvas.className = "sketch-canvas";
-      holder.appendChild(canvas);
+      const grip = document.createElement("div");
+      grip.className = "sketch-resize";
+      grip.title = "Drag to resize the canvas";
+      holder.append(canvas, grip);
       div.appendChild(holder);
       div.appendChild(blockActions(i, total));
       els.notesList.appendChild(div);
