@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "45";
+const APP_VERSION = "47";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -1123,8 +1123,12 @@ async function finishSnip(r) {
     const blob = await new Promise((res) => out.toBlob(res, "image/png"));
     const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
 
-    const caption = text ? text.slice(0, 280)
-      : docMode === "html" ? "from the page" : `from page ${pageNum + 1}`;
+    // Discard extracted text that's mostly symbols/dingbats — some PDFs have a
+    // broken font Unicode map, so the glyphs render fine but the text comes out
+    // as garbage. Keep just the image rather than polluting the note.
+    const usable = looksLikeText(text) ? text.slice(0, 280) : "";
+    const caption = usable
+      || (docMode === "html" ? "from the page" : `from page ${pageNum + 1}`);
     app.add_clipping(b64, pageNum, caption);
     renderNotes();
     if (els.notesPane.hidden) toggleNotes(true);
@@ -1135,7 +1139,7 @@ async function finishSnip(r) {
         await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
       }
     } catch { /* clipboard permission is optional */ }
-    status(text ? "Snipped — image and text added to notes." : "Snipped to notes.");
+    status(usable ? "Snipped — image and text added to notes." : "Snipped to notes.");
   } catch (e) {
     console.error("snip failed:", e);
     status(`Snip failed: ${e?.message || e}`);
@@ -1564,6 +1568,16 @@ async function snipHtmlRegion(x0, y0, w, h) {
     ctx.drawImage(anno, x0 * a, y0 * a, w * a, h * a, 0, 0, out.width, out.height);
   }
   return out;
+}
+
+// Does this look like real text rather than symbol-font garbage? Some PDFs have
+// a broken Unicode map, so extraction yields dingbats (★ ✂ ☎ …) that aren't
+// letters or numbers. Require a few real word-characters and a decent ratio.
+function looksLikeText(s) {
+  if (!s) return false;
+  const wordChars = (s.match(/[\p{L}\p{N}]/gu) || []).length;
+  const nonSpace = s.replace(/\s/g, "").length;
+  return wordChars >= 2 && nonSpace > 0 && wordChars / nonSpace >= 0.5;
 }
 
 // Extract readable text (incl. link URLs) from the iframe DOM whose layout boxes
