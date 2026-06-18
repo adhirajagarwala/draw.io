@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "44";
+const APP_VERSION = "45";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -453,6 +453,7 @@ function contUnmount(i) {
   if (!p || !p.mounted) return;
   p.mounted = false;
   for (const c of [p.pdfCanvas, p.annoCanvas]) { c.width = 0; c.height = 0; }
+  if (p.textLayer) p.textLayer.textContent = ""; // free Copy-text spans too
 }
 
 // Paint a mounted page's annotation canvas (marks + selection/snip if active).
