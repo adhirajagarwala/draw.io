@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=38">
+  <link rel="stylesheet" href="style.css?v=41">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -40,9 +40,6 @@
       <button id="btn-notes" class="btn labeled" title="Show/hide your working notes" aria-pressed="false" disabled>
         <svg viewBox="0 0 24 24"><path d="M13 3H5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V10"/><path d="M14 3l6 6"/><path d="M8 13h8M8 17h5"/></svg>
         Notes
-      </button>
-      <button id="btn-palette" class="btn" title="Toggle colorblind-safe palette (green→brown, red→vermillion)" aria-label="Toggle colorblind-safe palette" aria-pressed="false">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18"/></svg>
       </button>
       <button id="btn-big" class="btn" title="Toggle larger controls" aria-label="Toggle larger controls" aria-pressed="false">
         <svg viewBox="0 0 24 24"><path d="M3 18L8 6l5 12"/><path d="M4.7 14h6.6"/><path d="M14 18l3.5-8 3.5 8"/></svg>
@@ -169,21 +166,31 @@
         <div id="page-column" hidden></div>
       </div>
 
-      <!-- Contextual color + thickness: shown only for marking tools -->
+      <!-- Contextual color + thickness: shown only for marking tools. Movable,
+           collapsible, semi-transparent, scrolls horizontally when narrow. -->
       <div id="context-bar" hidden>
-        <div id="colors">
-          <button class="swatch active" data-color="black" title="Black"></button>
-          <button class="swatch" data-color="red" title="Red"></button>
-          <button class="swatch" data-color="blue" title="Blue"></button>
-          <button class="swatch" data-color="green" title="Green"></button>
-          <button class="swatch" data-color="yellow" title="Yellow"></button>
+        <span class="cbar-grip" title="Drag to move" aria-hidden="true">⠿</span>
+        <div class="cbar-content">
+          <div id="colors">
+            <button class="swatch active" data-color="black" title="Black"></button>
+            <button class="swatch" data-color="red" title="Red"></button>
+            <button class="swatch" data-color="blue" title="Blue"></button>
+            <button class="swatch" data-color="green" title="Green"></button>
+            <button class="swatch" data-color="yellow" title="Yellow"></button>
+          </div>
+          <span class="bar-divider" id="width-divider"></span>
+          <div id="widths" title="Line thickness">
+            <button class="btn width" data-width="thin" title="Thin line"><span class="dot d1"></span></button>
+            <button class="btn width active" data-width="medium" title="Medium line"><span class="dot d2"></span></button>
+            <button class="btn width" data-width="thick" title="Thick line"><span class="dot d3"></span></button>
+          </div>
+          <span class="bar-divider"></span>
+          <button id="btn-palette" class="btn" title="Toggle colorblind-safe palette (green→brown, red→vermillion)" aria-label="Toggle colorblind-safe palette" aria-pressed="false">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18"/><path d="M12 7v10M9.5 9.2 14.5 14.8M9.5 14.8 14.5 9.2"/></svg>
+          </button>
         </div>
-        <span class="bar-divider" id="width-divider"></span>
-        <div id="widths" title="Line thickness">
-          <button class="btn width" data-width="thin" title="Thin line"><span class="dot d1"></span></button>
-          <button class="btn width active" data-width="medium" title="Medium line"><span class="dot d2"></span></button>
-          <button class="btn width" data-width="thick" title="Thick line"><span class="dot d3"></span></button>
-        </div>
+        <button id="cbar-collapse" class="cbar-collapse" title="Hide the colour bar" aria-label="Hide the colour bar" aria-expanded="true">▾</button>
+        <span class="cbar-resize" title="Drag to resize" aria-hidden="true"></span>
       </div>
 
       <!-- Floating document controls: page nav + zoom (viewer convention) -->
@@ -310,6 +317,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=38"></script>
+  <script type="module" src="app.js?v=41"></script>
 </body>
 </html>

@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "38";
+const APP_VERSION = "41";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -1825,13 +1825,13 @@ const WIDTH_TOOLS = new Set(["pen", "highlighter", "tick", "cross", "circle", "a
 function updateContextBar(tool) {
   const show = docOpen() && MARKING_TOOLS.has(tool);
   els.contextBar.hidden = !show;
-  // The colorblind-safe palette toggle only matters while choosing colours, so
-  // it rides with the contextual bar and hides when no marking tool is active.
-  els.btn.palette.hidden = !show;
+  // The colorblind-safe palette toggle now lives inside this bar, so it shows
+  // and hides with it automatically (only relevant while choosing colours).
   if (show) {
     const w = WIDTH_TOOLS.has(tool);
     els.widths.style.display = w ? "flex" : "none";
     els.widthDivider.style.display = w ? "" : "none";
+    clampContextBar(); // ensure a dragged bar is on-screen now that it's visible
   }
 }
 
@@ -1948,6 +1948,7 @@ window.addEventListener("resize", () => {
     // HTML never re-flows on resize — renderHtmlPage only recomputes the scale,
     // so annotations stay aligned. PDFs re-render for fit modes / dpr changes.
     renderDoc();
+    clampContextBar(); // keep a dragged colour bar on-screen after the resize settles
   }, 150);
 });
 
@@ -2613,6 +2614,76 @@ els.btn.palette.addEventListener("click", () => {
   savePrefs();
 });
 
+// ---------- movable / collapsible colour bar (#4) ----------
+
+function setCbarCollapsed(on) {
+  els.contextBar.classList.toggle("collapsed", on);
+  const btn = $("cbar-collapse");
+  btn.setAttribute("aria-expanded", String(!on));
+  btn.title = on ? "Show the colour bar" : "Hide the colour bar";
+}
+
+$("cbar-collapse").addEventListener("click", () => {
+  setCbarCollapsed(!els.contextBar.classList.contains("collapsed"));
+  savePrefs();
+});
+
+// Drag the bar by its grip; keep it within the stage.
+(() => {
+  const cb = els.contextBar;
+  const grip = cb.querySelector(".cbar-grip");
+  let drag = null;
+  grip.addEventListener("pointerdown", (ev) => {
+    const stage = cb.offsetParent || cb.parentElement;
+    const sr = stage.getBoundingClientRect();
+    const br = cb.getBoundingClientRect();
+    drag = { dx: ev.clientX - br.left, dy: ev.clientY - br.top, sr, bw: br.width, bh: br.height };
+    grip.setPointerCapture?.(ev.pointerId);
+    ev.preventDefault();
+  });
+  grip.addEventListener("pointermove", (ev) => {
+    if (!drag) return;
+    const left = Math.max(4, Math.min(drag.sr.width - drag.bw - 4, ev.clientX - drag.sr.left - drag.dx));
+    const top = Math.max(4, Math.min(drag.sr.height - drag.bh - 4, ev.clientY - drag.sr.top - drag.dy));
+    cb.classList.add("moved");
+    cb.style.left = `${Math.round(left)}px`;
+    cb.style.top = `${Math.round(top)}px`;
+  });
+  const endDrag = () => { if (drag) { drag = null; savePrefs(); } };
+  grip.addEventListener("pointerup", endDrag);
+  grip.addEventListener("pointercancel", endDrag);
+
+  // Resize the bar width (content scrolls horizontally within it).
+  const resize = cb.querySelector(".cbar-resize");
+  let rz = null;
+  resize.addEventListener("pointerdown", (ev) => {
+    rz = { x: ev.clientX, w: cb.getBoundingClientRect().width };
+    resize.setPointerCapture?.(ev.pointerId);
+    ev.preventDefault();
+  });
+  resize.addEventListener("pointermove", (ev) => {
+    if (!rz) return;
+    cb.style.width = `${Math.max(120, Math.round(rz.w + (ev.clientX - rz.x)))}px`;
+  });
+  const endRz = () => { if (rz) { rz = null; savePrefs(); } };
+  resize.addEventListener("pointerup", endRz);
+  resize.addEventListener("pointercancel", endRz);
+})();
+
+// Keep a dragged colour bar on-screen when the window/stage resizes.
+function clampContextBar() {
+  const cb = els.contextBar;
+  if (!cb.classList.contains("moved") || cb.hidden) return;
+  const stage = cb.offsetParent || cb.parentElement;
+  const sr = stage.getBoundingClientRect();
+  const br = cb.getBoundingClientRect();
+  const left = Math.max(4, Math.min(sr.width - br.width - 4, parseFloat(cb.style.left) || 0));
+  const top = Math.max(4, Math.min(sr.height - br.height - 4, parseFloat(cb.style.top) || 0));
+  cb.style.left = `${Math.round(left)}px`;
+  cb.style.top = `${Math.round(top)}px`;
+}
+window.addEventListener("resize", clampContextBar);
+
 // ---------- keyboard-shortcuts overlay ----------
 
 const helpOverlay = $("help-overlay");
@@ -2805,10 +2876,17 @@ const PREFS_KEY = "scribble.prefs.v1";
 
 function savePrefs() {
   try {
+    const cb = els.contextBar;
     localStorage.setItem(PREFS_KEY, JSON.stringify({
       palette: els.btn.palette.classList.contains("active") ? "safe" : "standard",
       big: document.body.classList.contains("big"),
       notesWidth: els.notesPane.style.width || "",
+      cbar: {
+        left: cb.classList.contains("moved") ? cb.style.left : "",
+        top: cb.classList.contains("moved") ? cb.style.top : "",
+        width: cb.style.width || "",
+        collapsed: cb.classList.contains("collapsed"),
+      },
     }));
   } catch { /* storage unavailable — non-fatal */ }
 }
@@ -2818,6 +2896,14 @@ function applyPrefs() {
   try { p = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { /* ignore */ }
   if (p.big) applyBig(true);
   if (p.notesWidth) els.notesPane.style.width = p.notesWidth;
+  const cb = p.cbar || {};
+  if (cb.left && cb.top) {
+    els.contextBar.classList.add("moved");
+    els.contextBar.style.left = cb.left;
+    els.contextBar.style.top = cb.top;
+  }
+  if (cb.width) els.contextBar.style.width = cb.width;
+  if (cb.collapsed) setCbarCollapsed(true);
   applyPalette(p.palette === "safe"); // also paints the swatches for the active palette
 }
 
