@@ -666,6 +666,25 @@ body.textselect .cpage > canvas.canno { pointer-events: none; }
   cursor: crosshair;
 }
 
+/* Floating "add region to notes" button after drawing a Box/Shade (#11). */
+.region-add-btn {
+  position: absolute;
+  z-index: 7;
+  transform: translate(-100%, 0);
+  white-space: nowrap;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border: 1px solid #c4d2f5;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(20, 24, 28, 0.25);
+}
+.region-add-btn:hover { background: #2550c8; }
+
 #text-input {
   position: absolute;
   font: inherit;

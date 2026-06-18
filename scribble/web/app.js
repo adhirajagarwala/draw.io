@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "37";
+const APP_VERSION = "38";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -371,6 +371,7 @@ async function renderContinuous() {
     annoCanvas.addEventListener("pointermove", onAnnoPointerMove);
     annoCanvas.addEventListener("pointerup", endStroke);
     annoCanvas.addEventListener("pointercancel", onAnnoPointerCancel);
+    annoCanvas.addEventListener("contextmenu", onAnnoContextMenu);
     cont.io.observe(el);
   }
   pageNum = Math.min(Math.max(0, keep), cont.pages.length - 1);
@@ -867,8 +868,11 @@ function onAnnoPointerDown(ev) {
     return;
   }
   commitTextInput();
+  hideRegionButton();
   capturePointer(ev);
   drawing = true;
+  // Track the drag rectangle for Box/Shade so we can offer "add to notes".
+  regionDraw = REGION_TOOLS.has(tool) ? { x0: x, y0: y, x1: x, y1: y } : null;
   app.pointer_down(pageNum, x, y, eraseRadius());
   redrawAnnotations();
 }
@@ -939,6 +943,7 @@ function onAnnoPointerMove(ev) {
     const [x, y] = pageCoords(e);
     app.pointer_move(x, y, eraseRadius());
   }
+  if (regionDraw) { const [x, y] = pageCoords(ev); regionDraw.x1 = x; regionDraw.y1 = y; }
   redrawAnnotations();
 }
 els.annoCanvas.addEventListener("pointermove", onAnnoPointerMove);
@@ -978,6 +983,12 @@ function endStroke(ev) {
   drawing = false;
   app.pointer_up();
   redrawAnnotations();
+  // After drawing a Box/Shade, offer to snip that region into the notes.
+  if (regionDraw) {
+    const r = regionDraw;
+    regionDraw = null;
+    if (Math.abs(r.x1 - r.x0) > 8 && Math.abs(r.y1 - r.y0) > 8) showRegionButton(r);
+  }
 }
 
 function onAnnoPointerCancel() {
@@ -995,6 +1006,56 @@ els.annoCanvas.addEventListener("pointercancel", onAnnoPointerCancel);
 
 let snip = null;       // {x0, y0, x1, y1} page coords while dragging
 let resizeDrag = null; // {anchor, startBB, uniform}
+
+// ---------- Box/Shade → add region to notes (#11) ----------
+const REGION_TOOLS = new Set(["rect", "fillrect"]);
+let regionDraw = null; // drag rect of the box/shade being drawn
+let regionBtn = null;  // floating "add to notes" button element
+
+function hideRegionButton() {
+  if (regionBtn) { regionBtn.remove(); regionBtn = null; }
+}
+
+// Show a floating "＋ Add to notes" button anchored to a region (page coords),
+// inside the active page element so it tracks the page.
+function showRegionButton(r) {
+  hideRegionButton();
+  const host = isContinuous() ? cont.pages[pageNum]?.el : els.wrap;
+  if (!host) return;
+  const x = Math.max(r.x0, r.x1), y = Math.max(r.y0, r.y1);
+  const b = document.createElement("button");
+  b.className = "region-add-btn";
+  b.textContent = "＋ Add to notes";
+  b.style.left = `${x * scale()}px`;
+  b.style.top = `${y * scale() + 6}px`;
+  b.addEventListener("pointerdown", (e) => e.stopPropagation());
+  b.addEventListener("click", () => {
+    hideRegionButton();
+    finishSnip({ x0: Math.min(r.x0, r.x1), y0: Math.min(r.y0, r.y1),
+                 x1: Math.max(r.x0, r.x1), y1: Math.max(r.y0, r.y1) });
+  });
+  host.appendChild(b);
+  // Auto-dismiss if untouched (it also clears on the next pointer-down).
+  setTimeout(() => { if (regionBtn === b) hideRegionButton(); }, 7000);
+  regionBtn = b;
+}
+
+// Right-click a shape (box/shade/etc.) to add its region to the notes.
+function onAnnoContextMenu(ev) {
+  if (!docOpen()) return;
+  if (isContinuous()) {
+    const cp = ev.currentTarget.closest(".cpage");
+    if (cp) { pageNum = Number(cp.dataset.page); basePage = cont.pages[pageNum].base; }
+  }
+  const [x, y] = pageCoords(ev);
+  const id = app.find_item(pageNum, x, y);
+  if (id < 0 || app.item_kind(pageNum, id) !== "shape") return;
+  const bb = app.item_bbox_of(pageNum, id);
+  if (bb.length !== 4) return;
+  ev.preventDefault();
+  showRegionButton({ x0: bb[0], y0: bb[1], x1: bb[2], y1: bb[3] });
+}
+els.annoCanvas.addEventListener("contextmenu", onAnnoContextMenu);
 
 // Chunked conversion — spreading a megabyte-sized array into fromCharCode
 // overflows the call stack.
@@ -1740,6 +1801,7 @@ for (const b of document.querySelectorAll(".tool")) {
     }
     document.querySelectorAll(".tool").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
+    hideRegionButton();
     document.body.classList.toggle("textselect", name === "pagetext");
     if (name !== "select") setSelection(-1);
     els.annoCanvas.style.cursor = name === "snip" ? "crosshair" : "";
