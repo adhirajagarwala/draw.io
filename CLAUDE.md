@@ -39,6 +39,23 @@ project rule, not a suggestion.
   the user complains.
 - **Not planning first.** Jumped straight into implementation without a written,
   critiqued roadmap. Follow section 0.
+- **The browser caches `index.html` itself, so the USER sees stale code too.**
+  `python -m http.server` sends no cache headers, so the browser may reuse a
+  cached `index.html` on a normal reload — which still points at the OLD
+  `app.js?v=`, so a correct `?v=` bump does nothing until a hard refresh. This
+  showed up as the user reporting already-fixed features as "broken" (e.g. "you
+  can't zoom HTML" when v29 zooms fine). Mitigation shipped: a
+  `Cache-Control: no-store` meta in `index.html` so the document re-fetches each
+  load. Still: when a user reports a fix "doesn't work," first confirm the loaded
+  `APP_VERSION` matches the file, and tell them to hard-refresh.
+- **Programmatic smooth scrolling silently no-ops in the virtualized viewer.**
+  `element.scrollIntoView({behavior:'smooth'})` and `viewer.scrollTo({behavior:
+  'smooth'})` do nothing inside `#viewer` (nested scroll container with
+  `content-visibility` pages). Use instant `viewer.scrollTop = …` for page jumps
+  (`scrollToContPage`). Native wheel/trackpad scrolling is unaffected.
+- **A default `<canvas>` is 300×150, not 0×0.** Checking `canvas.width > 0` to
+  mean "rendered/mounted" is wrong — an unrendered canvas reports 300×150. Test
+  against the expected backing size instead.
 
 ## 1. ALWAYS HARD-REFRESH AFTER ANY CHANGE — Cmd+Shift+R
 

@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "29";
+const APP_VERSION = "31";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -701,6 +701,7 @@ function measureHtmlHeight() {
   h = Math.min(h, HTML_MAX_PAGE_H);
   basePage = { w: HTML_BASE_W, h };
   app.ensure_page(0, HTML_BASE_W, h);
+  htmlSnipCanvas = null; // page layout changed — drop the cached snip raster
 }
 
 // Render the uploaded HTML as a fixed-layout sheet: the iframe keeps its base
@@ -1014,41 +1015,35 @@ async function finishSnip(r) {
     return;
   }
   try {
-    // 1. Pixels: copy the region (page + annotations) from the active page's
-    //    live canvases — the single-page pair, or the active continuous page.
-    const k = scale() * curRatio();
-    const srcPdf = isContinuous() ? cont.pages[pageNum]?.pdfCanvas : els.pdfCanvas;
-    const srcAnno = isContinuous() ? cont.pages[pageNum]?.annoCanvas : els.annoCanvas;
-    const out = document.createElement("canvas");
-    out.width = Math.max(1, Math.round(w * k));
-    out.height = Math.max(1, Math.round(h * k));
-    const ctx = out.getContext("2d");
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, out.width, out.height);
-    for (const src of [srcPdf, srcAnno]) {
-      if (src) ctx.drawImage(src, x0 * k, y0 * k, w * k, h * k, 0, 0, out.width, out.height);
+    // 1. Pixels + 2. Text — captured differently for HTML vs PDF.
+    let out, text = "";
+    if (docMode === "html") {
+      // High-DPI raster of the HTML region (the iframe can't be drawn to a
+      // canvas directly) + reliable DOM text extraction.
+      out = await snipHtmlRegion(x0, y0, w, h);
+      text = htmlTextInRegion(x0, y0, w, h);
+    } else {
+      // Copy the region from the active page's live canvases (single page, or
+      // the active continuous page).
+      const k = scale() * curRatio();
+      const srcPdf = isContinuous() ? cont.pages[pageNum]?.pdfCanvas : els.pdfCanvas;
+      const srcAnno = isContinuous() ? cont.pages[pageNum]?.annoCanvas : els.annoCanvas;
+      out = document.createElement("canvas");
+      out.width = Math.max(1, Math.round(w * k));
+      out.height = Math.max(1, Math.round(h * k));
+      const octx = out.getContext("2d");
+      octx.fillStyle = "#ffffff";
+      octx.fillRect(0, 0, out.width, out.height);
+      for (const src of [srcPdf, srcAnno]) {
+        if (src) octx.drawImage(src, x0 * k, y0 * k, w * k, h * k, 0, 0, out.width, out.height);
+      }
+      text = await pdfTextInRegion(x0, y0, w, h);
     }
     const blob = await new Promise((res) => out.toBlob(res, "image/png"));
     const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
 
-    // 2. Text: PDF text items whose anchor falls inside the region.
-    let text = "";
-    try {
-      const page = await pdfDoc.getPage(pageNum + 1);
-      const tc = await page.getTextContent();
-      const parts = [];
-      for (const item of tc.items) {
-        if (!item.str) continue;
-        const ix = item.transform[4];
-        const iy = basePage.h - item.transform[5]; // flip to top-down
-        if (ix >= x0 - 2 && ix <= x0 + w + 2 && iy >= y0 - 2 && iy <= y0 + h + 6) {
-          parts.push(item.str + (item.hasEOL ? "\n" : " "));
-        }
-      }
-      text = parts.join("").replace(/[ \t]+\n/g, "\n").trim();
-    } catch { /* text extraction is best-effort */ }
-
-    const caption = text ? text.slice(0, 280) : `from page ${pageNum + 1}`;
+    const caption = text ? text.slice(0, 280)
+      : docMode === "html" ? "from the page" : `from page ${pageNum + 1}`;
     app.add_clipping(b64, pageNum, caption);
     renderNotes();
     if (els.notesPane.hidden) toggleNotes(true);
@@ -1435,12 +1430,13 @@ async function buildNotesPages() {
 }
 
 // Rasterize the uploaded HTML page (same-origin sandboxed iframe) to a canvas
-// via an SVG <foreignObject>. Self-contained content only — external resources
-// are blocked by the CSP anyway. Used for HTML export.
-function htmlPageToCanvas() {
+// via an SVG <foreignObject>, at `ratio`x the page's CSS-pixel size. Self-
+// contained content only — external resources are blocked by the CSP anyway.
+// Used for HTML export and high-DPI HTML snipping.
+function htmlPageToCanvas(ratio = EXPORT_SCALE) {
   const f = els.htmlFrame;
   const doc = f.contentDocument;
-  if (!doc) throw new Error("no HTML content to export");
+  if (!doc) throw new Error("no HTML content to render");
   const w = Math.max(1, Math.round(basePage.w));
   const h = Math.max(1, Math.round(basePage.h));
   const clone = doc.documentElement.cloneNode(true);
@@ -1453,10 +1449,9 @@ function htmlPageToCanvas() {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      const ratio = EXPORT_SCALE;
       const c = document.createElement("canvas");
-      c.width = w * ratio;
-      c.height = h * ratio;
+      c.width = Math.max(1, Math.round(w * ratio));
+      c.height = Math.max(1, Math.round(h * ratio));
       const ctx = c.getContext("2d");
       ctx.fillStyle = "#fff";
       ctx.fillRect(0, 0, c.width, c.height);
@@ -1466,6 +1461,103 @@ function htmlPageToCanvas() {
     img.onerror = () => reject(new Error("could not rasterize the HTML page"));
     img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
   });
+}
+
+// Snip resolution for the uploaded HTML page (3x the page CSS size keeps small
+// figures/equations crisp). Cached per page render so repeat snips are fast.
+const HTML_SNIP_RATIO = 3;
+let htmlSnipCanvas = null; // full-page raster reused across snips until re-render
+
+// Crop a region (page coords) out of a crisp full-page HTML raster, with the
+// annotation overlay composited on top. Fixes blurry / empty HTML snips.
+async function snipHtmlRegion(x0, y0, w, h) {
+  if (!htmlSnipCanvas) htmlSnipCanvas = await htmlPageToCanvas(HTML_SNIP_RATIO);
+  const full = htmlSnipCanvas;
+  const sc = full.width / basePage.w; // raster px per page unit
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, Math.round(w * sc));
+  out.height = Math.max(1, Math.round(h * sc));
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(full, x0 * sc, y0 * sc, w * sc, h * sc, 0, 0, out.width, out.height);
+  // annotations live on the on-screen anno canvas at its own backing scale
+  const anno = els.annoCanvas;
+  if (anno.width > 1) {
+    const a = anno.width / basePage.w;
+    ctx.drawImage(anno, x0 * a, y0 * a, w * a, h * a, 0, 0, out.width, out.height);
+  }
+  return out;
+}
+
+// Extract readable text (incl. link URLs) from the iframe DOM whose layout boxes
+// fall inside the region — far more reliable than glyph-anchor heuristics, and
+// it actually handles links. Coords are page units (CSS px at base width).
+function htmlTextInRegion(x0, y0, w, h) {
+  let doc;
+  try { doc = els.htmlFrame.contentDocument; } catch { return ""; }
+  if (!doc || !doc.body) return "";
+  const x1 = x0 + w, y1 = y0 + h;
+  const parts = [];
+  const seenLinks = new Set();
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  const range = doc.createRange();
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const s = n.nodeValue.trim();
+    if (!s) continue;
+    range.selectNodeContents(n);
+    const rects = range.getClientRects();
+    let hit = false;
+    for (const rc of rects) {
+      // The iframe is laid out at base width with no scroll, so its client rect
+      // is already in page units.
+      if (rc.right >= x0 && rc.left <= x1 && rc.bottom >= y0 && rc.top <= y1) { hit = true; break; }
+    }
+    if (!hit) continue;
+    parts.push(s);
+    const a = n.parentElement && n.parentElement.closest("a[href]");
+    if (a) {
+      const href = a.getAttribute("href");
+      if (href && !seenLinks.has(href)) { seenLinks.add(href); parts.push(`(${href})`); }
+    }
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
+// Extract PDF text overlapping the region, in reading order. Uses each glyph
+// run's box (not just its baseline anchor) so partly-covered runs are caught,
+// and groups runs into rows so the result reads top-to-bottom, left-to-right.
+async function pdfTextInRegion(x0, y0, w, h) {
+  if (!pdfDoc) return "";
+  try {
+    const page = await pdfDoc.getPage(pageNum + 1);
+    const tc = await page.getTextContent();
+    const x1 = x0 + w, y1 = y0 + h;
+    const hits = [];
+    for (const item of tc.items) {
+      if (!item.str) continue;
+      const e = item.transform[4], f = item.transform[5];
+      const iw = item.width || 0;
+      const ih = item.height || Math.abs(item.transform[3]) || 8;
+      const left = e, right = e + iw;
+      const bottom = basePage.h - f;     // baseline, flipped top-down
+      const top = bottom - ih;
+      if (right >= x0 && left <= x1 && bottom >= y0 && top <= y1) {
+        hits.push({ x: left, y: top, str: item.str, eol: item.hasEOL });
+      }
+    }
+    hits.sort((a, b) => (Math.abs(a.y - b.y) > 4 ? a.y - b.y : a.x - b.x));
+    let text = "", prevY = null;
+    for (const it of hits) {
+      if (prevY !== null && it.y - prevY > 4) text += "\n";
+      text += it.str + (it.eol ? "\n" : " ");
+      prevY = it.y;
+    }
+    return text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  } catch {
+    return "";
+  }
 }
 
 async function exportPdf() {
@@ -1609,6 +1701,9 @@ const WIDTH_TOOLS = new Set(["pen", "highlighter", "tick", "cross", "circle", "a
 function updateContextBar(tool) {
   const show = docOpen() && MARKING_TOOLS.has(tool);
   els.contextBar.hidden = !show;
+  // The colorblind-safe palette toggle only matters while choosing colours, so
+  // it rides with the contextual bar and hides when no marking tool is active.
+  els.btn.palette.hidden = !show;
   if (show) {
     const w = WIDTH_TOOLS.has(tool);
     els.widths.style.display = w ? "flex" : "none";
@@ -1832,16 +1927,19 @@ function autoGrow(ta) {
 function blockActions(i, total) {
   const wrap = document.createElement("div");
   wrap.className = "block-actions";
-  const mk = (label, title, fn) => {
+  // Always render ↑ ↓ ✕ in the same slots (disable the ones that don't apply at
+  // the ends) so a given control never jumps position between blocks.
+  const mk = (label, title, fn, disabled) => {
     const b = document.createElement("button");
     b.textContent = label;
     b.title = title;
-    b.addEventListener("click", fn);
+    b.disabled = !!disabled;
+    if (!disabled) b.addEventListener("click", fn);
     wrap.appendChild(b);
   };
-  if (i > 0) mk("↑", "Move up", () => { app.move_note(i, -1); renderNotes(); });
-  if (i < total - 1) mk("↓", "Move down", () => { app.move_note(i, 1); renderNotes(); });
-  mk("✕", "Delete block", () => { app.remove_note(i); renderNotes(); });
+  mk("↑", "Move up", () => { app.move_note(i, -1); renderNotes(); }, i === 0);
+  mk("↓", "Move down", () => { app.move_note(i, 1); renderNotes(); }, i === total - 1);
+  mk("✕", "Delete block", () => { app.remove_note(i); renderNotes(); }, false);
   return wrap;
 }
 
@@ -2583,6 +2681,7 @@ init()
   .then(() => {
     app = new App();
     applyPrefs();
+    updateContextBar(activeTool()); // hide the colour UI (and palette) until a doc opens
     initEmbed();
   })
   .catch((e) => {

@@ -166,6 +166,7 @@ button { font: inherit; }
 .btn:hover:not(:disabled) { background: #f2f4f7; }
 .btn:active:not(:disabled) { background: #e9ecf1; }
 .btn:disabled { opacity: 0.35; cursor: default; }
+.btn[hidden] { display: none; } /* .btn's inline-flex would otherwise beat [hidden] */
 
 /* Visible keyboard focus on every interactive control. Mouse clicks don't
    trigger :focus-visible, so this only shows for keyboard/AT users — no visual
@@ -202,11 +203,23 @@ button { font: inherit; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex: none;                 /* never shrink — keeps "1 / N" on one line */
+  white-space: nowrap;
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
   text-align: center;
 }
+#page-count { white-space: nowrap; }
+/* The floating controls bar must never wrap or overflow its row. On small
+   screens it scrolls horizontally instead of stacking. */
+#doc-controls {
+  flex-wrap: nowrap;
+  max-width: calc(100% - 24px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+#doc-controls::-webkit-scrollbar { display: none; }
 
 #page-input {
   width: 42px;
@@ -464,7 +477,8 @@ button { font: inherit; }
   padding: 1px 5px;
   color: var(--muted);
 }
-.block-actions button:hover { color: var(--ink); }
+.block-actions button:hover:not(:disabled) { color: var(--ink); }
+.block-actions button:disabled { opacity: 0.3; cursor: default; }
 
 /* sketch note block: a blank canvas drawn on with the full toolset */
 .sketch-holder {

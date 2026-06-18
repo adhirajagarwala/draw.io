@@ -3,6 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- The dev server (python http.server) sends no cache headers, so browsers
+       would reuse a stale index.html on a normal reload — pointing at an OLD
+       app.js?v= and making fixes look broken. Force a re-fetch each load. -->
+  <meta http-equiv="Cache-Control" content="no-store">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; img-src 'self' blob: data:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'">
   <title>Scribble — annotate your question paper</title>
@@ -11,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=29">
+  <link rel="stylesheet" href="style.css?v=31">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -58,7 +62,7 @@
         <svg viewBox="0 0 24 24"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v2"/><path d="M3 7h18l-2 12H5L3 7z"/></svg>
         Resume
       </button>
-      <button id="btn-export" class="btn primary labeled" title="Final step: download the annotated paper (and your notes) as a PDF" disabled>
+      <button id="btn-export" class="btn labeled" title="Final step: download the annotated paper (and your notes) as a PDF" disabled>
         <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
         Export PDF
       </button>
@@ -306,6 +310,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=29"></script>
+  <script type="module" src="app.js?v=31"></script>
 </body>
 </html>
