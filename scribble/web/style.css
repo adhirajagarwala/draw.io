@@ -345,8 +345,11 @@ button { font: inherit; }
      and no accidental browser back/forward swipe at the edges. */
   overscroll-behavior: contain;
   display: flex;
-  justify-content: center;
-  align-items: flex-start;
+  /* `safe center` centres the page when it fits but falls back to flex-start
+     when it's wider/taller than the viewer — otherwise the overflowing left/top
+     edge is unreachable by scrolling (pages looked "cut off" when zoomed in). */
+  justify-content: safe center;
+  align-items: safe flex-start;
   padding: 28px 20px 64px;
   background-image: radial-gradient(#d4d9e0 1px, transparent 1.5px);
   background-size: 22px 22px;

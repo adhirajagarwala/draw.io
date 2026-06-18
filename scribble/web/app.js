@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "32";
+const APP_VERSION = "33";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
