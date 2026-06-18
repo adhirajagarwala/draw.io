@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "36";
+const APP_VERSION = "37";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -1647,7 +1647,54 @@ async function exportPdf() {
 
 // ---------- toolbar wiring ----------
 
-els.btn.open.addEventListener("click", () => els.filePdf.click());
+// A small modal that asks what to do with unsaved work before opening a file.
+// Resolves to "save" | "newtab" | "discard" | "cancel".
+function confirmOpenDialog() {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.className = "modal-overlay";
+    const card = document.createElement("div");
+    card.className = "modal-card";
+    const h = document.createElement("h3");
+    h.textContent = "You have unsaved work";
+    const p = document.createElement("p");
+    p.textContent = "Opening a file replaces what's on screen. What would you like to do?";
+    const row = document.createElement("div");
+    row.className = "modal-actions";
+    const cleanup = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+    const mk = (label, val, cls = "") => {
+      const b = document.createElement("button");
+      b.className = `btn labeled ${cls}`;
+      b.textContent = label;
+      b.addEventListener("click", () => { cleanup(); resolve(val); });
+      return b;
+    };
+    row.append(
+      mk("Save, then open", "save", "primary"),
+      mk("Open in a new tab", "newtab"),
+      mk("Discard & open", "discard"),
+      mk("Cancel", "cancel"),
+    );
+    card.append(h, p, row);
+    ov.append(card);
+    const onKey = (e) => { if (e.key === "Escape") { cleanup(); resolve("cancel"); } };
+    ov.addEventListener("click", (e) => { if (e.target === ov) { cleanup(); resolve("cancel"); } });
+    document.addEventListener("keydown", onKey);
+    document.body.append(ov);
+  });
+}
+
+els.btn.open.addEventListener("click", async () => {
+  // Opening replaces the current document — guard unsaved work with a choice.
+  if (docOpen() && (dirtySinceFileSave || app?.is_dirty())) {
+    const choice = await confirmOpenDialog();
+    if (choice === "cancel") return;
+    if (choice === "newtab") { window.open(location.pathname, "_blank"); return; }
+    if (choice === "save") downloadJson();
+    // "discard" and "save" both fall through to the picker.
+  }
+  els.filePdf.click();
+});
 els.btn.save.addEventListener("click", downloadJson);
 els.btn.load.addEventListener("click", () => els.fileJson.click());
 els.btn.export.addEventListener("click", exportPdf);

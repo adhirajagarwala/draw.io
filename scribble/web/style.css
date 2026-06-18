@@ -686,6 +686,35 @@ body.textselect .cpage > canvas.canno { pointer-events: none; }
   word-break: break-word;
 }
 
+/* ---------- generic modal dialog (open-file choice) ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(20, 24, 28, 0.45);
+}
+.modal-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(20, 24, 28, 0.3);
+  width: min(460px, 100%);
+  padding: 18px 20px 16px;
+}
+.modal-card h3 { margin: 0 0 6px; font-size: 16px; }
+.modal-card p { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.modal-actions { display: flex; flex-direction: column; gap: 7px; }
+.modal-actions .btn {
+  justify-content: center;
+  border: 1px solid var(--line);
+  height: 38px;
+}
+.modal-actions .btn.primary { border-color: var(--ink); }
+
 /* ---------- keyboard-shortcuts overlay ---------- */
 
 #help-overlay {
