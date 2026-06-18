@@ -430,9 +430,26 @@ button { font: inherit; }
   border: 1px solid #ece7d8;
   border-radius: 8px;
   background: #fff;
-  padding: 8px;
+  padding: 8px 8px 8px 22px;   /* room for the drag grip on the left */
   position: relative;
 }
+.note-block.dragging { opacity: 0.5; }
+.note-block.drop-before { box-shadow: 0 -3px 0 -1px var(--accent); }
+.note-block.drop-after { box-shadow: 0 3px 0 -1px var(--accent); }
+.drag-handle {
+  position: absolute;
+  left: 3px;
+  top: 6px;
+  width: 14px;
+  text-align: center;
+  color: #c4bda8;
+  cursor: grab;
+  user-select: none;
+  font-size: 13px;
+  line-height: 1.1;
+}
+.drag-handle:active { cursor: grabbing; }
+.note-block:hover .drag-handle { color: var(--muted); }
 .note-block textarea {
   width: 100%;
   border: none;
@@ -455,10 +472,17 @@ button { font: inherit; }
   border: none;
   font: inherit;
   font-size: 12px;
+  line-height: 1.35;
   color: var(--muted);
   margin-top: 4px;
   outline: none;
   background: transparent;
+  /* caption is a textarea now: wrap to fit, grow with content, no scrollbar */
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 0;
 }
 .note-block .block-actions {
   position: absolute;

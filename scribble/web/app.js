@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "31";
+const APP_VERSION = "32";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -2132,6 +2132,29 @@ function scheduleSketchExportRefresh() { /* exports read live state on demand */
 let sketchViews = [];
 let activeSketch = null; // most-recently-interacted sketch (for Delete/Escape)
 
+// Move a note from one index to another via the ±1 move_note primitive.
+function reorderNote(from, to) {
+  if (from === to || from < 0 || to < 0) return;
+  let f = from;
+  if (to > from) while (f < to) { app.move_note(f, 1); f++; }
+  else while (f > to) { app.move_note(f, -1); f--; }
+  renderNotes();
+}
+
+// A grip that makes its parent .note-block draggable only while grabbed (so the
+// text fields inside stay normally selectable).
+function dragHandle(block) {
+  const h = document.createElement("div");
+  h.className = "drag-handle";
+  h.title = "Drag to reorder";
+  h.textContent = "⠿";
+  h.addEventListener("mousedown", () => { block.draggable = true; });
+  block.addEventListener("dragend", () => { block.draggable = false; });
+  return h;
+}
+
+let dragFromIndex = -1;
+
 function renderNotes() {
   // Revoke old blob URLs before rebuilding.
   for (const img of els.notesList.querySelectorAll("img[data-blob]")) {
@@ -2144,6 +2167,18 @@ function renderNotes() {
     const kind = app.note_kind(i);
     const div = document.createElement("div");
     div.className = "note-block";
+    div.dataset.idx = String(i);
+    div.appendChild(dragHandle(div));
+    div.addEventListener("dragstart", (e) => {
+      dragFromIndex = i;
+      div.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+    });
+    div.addEventListener("dragend", () => {
+      div.classList.remove("dragging");
+      els.notesList.querySelectorAll(".note-block.drop-before,.note-block.drop-after")
+        .forEach((b) => b.classList.remove("drop-before", "drop-after"));
+    });
     if (kind === "sketch") {
       const holder = document.createElement("div");
       holder.className = "sketch-holder";
@@ -2177,18 +2212,48 @@ function renderNotes() {
         img.style.cursor = "pointer";
         img.addEventListener("click", () => goToPage(srcPage));
       }
-      const cap = document.createElement("input");
+      // Caption wraps to fit the width (auto-growing) rather than truncating.
+      const cap = document.createElement("textarea");
       cap.className = "caption";
       cap.maxLength = 300;
+      cap.rows = 1;
       cap.placeholder = "Caption…";
       cap.value = app.note_caption(i);
-      cap.addEventListener("input", () => app.update_note_caption(i, cap.value));
+      cap.addEventListener("input", () => { app.update_note_caption(i, cap.value); autoGrow(cap); });
       div.append(img, cap);
+      queueMicrotask(() => autoGrow(cap));
     }
     div.appendChild(blockActions(i, total));
     els.notesList.appendChild(div);
   }
 }
+
+// Drag-and-drop reordering: highlight the insertion point and reorder on drop.
+els.notesList.addEventListener("dragover", (e) => {
+  if (dragFromIndex < 0) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  const over = e.target.closest(".note-block");
+  els.notesList.querySelectorAll(".drop-before,.drop-after")
+    .forEach((b) => b.classList.remove("drop-before", "drop-after"));
+  if (!over || over.classList.contains("dragging")) return;
+  const r = over.getBoundingClientRect();
+  over.classList.add(e.clientY < r.top + r.height / 2 ? "drop-before" : "drop-after");
+});
+els.notesList.addEventListener("drop", (e) => {
+  if (dragFromIndex < 0) return;
+  e.preventDefault();
+  const over = e.target.closest(".note-block");
+  const from = dragFromIndex;
+  dragFromIndex = -1;
+  if (!over) return;
+  let to = Number(over.dataset.idx);
+  const r = over.getBoundingClientRect();
+  const after = e.clientY >= r.top + r.height / 2;
+  if (after && to < from) to += 1;
+  if (!after && to > from) to -= 1;
+  reorderNote(from, to);
+});
 
 function toggleNotes(show) {
   const visible = show ?? els.notesPane.hidden;
