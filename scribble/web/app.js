@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "42";
+const APP_VERSION = "44";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -180,32 +180,34 @@ function handlePoints(bb) {
   ];
 }
 
-function drawSelection(ctx, offY = 0) {
-  if (selectedId < 0) return;
-  const bb = app.item_bbox_of(pageNum, selectedId);
-  if (bb.length !== 4) {
-    selectedId = -1;
-    return;
-  }
-  const r = curRatio();
-  const k = scale() * r;
+// Draw a dashed selection box + corner handles around a page-space bbox, at the
+// given content scale and backing ratio. Shared by the PDF view and sketches.
+function drawSelectionBox(ctx, bb, corners, scl, ratio) {
+  const k = scl * ratio;
   ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, offY);
   ctx.strokeStyle = "#2f5fde";
-  ctx.lineWidth = 1.5 * r;
-  ctx.setLineDash([5 * r, 4 * r]);
-  const pad = 4 * k / scale();
-  ctx.strokeRect(bb[0] * k - pad, bb[1] * k - pad, (bb[2] - bb[0]) * k + 2 * pad, (bb[3] - bb[1]) * k + 2 * pad);
+  ctx.lineWidth = 1.5 * ratio;
+  ctx.setLineDash([5 * ratio, 4 * ratio]);
+  const pad = 4 * ratio;
+  ctx.strokeRect(bb[0] * k - pad, bb[1] * k - pad,
+                 (bb[2] - bb[0]) * k + 2 * pad, (bb[3] - bb[1]) * k + 2 * pad);
   ctx.setLineDash([]);
   ctx.fillStyle = "#ffffff";
-  const hs = HANDLE_PX * r;
-  for (const [hx, hy] of handlePoints(bb)) {
+  const hs = HANDLE_PX * ratio;
+  for (const [hx, hy] of corners) {
     ctx.beginPath();
     ctx.rect(hx * k - hs / 2, hy * k - hs / 2, hs, hs);
     ctx.fill();
     ctx.stroke();
   }
   ctx.restore();
+}
+
+function drawSelection(ctx) {
+  if (selectedId < 0) return;
+  const bb = app.item_bbox_of(pageNum, selectedId);
+  if (bb.length !== 4) { selectedId = -1; return; }
+  drawSelectionBox(ctx, bb, handlePoints(bb), scale(), curRatio());
 }
 
 // Which corner handle (0..3) is under (x, y) page coords, or -1.
@@ -1068,12 +1070,11 @@ function bytesToB64(bytes) {
   return btoa(bin);
 }
 
-function drawSnipMarquee(ctx, offY = 0) {
+function drawSnipMarquee(ctx) {
   if (!snip) return;
   const r = curRatio();
   const k = scale() * r;
   ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, offY);
   ctx.strokeStyle = "#2f5fde";
   ctx.lineWidth = 1.5 * r;
   ctx.setLineDash([6 * r, 4 * r]);
@@ -1156,15 +1157,9 @@ function openTextEditor(pageX, pageY, initial, editId) {
   els.textInput.style.top = `${(pageY - 18) * scale()}px`;
   els.textInput.value = initial;
   els.textInput.hidden = false;
-  growTextInput();
+  autoGrow(els.textInput);
   // Defer focus until after the pointer event sequence settles.
   setTimeout(() => els.textInput.focus(), 0);
-}
-
-// Grow the (multi-line) on-page text editor to fit its content.
-function growTextInput() {
-  els.textInput.style.height = "auto";
-  els.textInput.style.height = `${els.textInput.scrollHeight}px`;
 }
 
 function commitTextInput() {
@@ -1203,7 +1198,7 @@ els.textInput.addEventListener("keydown", (ev) => {
   }
   ev.stopPropagation();
 });
-els.textInput.addEventListener("input", growTextInput);
+els.textInput.addEventListener("input", () => autoGrow(els.textInput));
 els.textInput.addEventListener("blur", commitTextInput);
 
 // ---------- save / load ----------
@@ -2141,23 +2136,8 @@ class SketchView {
     // selection box + handles (same look as the PDF view)
     if (this.selected >= 0) {
       const bb = app.item_bbox_of_sketch(this.note, this.selected);
-      if (bb.length === 4) {
-        const k = this.scale * dpr();
-        ctx.save();
-        ctx.strokeStyle = "#2f5fde";
-        ctx.lineWidth = 1.5 * dpr();
-        ctx.setLineDash([5 * dpr(), 4 * dpr()]);
-        ctx.strokeRect(bb[0] * k - 4, bb[1] * k - 4, (bb[2] - bb[0]) * k + 8, (bb[3] - bb[1]) * k + 8);
-        ctx.setLineDash([]);
-        ctx.fillStyle = "#fff";
-        const hs = 7 * dpr();
-        for (const [hx, hy] of this.corners(bb)) {
-          ctx.beginPath(); ctx.rect(hx * k - hs / 2, hy * k - hs / 2, hs, hs); ctx.fill(); ctx.stroke();
-        }
-        ctx.restore();
-      }
+      if (bb.length === 4) drawSelectionBox(ctx, bb, this.corners(bb), this.scale, dpr());
     }
-    scheduleSketchExportRefresh();
   }
 
   corners(bb) { return [[bb[0], bb[1]], [bb[2], bb[1]], [bb[2], bb[3]], [bb[0], bb[3]]]; }
@@ -2254,8 +2234,7 @@ class SketchView {
     input.style.left = `${x * this.scale}px`;
     input.style.top = `${y * this.scale - 18}px`;
     this.canvas.parentElement.appendChild(input);
-    const grow = () => { input.style.height = "auto"; input.style.height = `${input.scrollHeight}px`; };
-    grow();
+    autoGrow(input);
     setTimeout(() => input.focus(), 0);
     const commit = () => {
       const v = input.value;
@@ -2266,7 +2245,7 @@ class SketchView {
       input.remove();
       this.draw();
     };
-    input.addEventListener("input", grow);
+    input.addEventListener("input", () => autoGrow(input));
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); }
       else if (e.key === "Escape") input.remove();
@@ -2275,10 +2254,6 @@ class SketchView {
     input.addEventListener("blur", commit);
   }
 }
-
-// Sketches change the export's notes pages; refresh that lazily is unneeded,
-// but we keep a hook for symmetry with the PDF thumbnail refresh.
-function scheduleSketchExportRefresh() { /* exports read live state on demand */ }
 
 let sketchViews = [];
 let activeSketch = null; // most-recently-interacted sketch (for Delete/Escape)
