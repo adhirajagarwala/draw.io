@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "21";
+const APP_VERSION = "29";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -93,23 +93,22 @@ let basePage = { w: 1, h: 1 }; // current page size in PDF points
 const scale = () => currentScale;
 const dpr = () => Math.max(1, Math.min(4, window.devicePixelRatio || 1));
 
-// Continuous-scroll layout (PDF only). One tall canvas holds every page stacked;
-// each entry records where its page sits, in CSS px. contRatio is the canvas
-// backing ratio — normally devicePixelRatio, reduced only if the whole stack
-// would exceed the browser's safe single-canvas height. contActiveTopCss is the
-// top of the page the pointer is currently interacting with.
-let contLayout = [];        // [{ base:{w,h}, topCss, hCss, wCss }]
-let contRatio = 1;
-let contActiveTopCss = 0;
-const CONT_GAP = 18;        // CSS px gap shown between stacked pages
-const CONT_MAX_BACKING = 16000; // safe single-canvas height ceiling (px)
-// The on-screen backing ratio in use right now (continuous may cap it).
-const curRatio = () => (scrollMode === "continuous" ? contRatio : dpr());
+// Continuous scroll (PDF only): a VIRTUALIZED column of per-page sheets in
+// #page-column. Each .cpage is a sized placeholder; its PDF raster + annotation
+// canvases are mounted only while near the viewport (IntersectionObserver) and
+// freed when far — so memory stays bounded and there is no single-canvas height
+// ceiling, however long the document. See CLAUDE.md §10.
+const cont = {
+  pages: [],   // [{ el, pdfCanvas, annoCanvas, base:{w,h}, mounted }]
+  io: null,    // IntersectionObserver that mounts/unmounts pages
+  scale: 1,    // effective CSS scale of the column
+  token: 0,    // bumped on each rebuild to drop stale async page renders
+};
+const CONT_MAX_BACKING = 16000; // safe single-canvas dimension ceiling (HTML page)
+// The on-screen backing ratio in use right now. Continuous pages render per-page
+// at devicePixelRatio; only HTML caps its own ratio for very tall pages.
+const curRatio = () => (docMode === "html" ? htmlRatio : dpr());
 const isContinuous = () => scrollMode === "continuous" && docMode === "pdf";
-// Honour the OS "reduce motion" setting for programmatic scroll jumps.
-const reducedMotion = () =>
-  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
 // A drawable document (PDF or uploaded HTML) is currently open.
 const docOpen = () => !!pdfDoc || (docMode === "html" && !els.wrap.hidden);
 
@@ -221,27 +220,20 @@ function handleAt(x, y) {
 }
 
 function redrawAnnotations() {
-  const ctx = els.annoCanvas.getContext("2d");
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, els.annoCanvas.width, els.annoCanvas.height);
   if (isContinuous()) {
-    // Every page draws into its own slot on the one tall canvas. Rust's render
-    // composes onto the current transform (save + scale), so a per-page
-    // translate lands each page's marks in place.
-    const k = scale() * contRatio;
-    for (let i = 0; i < contLayout.length; i++) {
-      const offY = Math.round(contLayout[i].topCss * contRatio);
-      ctx.setTransform(1, 0, 0, 1, 0, offY);
-      app.render(ctx, i, k);
+    // Repaint every mounted page's own annotation canvas. Offscreen pages are
+    // unmounted (no backing store); they repaint when they next mount.
+    for (let i = 0; i < cont.pages.length; i++) {
+      if (cont.pages[i].mounted) contDrawAnnos(i);
     }
-    const aOff = Math.round(contActiveTopCss * contRatio);
-    drawSelection(ctx, aOff);
-    drawSnipMarquee(ctx, aOff);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
   } else {
-    // Backing store is scale*dpr for crisp output at any devicePixelRatio
-    // (including browser zoom); CSS shrinks it back to `scale`.
-    app.render(ctx, pageNum, scale() * dpr());
+    const ctx = els.annoCanvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, els.annoCanvas.width, els.annoCanvas.height);
+    // Backing store is scale*ratio for crisp output at any devicePixelRatio
+    // (including browser zoom); CSS shrinks it back to `scale`. curRatio() is
+    // dpr() for PDFs and htmlRatio for HTML (which may be capped for tall pages).
+    app.render(ctx, pageNum, scale() * curRatio());
     drawSelection(ctx);
     drawSnipMarquee(ctx);
   }
@@ -253,7 +245,16 @@ function redrawAnnotations() {
 async function renderPage() {
   if (!pdfDoc) return;
   commitTextInput();
-  els.wrap.classList.remove("continuous"); // single-page sheet styling
+  contTeardown(); // leave virtualized continuous mode if it was active
+  // Single-page PDF sheet styling; also clear any HTML-mode page sizing left
+  // over from a previously-opened HTML document.
+  els.wrap.hidden = false;
+  els.wrap.classList.remove("continuous", "htmlpage");
+  els.wrap.style.width = "";
+  els.wrap.style.height = "";
+  els.htmlFrame.style.transform = "none";
+  els.pdfCanvas.hidden = false;
+  els.annoCanvas.hidden = false;
   const page = await pdfDoc.getPage(pageNum + 1);
   const base = page.getViewport({ scale: 1 });
   basePage = { w: base.width, h: base.height };
@@ -301,16 +302,25 @@ async function renderPage() {
   else els.textLayer.textContent = "";
 }
 
-// ---------- continuous scroll (Apple Preview style, PDF only) ----------
+// ---------- continuous scroll (virtualized, PDF only) ----------
 
-// Render every page stacked into the one tall canvas so the document flows as a
-// single scroll. Each page keeps its own engine surface, so all annotation
-// tools still work — the page under the pointer becomes active on press.
-let contRenderToken = 0;
+// Tear down the virtualized column and stop observing. Safe to call anytime.
+function contTeardown() {
+  if (cont.io) { cont.io.disconnect(); cont.io = null; }
+  cont.pages = [];
+  els.column.hidden = true;
+  els.column.textContent = "";
+}
+
+// Build the per-page column. Pages render lazily as they approach the viewport
+// (contOnIntersect) and free their canvases when far — nothing is drawn up
+// front, so memory is bounded and the document can be arbitrarily long.
 async function renderContinuous() {
   if (!pdfDoc) return;
-  const token = ++contRenderToken;
+  const token = ++cont.token;
   commitTextInput();
+  // Keep the reader on the same page across rebuilds (zoom / resize).
+  const keep = cont.pages.length ? visiblePage() : pageNum;
   const bases = [];
   for (let i = 0; i < pdfDoc.numPages; i++) {
     const pg = await pdfDoc.getPage(i + 1);
@@ -318,109 +328,163 @@ async function renderContinuous() {
     bases.push({ w: v.width, h: v.height });
     app.ensure_page(i, v.width, v.height);
   }
-  if (token !== contRenderToken) return;
+  if (token !== cont.token) return;
   const maxW = Math.max(...bases.map((b) => b.w));
-  // Both fit modes track the widest page when everything is stacked.
-  const s = (zoomMode === "fit-width" || zoomMode === "fit-page")
+  cont.scale = (zoomMode === "fit-width" || zoomMode === "fit-page")
     ? clampZoom((els.viewer.clientWidth - FIT_MARGIN) / maxW)
     : clampZoom(parseFloat(zoomMode) || 1);
-  currentScale = s;
-  contLayout = [];
-  let top = 0;
-  for (const b of bases) {
-    contLayout.push({ base: b, topCss: top, hCss: b.h * s, wCss: b.w * s });
-    top += b.h * s + CONT_GAP;
-  }
-  const totalCss = Math.max(1, top - CONT_GAP);
-  const canvasCssW = maxW * s;
-  // Keep the single backing canvas under the browser's safe height; lower the
-  // backing ratio before giving up, and fall back to paged if even 1x is too
-  // tall (a guard for pathologically long PDFs — exam papers are short).
-  let ratio = dpr();
-  while (ratio > 1 && totalCss * ratio > CONT_MAX_BACKING) ratio -= 1;
-  if (totalCss * ratio > CONT_MAX_BACKING) {
-    status("This PDF is too long for continuous view; showing one page at a time.");
-    scrollMode = "paged";
-    syncScrollUI();
-    await renderPage();
-    return;
-  }
-  contRatio = ratio;
-  if (pageNum >= contLayout.length) pageNum = contLayout.length - 1;
-  basePage = contLayout[pageNum].base;
-  contActiveTopCss = contLayout[pageNum].topCss;
+  currentScale = cont.scale;
 
+  // Swap the single-page wrapper out for the virtualized column.
+  if (cont.io) cont.io.disconnect();
   els.htmlFrame.hidden = true;
-  els.pdfCanvas.hidden = false;
-  els.annoCanvas.hidden = false;
+  els.wrap.hidden = true;
   els.textLayer.textContent = "";
-  els.wrap.classList.add("continuous"); // transparent bg so gaps + shadows show
-  for (const c of [els.pdfCanvas, els.annoCanvas]) {
-    c.width = Math.max(1, Math.floor(canvasCssW * ratio));
-    c.height = Math.max(1, Math.floor(totalCss * ratio));
-    c.style.width = `${Math.floor(canvasCssW)}px`;
-    c.style.height = `${Math.floor(totalCss)}px`;
+  els.column.hidden = false;
+  els.column.textContent = "";
+  cont.pages = [];
+  cont.io = new IntersectionObserver(contOnIntersect, {
+    root: els.viewer,
+    rootMargin: "100% 0px", // mount when within ~1 viewport above/below
+  });
+  for (let i = 0; i < bases.length; i++) {
+    const wCss = Math.round(bases[i].w * cont.scale);
+    const hCss = Math.round(bases[i].h * cont.scale);
+    const el = document.createElement("div");
+    el.className = "cpage";
+    el.dataset.page = String(i);
+    el.style.width = `${wCss}px`;
+    el.style.height = `${hCss}px`;
+    el.style.containIntrinsicSize = `${wCss}px ${hCss}px`;
+    const pdfCanvas = document.createElement("canvas");
+    pdfCanvas.className = "cpdf";
+    const annoCanvas = document.createElement("canvas");
+    annoCanvas.className = "canno";
+    el.append(pdfCanvas, annoCanvas);
+    els.column.appendChild(el);
+    const p = { el, pdfCanvas, annoCanvas, base: bases[i], mounted: false };
+    cont.pages.push(p);
+    // Same page-aware pointer pipeline as the single-page canvas.
+    annoCanvas.addEventListener("pointerdown", onAnnoPointerDown);
+    annoCanvas.addEventListener("pointermove", onAnnoPointerMove);
+    annoCanvas.addEventListener("pointerup", endStroke);
+    annoCanvas.addEventListener("pointercancel", onAnnoPointerCancel);
+    cont.io.observe(el);
   }
-  // Paint each page raster into its slot via a temp canvas. This avoids relying
-  // on PDF.js transform semantics and keeps the render lock honored per page.
-  const pctx = els.pdfCanvas.getContext("2d");
-  pctx.setTransform(1, 0, 0, 1, 0, 0);
-  pctx.clearRect(0, 0, els.pdfCanvas.width, els.pdfCanvas.height); // gaps stay clear
-  for (let i = 0; i < contLayout.length; i++) {
-    const pg = await pdfDoc.getPage(i + 1);
-    const v = pg.getViewport({ scale: s * ratio });
-    const tmp = document.createElement("canvas");
-    tmp.width = Math.max(1, Math.floor(v.width));
-    tmp.height = Math.max(1, Math.floor(v.height));
-    try {
-      await withRenderLock(() =>
-        pg.render({ canvasContext: tmp.getContext("2d"), viewport: v, intent: "print" }).promise);
-    } catch (e) {
-      if (e?.name !== "RenderingCancelledException") throw e;
-      return;
-    }
-    if (token !== contRenderToken) return; // a newer render supersedes us
-    const slotY = Math.round(contLayout[i].topCss * ratio);
-    // A white sheet with a soft drop-shadow so each page reads as a separate
-    // page; the gaps between sheets stay transparent and show the viewer
-    // background, so you can clearly see where one page ends and the next
-    // begins.
-    pctx.save();
-    pctx.shadowColor = "rgba(20, 24, 28, 0.22)";
-    pctx.shadowBlur = 10 * ratio;
-    pctx.shadowOffsetY = 2 * ratio;
-    pctx.fillStyle = "#ffffff";
-    pctx.fillRect(0, slotY, tmp.width, tmp.height);
-    pctx.restore();
-    pctx.drawImage(tmp, 0, slotY);
-  }
+  pageNum = Math.min(Math.max(0, keep), cont.pages.length - 1);
+  basePage = cont.pages[pageNum].base;
+
   els.pageInput.max = String(pdfDoc.numPages);
-  els.pageCount.textContent = `/ ${pdfDoc.numPages}`;
   els.pageInput.value = String(pageNum + 1);
+  els.pageCount.textContent = `/ ${pdfDoc.numPages}`;
   syncZoomSelect();
   els.btn.zoomOut.disabled = currentScale <= ZOOM_MIN;
   els.btn.zoomIn.disabled = currentScale >= ZOOM_MAX;
   els.btn.prev.disabled = pageNum === 0;
-  els.btn.next.disabled = pageNum >= pdfDoc.numPages - 1;
-  redrawAnnotations();
+  els.btn.next.disabled = pageNum >= cont.pages.length - 1;
   markActiveThumb(pageNum);
+  // Restore the reader's position once layout settles (instant; no animation).
+  if (pageNum > 0) {
+    requestAnimationFrame(() => scrollToContPage(pageNum));
+  } else {
+    els.viewer.scrollTop = 0;
+  }
+}
+
+// IntersectionObserver callback: mount pages entering the margin, free leaving.
+function contOnIntersect(entries) {
+  for (const e of entries) {
+    const i = Number(e.target.dataset.page);
+    if (e.isIntersecting) contMount(i);
+    else contUnmount(i);
+  }
+}
+
+// Allocate this page's canvases and render its raster + annotations.
+async function contMount(i) {
+  const p = cont.pages[i];
+  if (!p || p.mounted) return;
+  p.mounted = true;
+  const token = cont.token;
+  const ratio = dpr();
+  const k = cont.scale * ratio;
+  const wB = Math.max(1, Math.floor(p.base.w * k));
+  const hB = Math.max(1, Math.floor(p.base.h * k));
+  for (const c of [p.pdfCanvas, p.annoCanvas]) {
+    c.width = wB; c.height = hB;
+    c.style.width = "100%"; c.style.height = "100%";
+  }
+  try {
+    const pg = await pdfDoc.getPage(i + 1);
+    const v = pg.getViewport({ scale: k });
+    await withRenderLock(() =>
+      pg.render({ canvasContext: p.pdfCanvas.getContext("2d"), viewport: v, intent: "print" }).promise);
+  } catch (e) {
+    if (e?.name !== "RenderingCancelledException") console.warn("cont render:", e);
+    return;
+  }
+  if (token !== cont.token || !p.mounted) return; // rebuilt or scrolled away
+  contDrawAnnos(i);
+}
+
+// Free a page's canvases when it scrolls far away (keeps memory bounded).
+function contUnmount(i) {
+  const p = cont.pages[i];
+  if (!p || !p.mounted) return;
+  p.mounted = false;
+  for (const c of [p.pdfCanvas, p.annoCanvas]) { c.width = 0; c.height = 0; }
+}
+
+// Paint a mounted page's annotation canvas (marks + selection/snip if active).
+function contDrawAnnos(i) {
+  const p = cont.pages[i];
+  if (!p || !p.mounted) return;
+  const ratio = dpr();
+  const k = cont.scale * ratio;
+  const wB = Math.max(1, Math.floor(p.base.w * k));
+  const hB = Math.max(1, Math.floor(p.base.h * k));
+  if (p.annoCanvas.width !== wB || p.annoCanvas.height !== hB) {
+    p.annoCanvas.width = wB; p.annoCanvas.height = hB;
+    p.annoCanvas.style.width = "100%"; p.annoCanvas.style.height = "100%";
+  }
+  const ctx = p.annoCanvas.getContext("2d");
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, p.annoCanvas.width, p.annoCanvas.height);
+  app.render(ctx, i, k);
+  if (i === pageNum) { drawSelection(ctx); drawSnipMarquee(ctx); }
+}
+
+// The annotation canvas the pointer is currently working on (single-page or the
+// active continuous page) — used by coord mapping, snip and the text editor.
+function activeAnnoCanvas() {
+  return isContinuous() ? cont.pages[pageNum]?.annoCanvas : els.annoCanvas;
+}
+
+// Scroll a continuous page sheet to the top of the viewer. We set scrollTop
+// directly (each .cpage's offsetParent is #viewer) rather than via
+// element.scrollIntoView. Jumps are instant: programmatic smooth scrolling
+// silently no-ops inside this nested, content-visibility scroll container in
+// some contexts, and a page jump that always lands beats one that sometimes
+// doesn't move. (Free wheel/trackpad scrolling stays fully native — §10.)
+function scrollToContPage(i) {
+  const p = cont.pages[i];
+  if (!p) return;
+  els.viewer.scrollTop = Math.max(0, p.el.offsetTop - 8);
 }
 
 // Re-render whichever mode is active (used by zoom / resize / load).
 function renderDoc() {
+  if (docMode === "html") return renderHtmlPage();
   return isContinuous() ? renderContinuous() : renderPage();
 }
 
-// Which stacked page sits at the middle of the viewport right now.
+// Which page sheet sits at the middle of the viewport right now.
 function visiblePage() {
-  if (!contLayout.length) return 0;
-  const aRect = els.annoCanvas.getBoundingClientRect();
-  const vRect = els.viewer.getBoundingClientRect();
-  const topInContent = aRect.top - vRect.top + els.viewer.scrollTop;
-  const y = els.viewer.scrollTop + els.viewer.clientHeight / 2 - topInContent;
+  if (!cont.pages.length) return 0;
+  const mid = els.viewer.getBoundingClientRect().top + els.viewer.clientHeight / 2;
   let vis = 0;
-  for (let i = 0; i < contLayout.length; i++) {
-    if (y >= contLayout[i].topCss) vis = i; else break;
+  for (let i = 0; i < cont.pages.length; i++) {
+    if (cont.pages[i].el.getBoundingClientRect().top <= mid) vis = i; else break;
   }
   return vis;
 }
@@ -436,7 +500,7 @@ els.viewer.addEventListener("scroll", () => {
     els.pageInput.value = String(vis + 1);
     if (!els.thumbs.hidden) markActiveThumb(vis);
     els.btn.prev.disabled = vis === 0;
-    els.btn.next.disabled = vis >= contLayout.length - 1;
+    els.btn.next.disabled = vis >= cont.pages.length - 1;
   }, 60);
 }, { passive: true });
 
@@ -498,6 +562,10 @@ async function openPdf(file) {
     els.pdfCanvas.hidden = false;
     app = new App(); // fresh document per PDF
     if (hash) app.set_pdf_sha256(hash);
+    dirtySinceFileSave = false;
+    // Recover annotations autosaved for this exact PDF, if any (before the doc
+    // is read for thumbnails/render below).
+    const restored = await maybeRestoreAutosave(hash);
     pageNum = 0;
     zoomMode = "fit-width"; // fill the viewer width — 100% leaves a tiny page
     // Default to continuous scroll for multi-page PDFs so "scroll = next page"
@@ -525,8 +593,9 @@ async function openPdf(file) {
     els.btn.thumbs.classList.toggle("active", !els.thumbs.hidden);
     if (!els.thumbs.hidden) await buildThumbnails();
     renderNotes();
+    if (restored && app.notes_len() > 0 && els.notesPane.hidden) toggleNotes(true);
     if (isContinuous()) await renderContinuous(); else await renderPage();
-    status("PDF loaded. Scribble away!");
+    status(restored ? "Restored your autosaved annotations." : "PDF loaded. Scribble away!");
   } catch (e) {
     console.error("openPdf failed:", e);
     status(`Could not open PDF: ${e?.message || e}`);
@@ -536,7 +605,13 @@ async function openPdf(file) {
 // ---------- HTML loading ----------
 
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
-const HTML_MAX_PAGE_H = 6000; // cap canvas-backed page height (browser limits)
+// HTML renders as a FIXED-layout page: it is laid out once at this width and
+// never reflows, so annotations stay pinned to the content. Resize/zoom scale
+// the whole page (like a PDF) rather than re-flowing it. ~US-Letter width.
+const HTML_BASE_W = 816;
+const HTML_MAX_PAGE_H = 20000; // matches the Rust page-dimension cap; warn beyond
+let htmlRatio = 1;      // anno-canvas backing ratio for HTML (capped for tall pages)
+let htmlTruncated = false; // measured content exceeded HTML_MAX_PAGE_H
 
 async function openHtml(file) {
   if (file.size > MAX_HTML_BYTES) {
@@ -554,8 +629,9 @@ async function openHtml(file) {
     if (pdfDoc) { try { await pdfDoc.destroy(); } catch { /* ignore */ } pdfDoc = null; }
     docMode = "html";
     app = new App();
+    dirtySinceFileSave = false;
     pageNum = 0;
-    zoomMode = "1";
+    zoomMode = "fit-width"; // fill the viewer width; the page scales, never reflows
     scrollMode = "paged"; // continuous scroll is PDF-only
     setScrollEnabled(false);
     syncScrollUI();
@@ -578,7 +654,9 @@ async function openHtml(file) {
       setTimeout(resolve, 1200);
     });
 
-    layoutHtmlPage();
+    measureHtmlHeight();
+    renderHtmlPage();
+    watchHtmlImages(); // re-measure once late-loading images settle
 
     els.btn.save.disabled = false;
     els.btn.load.disabled = false;
@@ -588,14 +666,12 @@ async function openHtml(file) {
     els.thumbs.hidden = true;
     els.btn.thumbs.classList.remove("active");
     els.docControls.hidden = false;
-    els.pageInput.disabled = true;
-    els.zoomSelect.disabled = true;
+    els.pageInput.disabled = true;     // single page: nav stays off
+    els.zoomSelect.disabled = false;   // but HTML IS zoomable (fixed-layout page)
     els.pageInput.value = "1";
     els.pageCount.textContent = "/ 1";
     els.btn.prev.disabled = true;
     els.btn.next.disabled = true;
-    els.btn.zoomIn.disabled = true;
-    els.btn.zoomOut.disabled = true;
     updateContextBar(activeTool());
     renderNotes();
     status("HTML loaded. Scribble away!");
@@ -605,94 +681,132 @@ async function openHtml(file) {
   }
 }
 
-// Lay the HTML out at the viewer's available width, measure its height, and
-// size the overlay annotation canvas to match (1:1 page coordinates = CSS px).
-function layoutHtmlPage() {
-  const avail = Math.max(320, Math.floor(els.viewer.clientWidth - 60));
+// Measure the uploaded HTML's natural height at the FIXED base width, so its
+// internal layout is deterministic and independent of the window size. Called
+// after load (and again when late images settle) — never on a plain resize, so
+// the layout, and therefore annotation alignment, never shifts under the user.
+function measureHtmlHeight() {
   const f = els.htmlFrame;
-  f.style.width = `${avail}px`;
-  f.style.height = "200px"; // temp, so content can lay out to width first
+  f.style.transform = "none";        // measure unscaled
+  f.style.width = `${HTML_BASE_W}px`;
+  f.style.height = "200px";          // temp: force layout to the width first
   let h = 600;
   try {
     const d = f.contentDocument;
     if (d && d.body) {
       h = Math.max(d.body.scrollHeight, d.documentElement.scrollHeight, 200);
     }
-  } catch { /* cross-origin shouldn't happen for srcdoc; keep default */ }
+  } catch { /* same-origin srcdoc; keep the default on the rare failure */ }
+  htmlTruncated = h > HTML_MAX_PAGE_H;
   h = Math.min(h, HTML_MAX_PAGE_H);
-  f.style.height = `${h}px`;
+  basePage = { w: HTML_BASE_W, h };
+  app.ensure_page(0, HTML_BASE_W, h);
+}
 
-  basePage = { w: avail, h };
-  currentScale = 1;
-  app.ensure_page(0, avail, h);
-
-  const ratio = dpr();
+// Render the uploaded HTML as a fixed-layout sheet: the iframe keeps its base
+// width and is SCALED (CSS transform, never re-flowed) to the current zoom, so
+// annotations stay pinned to the content at any size. Mirrors renderPage().
+function renderHtmlPage() {
+  if (docMode !== "html" || els.wrap.hidden) return;
+  commitTextInput();
+  els.wrap.classList.remove("continuous");
+  els.wrap.classList.add("htmlpage");
+  els.pdfCanvas.hidden = true;
+  els.htmlFrame.hidden = false;
   els.annoCanvas.hidden = false;
-  els.annoCanvas.width = Math.floor(avail * ratio);
-  els.annoCanvas.height = Math.floor(h * ratio);
-  els.annoCanvas.style.width = `${avail}px`;
-  els.annoCanvas.style.height = `${h}px`;
+  currentScale = computeScale();
+  const s = currentScale;
+  // Keep the annotation canvas backing store within the browser's safe single-
+  // canvas height; drop the pixel ratio before scaling fidelity is lost.
+  let ratio = dpr();
+  while (ratio > 1 &&
+         (basePage.h * s * ratio > CONT_MAX_BACKING ||
+          basePage.w * s * ratio > CONT_MAX_BACKING)) ratio -= 1;
+  htmlRatio = ratio;
+  const cssW = Math.round(basePage.w * s);
+  const cssH = Math.round(basePage.h * s);
+  els.wrap.style.width = `${cssW}px`;
+  els.wrap.style.height = `${cssH}px`;
+  const f = els.htmlFrame;
+  f.style.width = `${HTML_BASE_W}px`;
+  f.style.height = `${basePage.h}px`;
+  f.style.transformOrigin = "0 0";
+  f.style.transform = `scale(${s})`;
+  els.annoCanvas.width = Math.max(1, Math.floor(cssW * ratio));
+  els.annoCanvas.height = Math.max(1, Math.floor(cssH * ratio));
+  els.annoCanvas.style.width = `${cssW}px`;
+  els.annoCanvas.style.height = `${cssH}px`;
+  syncZoomSelect();
+  els.btn.zoomOut.disabled = currentScale <= ZOOM_MIN;
+  els.btn.zoomIn.disabled = currentScale >= ZOOM_MAX;
   redrawAnnotations();
+  if (htmlTruncated) {
+    status(`This HTML page is very tall — content past ${HTML_MAX_PAGE_H}px isn't shown or annotatable.`);
+  }
+}
+
+// Some HTML embeds images that finish loading after onload, changing the page
+// height. Re-measure once they settle. A short debounce coalesces a burst of
+// image loads; a hard timeout covers images that never resolve.
+let htmlRemeasureTimer;
+function watchHtmlImages() {
+  let d;
+  try { d = els.htmlFrame.contentDocument; } catch { return; }
+  if (!d) return;
+  const pendingImgs = [...d.images].filter((im) => !im.complete);
+  if (!pendingImgs.length) return; // measured height is already final
+  const remeasure = () => {
+    clearTimeout(htmlRemeasureTimer);
+    htmlRemeasureTimer = setTimeout(() => {
+      if (docMode !== "html") return;
+      measureHtmlHeight();
+      renderHtmlPage();
+    }, 120);
+  };
+  for (const im of pendingImgs) {
+    im.addEventListener("load", remeasure, { once: true });
+    im.addEventListener("error", remeasure, { once: true });
+  }
+  setTimeout(remeasure, 1500); // safety: settle even if some images never fire
 }
 
 // ---------- pointer input ----------
 
 function pageCoords(ev) {
-  // Map through the on-screen rect rather than assuming CSS px == scale —
-  // robust under devicePixelRatio changes and browser zoom.
-  const r = els.annoCanvas.getBoundingClientRect();
+  // Map through the on-screen rect of the active page's canvas — robust under
+  // devicePixelRatio / browser zoom. Works for both the single-page canvas and
+  // the active continuous page (each .cpage canvas is its own page surface).
+  const canvas = activeAnnoCanvas();
+  if (!canvas) return [0, 0];
+  const r = canvas.getBoundingClientRect();
   if (r.width < 1 || r.height < 1) return [0, 0];
-  if (isContinuous()) {
-    // The tall canvas holds every page; the active page sits at
-    // contActiveTopCss. Pages are left-aligned at x=0 within the canvas.
-    const pageCssW = basePage.w * scale();
-    const pageCssH = basePage.h * scale();
-    if (pageCssW < 1 || pageCssH < 1) return [0, 0];
-    return [
-      ((ev.clientX - r.left) / pageCssW) * basePage.w,
-      ((ev.clientY - r.top - contActiveTopCss) / pageCssH) * basePage.h,
-    ];
-  }
   return [
     ((ev.clientX - r.left) / r.width) * basePage.w,
     ((ev.clientY - r.top) / r.height) * basePage.h,
   ];
 }
 
-// Continuous mode: which stacked page is under this screen Y, and make it the
-// active page for hit-testing / drawing. Active page = the page you last
-// pressed on; scrolling alone never changes it (so a live selection stays put).
-function pageAtClientY(clientY) {
-  const r = els.annoCanvas.getBoundingClientRect();
-  const y = clientY - r.top;
-  for (let i = 0; i < contLayout.length; i++) {
-    const L = contLayout[i];
-    if (y < L.topCss + L.hCss + CONT_GAP / 2) return i;
-  }
-  return Math.max(0, contLayout.length - 1);
-}
-function setActivePage(i) {
-  if (i < 0 || i >= contLayout.length) return;
-  pageNum = i;
-  basePage = contLayout[i].base;
-  contActiveTopCss = contLayout[i].topCss;
-}
-
 const eraseRadius = () => 10 / scale();
 
 // setPointerCapture can throw (e.g. the pointer is already gone) — never
-// let that abort an input handler mid-state-change.
+// let that abort an input handler mid-state-change. Captures on the canvas the
+// event fired on (the single-page canvas, or the active continuous page).
 function capturePointer(ev) {
   try {
-    els.annoCanvas.setPointerCapture(ev.pointerId);
+    ev.currentTarget.setPointerCapture(ev.pointerId);
   } catch {
     /* capture is an optimization, not a requirement */
   }
 }
 
-els.annoCanvas.addEventListener("pointerdown", (ev) => {
+function onAnnoPointerDown(ev) {
   if (!docOpen() || ev.button !== 0) return;
-  if (isContinuous()) setActivePage(pageAtClientY(ev.clientY));
+  // In continuous mode the page you press on becomes the active page for
+  // hit-testing / drawing (scrolling alone never changes it).
+  if (isContinuous()) {
+    const cp = ev.currentTarget.closest(".cpage");
+    if (cp) { pageNum = Number(cp.dataset.page); basePage = cont.pages[pageNum].base; }
+  }
   const tool = document.querySelector(".tool.active")?.dataset.tool;
   const [x, y] = pageCoords(ev);
   if (tool === "snip") {
@@ -738,9 +852,10 @@ els.annoCanvas.addEventListener("pointerdown", (ev) => {
   drawing = true;
   app.pointer_down(pageNum, x, y, eraseRadius());
   redrawAnnotations();
-});
+}
+els.annoCanvas.addEventListener("pointerdown", onAnnoPointerDown);
 
-els.annoCanvas.addEventListener("pointermove", (ev) => {
+function onAnnoPointerMove(ev) {
   if (snip) {
     const [x, y] = pageCoords(ev);
     snip.x1 = x;
@@ -776,15 +891,28 @@ els.annoCanvas.addEventListener("pointermove", (ev) => {
     }
     return;
   }
-  // Hover feedback for the select tool.
+  // Hover feedback for the select tool (never changes the active page).
   if (!drawing && docOpen() && activeTool() === "select") {
-    const [x, y] = pageCoords(ev);
-    const h = handleAt(x, y);
-    els.annoCanvas.style.cursor =
+    let hp = pageNum, hx, hy;
+    if (isContinuous()) {
+      const cp = ev.currentTarget.closest(".cpage");
+      hp = cp ? Number(cp.dataset.page) : pageNum;
+      const b = cont.pages[hp]?.base || basePage;
+      const r = ev.currentTarget.getBoundingClientRect();
+      hx = (ev.clientX - r.left) / r.width * b.w;
+      hy = (ev.clientY - r.top) / r.height * b.h;
+    } else {
+      [hx, hy] = pageCoords(ev);
+    }
+    const h = hp === pageNum ? handleAt(hx, hy) : -1; // handles only on selected page
+    ev.currentTarget.style.cursor =
       h === 0 || h === 2 ? "nwse-resize"
       : h === 1 || h === 3 ? "nesw-resize"
-      : app.find_item(pageNum, x, y) >= 0 ? "move"
+      : app.find_item(hp, hx, hy) >= 0 ? "move"
       : "default";
+  } else if (!drawing && !itemDrag && !resizeDrag && !snip) {
+    // Other tools use the CSS crosshair; clear any leftover select-hover cursor.
+    ev.currentTarget.style.cursor = "";
   }
   if (!drawing) return;
   const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
@@ -793,11 +921,12 @@ els.annoCanvas.addEventListener("pointermove", (ev) => {
     app.pointer_move(x, y, eraseRadius());
   }
   redrawAnnotations();
-});
+}
+els.annoCanvas.addEventListener("pointermove", onAnnoPointerMove);
 
 function endStroke(ev) {
-  if (ev.pointerId !== undefined && els.annoCanvas.hasPointerCapture(ev.pointerId)) {
-    els.annoCanvas.releasePointerCapture(ev.pointerId);
+  if (ev.pointerId !== undefined && ev.currentTarget.hasPointerCapture?.(ev.pointerId)) {
+    ev.currentTarget.releasePointerCapture(ev.pointerId);
   }
   if (snip) {
     const r = snip;
@@ -832,15 +961,16 @@ function endStroke(ev) {
   redrawAnnotations();
 }
 
-els.annoCanvas.addEventListener("pointerup", endStroke);
-els.annoCanvas.addEventListener("pointercancel", () => {
+function onAnnoPointerCancel() {
   drawing = false;
   itemDrag = null;
   resizeDrag = null;
   snip = null;
   app.pointer_cancel();
   redrawAnnotations();
-});
+}
+els.annoCanvas.addEventListener("pointerup", endStroke);
+els.annoCanvas.addEventListener("pointercancel", onAnnoPointerCancel);
 
 // ---------- snip: copy a region (image + its text) into the notes ----------
 
@@ -884,17 +1014,19 @@ async function finishSnip(r) {
     return;
   }
   try {
-    // 1. Pixels: copy the region (page + annotations) from the live canvases.
+    // 1. Pixels: copy the region (page + annotations) from the active page's
+    //    live canvases — the single-page pair, or the active continuous page.
     const k = scale() * curRatio();
-    const offY = isContinuous() ? Math.round(contActiveTopCss * curRatio()) : 0;
+    const srcPdf = isContinuous() ? cont.pages[pageNum]?.pdfCanvas : els.pdfCanvas;
+    const srcAnno = isContinuous() ? cont.pages[pageNum]?.annoCanvas : els.annoCanvas;
     const out = document.createElement("canvas");
     out.width = Math.max(1, Math.round(w * k));
     out.height = Math.max(1, Math.round(h * k));
     const ctx = out.getContext("2d");
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, out.width, out.height);
-    for (const src of [els.pdfCanvas, els.annoCanvas]) {
-      ctx.drawImage(src, x0 * k, y0 * k + offY, w * k, h * k, 0, 0, out.width, out.height);
+    for (const src of [srcPdf, srcAnno]) {
+      if (src) ctx.drawImage(src, x0 * k, y0 * k, w * k, h * k, 0, 0, out.width, out.height);
     }
     const blob = await new Promise((res) => out.toBlob(res, "image/png"));
     const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
@@ -942,15 +1074,23 @@ let itemDrag = null;    // {id, startX, startY, moved}
 function openTextEditor(pageX, pageY, initial, editId) {
   commitTextInput();
   pendingText = { x: pageX, y: pageY, editId };
-  // The input is positioned inside #page-wrap, which the canvas fills. In
-  // continuous mode the active page is offset down the tall canvas.
-  const offTop = isContinuous() ? contActiveTopCss : 0;
+  // Position the input inside its page's element so it tracks that page. In
+  // continuous mode that's the active .cpage; otherwise the single #page-wrap.
+  const host = isContinuous() ? cont.pages[pageNum]?.el || els.wrap : els.wrap;
+  if (els.textInput.parentElement !== host) host.appendChild(els.textInput);
   els.textInput.style.left = `${pageX * scale()}px`;
-  els.textInput.style.top = `${offTop + (pageY - 18) * scale()}px`;
+  els.textInput.style.top = `${(pageY - 18) * scale()}px`;
   els.textInput.value = initial;
   els.textInput.hidden = false;
+  growTextInput();
   // Defer focus until after the pointer event sequence settles.
   setTimeout(() => els.textInput.focus(), 0);
+}
+
+// Grow the (multi-line) on-page text editor to fit its content.
+function growTextInput() {
+  els.textInput.style.height = "auto";
+  els.textInput.style.height = `${els.textInput.scrollHeight}px`;
 }
 
 function commitTextInput() {
@@ -980,10 +1120,16 @@ function hideTextInput() {
 }
 
 els.textInput.addEventListener("keydown", (ev) => {
-  if (ev.key === "Enter") commitTextInput();
-  if (ev.key === "Escape") hideTextInput();
+  // Enter places the note; Shift+Enter inserts a newline (multi-line notes).
+  if (ev.key === "Enter" && !ev.shiftKey) {
+    ev.preventDefault();
+    commitTextInput();
+  } else if (ev.key === "Escape") {
+    hideTextInput();
+  }
   ev.stopPropagation();
 });
+els.textInput.addEventListener("input", growTextInput);
 els.textInput.addEventListener("blur", commitTextInput);
 
 // ---------- save / load ----------
@@ -998,6 +1144,7 @@ function downloadJson() {
     a.download = `annotations-${ts}.json`; // fixed sanitized pattern
     a.click();
     URL.revokeObjectURL(a.href);
+    dirtySinceFileSave = false; // work is now in a file the user controls
     status("Annotations saved.");
   } catch (e) {
     status("Save failed.");
@@ -1049,6 +1196,7 @@ async function loadJsonFile(file) {
     return;
   }
   app.set_pdf_sha256(currentSha); // keep hash of the actually-open PDF
+  dirtySinceFileSave = false; // matches the file the user just chose
   status("Annotations loaded.");
   setSelection(-1);
   renderNotes();
@@ -1408,6 +1556,22 @@ els.fileJson.addEventListener("change", () => {
   if (f) loadJsonFile(f);
 });
 
+// Mirror the visual selected/toggled state into aria-pressed so assistive tech
+// announces these controls as toggle buttons that are on or off. Called after
+// any change to the toolbar / view toggles / segmented control.
+function syncAria() {
+  const set = (el, on) => el && el.setAttribute("aria-pressed", on ? "true" : "false");
+  document.querySelectorAll(".tool").forEach((t) => set(t, t.classList.contains("active")));
+  document.querySelectorAll("#colors .swatch").forEach((s) => set(s, s.classList.contains("active")));
+  document.querySelectorAll("#widths .width").forEach((w) => set(w, w.classList.contains("active")));
+  set(els.btn.palette, els.btn.palette.classList.contains("active"));
+  set(els.btn.big, document.body.classList.contains("big"));
+  set(els.btn.thumbs, !els.thumbs.hidden);
+  set(els.btn.notes, !els.notesPane.hidden);
+  set(els.seg.paged, els.seg.paged.classList.contains("active"));
+  set(els.seg.cont, els.seg.cont.classList.contains("active"));
+}
+
 for (const b of document.querySelectorAll(".tool")) {
   b.addEventListener("click", () => {
     commitTextInput();
@@ -1423,6 +1587,7 @@ for (const b of document.querySelectorAll(".tool")) {
     if (name !== "select") setSelection(-1);
     els.annoCanvas.style.cursor = name === "snip" ? "crosshair" : "";
     updateContextBar(name);
+    syncAria();
     // Build/tear down the selectable text layer as the tool toggles.
     if (name === "pagetext" && pdfDoc) {
       pdfDoc.getPage(pageNum + 1).then(buildTextLayer);
@@ -1456,6 +1621,7 @@ for (const b of document.querySelectorAll("#widths .width")) {
     if (!app.set_pen_width(b.dataset.width)) return;
     document.querySelectorAll("#widths .width").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
+    syncAria();
   });
 }
 
@@ -1464,6 +1630,7 @@ for (const s of document.querySelectorAll("#colors .swatch")) {
     if (!app.set_color(s.dataset.color)) return;
     document.querySelectorAll("#colors .swatch").forEach((x) => x.classList.remove("active"));
     s.classList.add("active");
+    syncAria();
   });
 }
 
@@ -1473,16 +1640,8 @@ function goToPage(n, scrollTo = "top") {
   if (!pdfDoc) return;
   const clamped = Math.min(Math.max(0, n), pdfDoc.numPages - 1);
   if (isContinuous()) {
-    // Scroll that page into view; the scroll-sync updates the readout/thumb.
-    const L = contLayout[clamped];
-    if (L) {
-      const aTop = els.annoCanvas.getBoundingClientRect().top
-        - els.viewer.getBoundingClientRect().top + els.viewer.scrollTop;
-      els.viewer.scrollTo({
-        top: Math.max(0, aTop + L.topCss - 8),
-        behavior: reducedMotion() ? "auto" : "smooth",
-      });
-    }
+    // Scroll that page sheet into view; the scroll-sync updates readout/thumb.
+    scrollToContPage(clamped);
     els.pageInput.value = String(clamped + 1);
     return;
   }
@@ -1536,6 +1695,7 @@ function syncScrollUI() {
   const on = scrollMode === "continuous";
   els.seg.paged.classList.toggle("active", !on);
   els.seg.cont.classList.toggle("active", on);
+  syncAria();
 }
 function setScrollEnabled(enabled) {
   els.seg.paged.disabled = !enabled;
@@ -1566,8 +1726,9 @@ let resizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
-    if (docMode === "html") { if (!els.wrap.hidden) layoutHtmlPage(); }
-    else renderDoc();
+    // HTML never re-flows on resize — renderHtmlPage only recomputes the scale,
+    // so annotations stay aligned. PDFs re-render for fit modes / dpr changes.
+    renderDoc();
   }, 150);
 });
 
@@ -1580,6 +1741,12 @@ document.addEventListener("keydown", (ev) => {
   // Never hijack keys while the user is typing in any field (incl. notes).
   if (ev.target instanceof Element &&
       ev.target.matches("input, textarea, select, [contenteditable]")) {
+    return;
+  }
+  // When the shortcuts overlay is open, it captures Esc / ? and suppresses the
+  // rest so nothing fires behind the modal.
+  if (!helpOverlay.hidden) {
+    if (ev.key === "Escape" || ev.key === "?") { ev.preventDefault(); toggleHelp(false); }
     return;
   }
   const mod = ev.ctrlKey || ev.metaKey;
@@ -1611,6 +1778,9 @@ document.addEventListener("keydown", (ev) => {
       activeSketch.selected = -1;
       activeSketch.draw();
     }
+  } else if (!mod && ev.key === "?") {
+    ev.preventDefault();
+    toggleHelp(true);
   } else if (!mod && TOOL_KEYS[key]) {
     document.querySelector(`[data-tool="${TOOL_KEYS[key]}"]`)?.click();
   } else if (ev.key === "PageDown" || ev.key === "PageUp") {
@@ -1635,7 +1805,9 @@ document.addEventListener("keydown", (ev) => {
 });
 
 window.addEventListener("beforeunload", (ev) => {
-  if (app?.is_dirty()) {
+  // Warn if there are changes not written to a FILE. Autosave clears the Rust
+  // dirty flag, so we OR it with our own file-save tracking (see autosaveTick).
+  if (dirtySinceFileSave || app?.is_dirty()) {
     ev.preventDefault();
     ev.returnValue = "";
   }
@@ -1825,15 +1997,16 @@ class SketchView {
   }
 
   openText(ev, x, y, initial, editId) {
-    const input = document.createElement("input");
-    input.type = "text";
+    const input = document.createElement("textarea");
+    input.rows = 1;
     input.maxLength = 500;
     input.value = initial;
     input.className = "sketch-text-input";
-    const r = this.canvas.getBoundingClientRect();
     input.style.left = `${x * this.scale}px`;
     input.style.top = `${y * this.scale - 18}px`;
     this.canvas.parentElement.appendChild(input);
+    const grow = () => { input.style.height = "auto"; input.style.height = `${input.scrollHeight}px`; };
+    grow();
     setTimeout(() => input.focus(), 0);
     const commit = () => {
       const v = input.value;
@@ -1844,8 +2017,9 @@ class SketchView {
       input.remove();
       this.draw();
     };
+    input.addEventListener("input", grow);
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") commit();
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); }
       else if (e.key === "Escape") input.remove();
       e.stopPropagation();
     });
@@ -1922,6 +2096,8 @@ function toggleNotes(show) {
   const visible = show ?? els.notesPane.hidden;
   els.notesPane.hidden = !visible;
   els.splitter.hidden = !visible;
+  els.btn.notes.classList.toggle("active", visible);
+  syncAria();
   if (visible) renderNotes();
 }
 
@@ -1970,8 +2146,8 @@ els.splitter.addEventListener("pointermove", (ev) => {
   els.notesPane.style.width = `${Math.max(220, Math.min(window.innerWidth * 0.6, w))}px`;
   relayoutSketches();
 });
-els.splitter.addEventListener("pointerup", () => { splitDrag = null; });
-els.splitter.addEventListener("dblclick", () => { els.notesPane.style.width = ""; });
+els.splitter.addEventListener("pointerup", () => { splitDrag = null; savePrefs(); });
+els.splitter.addEventListener("dblclick", () => { els.notesPane.style.width = ""; savePrefs(); });
 
 // ---------- thumbnails sidebar ----------
 
@@ -2049,6 +2225,7 @@ function scheduleThumbRefresh() {
 els.btn.thumbs.addEventListener("click", async () => {
   els.thumbs.hidden = !els.thumbs.hidden;
   els.btn.thumbs.classList.toggle("active", !els.thumbs.hidden);
+  syncAria();
   if (!els.thumbs.hidden && els.thumbs.childElementCount === 0) {
     await buildThumbnails();
   }
@@ -2079,23 +2256,53 @@ async function buildTextLayer(page) {
 
 // ---------- accessibility toggles ----------
 
-els.btn.big.addEventListener("click", () => {
-  const on = document.body.classList.toggle("big");
+function applyBig(on) {
+  document.body.classList.toggle("big", on);
   els.btn.big.classList.toggle("active", on);
+  syncAria();
+}
+els.btn.big.addEventListener("click", () => {
+  applyBig(!document.body.classList.contains("big"));
+  savePrefs();
 });
 
-els.btn.palette.addEventListener("click", () => {
-  const safe = !els.btn.palette.classList.contains("active");
+// Apply the standard or colorblind-safe palette. Shared by the toggle and the
+// boot-time preference restore. Colors still come from the closed Rust enum.
+function applyPalette(safe, announce = false) {
   app.set_palette(safe ? "safe" : "standard");
   els.btn.palette.classList.toggle("active", safe);
-  // Swatches reflect the active palette (colors come from the Rust enum).
   for (const s of document.querySelectorAll("#colors .swatch")) {
     s.style.background = app.color_css(s.dataset.color);
   }
-  redrawAnnotations();
-  if (!els.thumbs.hidden) renderThumb(pageNum);
-  status(safe ? "Colorblind-safe palette on (green→brown, red→vermillion)."
-              : "Standard palette.");
+  if (docOpen()) {
+    redrawAnnotations();
+    if (!els.thumbs.hidden) renderThumb(pageNum);
+  }
+  syncAria();
+  if (announce) {
+    status(safe ? "Colorblind-safe palette on (green→brown, red→vermillion)."
+                : "Standard palette.");
+  }
+}
+els.btn.palette.addEventListener("click", () => {
+  applyPalette(!els.btn.palette.classList.contains("active"), true);
+  savePrefs();
+});
+
+// ---------- keyboard-shortcuts overlay ----------
+
+const helpOverlay = $("help-overlay");
+function toggleHelp(show) {
+  const open = show ?? helpOverlay.hidden;
+  helpOverlay.hidden = !open;
+  $("btn-help").classList.toggle("active", open);
+  if (open) $("help-close").focus();
+}
+$("btn-help").addEventListener("click", () => toggleHelp());
+$("help-close").addEventListener("click", () => toggleHelp(false));
+// Click the dimmed backdrop (but not the card) to dismiss.
+helpOverlay.addEventListener("click", (ev) => {
+  if (ev.target === helpOverlay) toggleHelp(false);
 });
 
 // ---------- embedded mode (the FULL app, running inside an exam page) ----------
@@ -2261,6 +2468,108 @@ function initEmbed() {
     group, document.querySelector(".topbar-right"));
 }
 
+// ---------- persistence: UI prefs (localStorage) + autosave recovery (IndexedDB) ----------
+//
+// Two independent layers, both best-effort (private-mode / disabled storage just
+// degrades silently):
+//   • UI prefs — palette, larger-controls, notes-pane width — survive reloads.
+//   • Autosave — the annotation document is snapshotted to IndexedDB keyed by the
+//     open PDF's hash, so a crash/accidental close can be recovered when the same
+//     PDF is reopened. Nothing leaves the machine; it's the same local-only data.
+
+const PREFS_KEY = "scribble.prefs.v1";
+
+function savePrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({
+      palette: els.btn.palette.classList.contains("active") ? "safe" : "standard",
+      big: document.body.classList.contains("big"),
+      notesWidth: els.notesPane.style.width || "",
+    }));
+  } catch { /* storage unavailable — non-fatal */ }
+}
+
+function applyPrefs() {
+  let p = {};
+  try { p = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { /* ignore */ }
+  if (p.big) applyBig(true);
+  if (p.notesWidth) els.notesPane.style.width = p.notesWidth;
+  applyPalette(p.palette === "safe"); // also paints the swatches for the active palette
+}
+
+// --- IndexedDB key/value helpers (one object store, keyed by PDF hash) ---
+const IDB_NAME = "scribble";
+const IDB_STORE = "autosave";
+let idbPromise = null;
+function idb() {
+  if (!idbPromise) {
+    idbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  return idbPromise;
+}
+function idbReq(mode, fn) {
+  return idb().then((db) => new Promise((resolve, reject) => {
+    const store = db.transaction(IDB_STORE, mode).objectStore(IDB_STORE);
+    const req = fn(store);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  }));
+}
+const idbGet = (key) => idbReq("readonly", (s) => s.get(key));
+const idbPut = (key, val) => idbReq("readwrite", (s) => s.put(val, key));
+const idbDelete = (key) => idbReq("readwrite", (s) => s.delete(key));
+
+// "Dirty since the last save to a FILE." Autosave calls save_json(), which
+// clears the Rust dirty flag, so is_dirty() alone can't tell whether the work
+// has actually been written somewhere durable. We track file-saves in JS and OR
+// the two for the unload guard. Reset whenever a document is freshly opened.
+let dirtySinceFileSave = false;
+
+// Snapshot the current annotations to IndexedDB under the open PDF's hash.
+// PDF-only: HTML uploads have no stable identity to key on.
+async function autosaveTick() {
+  try {
+    if (docMode !== "pdf" || !app || !app.is_dirty()) return;
+    const key = app.pdf_sha256();
+    if (!key) return; // no hash (e.g. insecure context) — can't key recovery
+    const json = app.save_json(); // NB: clears the Rust dirty flag
+    dirtySinceFileSave = true;
+    await idbPut(key, { json, savedAt: Date.now(), pages: pdfDoc?.numPages || 0 });
+  } catch (e) {
+    console.warn("autosave failed:", e);
+  }
+}
+setInterval(autosaveTick, 4000);
+
+// On opening a PDF, offer to recover annotations autosaved for that exact file.
+// Returns true if the user restored a snapshot (so the caller can react).
+async function maybeRestoreAutosave(hash) {
+  if (!hash) return false;
+  let saved;
+  try { saved = await idbGet(hash); } catch { return false; }
+  if (!saved || !saved.json) return false;
+  const when = (() => { try { return new Date(saved.savedAt).toLocaleString(); } catch { return "earlier"; } })();
+  if (!window.confirm(
+    `Found unsaved annotations for this PDF (autosaved ${when}).\n\nRestore them?`)) {
+    try { await idbDelete(hash); } catch { /* ignore */ } // fresh start: don't ask again
+    return false;
+  }
+  try {
+    app.load_json(saved.json);
+    app.set_pdf_sha256(hash);
+    dirtySinceFileSave = true; // restored work isn't in a file yet
+    return true;
+  } catch (e) {
+    status(`Couldn't restore autosave: ${e}`);
+    return false;
+  }
+}
+
 // ---------- boot ----------
 
 // Read-only debug handle, opt-in via ?debug (used by tests; harmless: the
@@ -2273,6 +2582,7 @@ if (new URLSearchParams(location.search).has("debug")) {
 init()
   .then(() => {
     app = new App();
+    applyPrefs();
     initEmbed();
   })
   .catch((e) => {

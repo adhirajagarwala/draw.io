@@ -167,6 +167,21 @@ button { font: inherit; }
 .btn:active:not(:disabled) { background: #e9ecf1; }
 .btn:disabled { opacity: 0.35; cursor: default; }
 
+/* Visible keyboard focus on every interactive control. Mouse clicks don't
+   trigger :focus-visible, so this only shows for keyboard/AT users — no visual
+   noise for pointer users, but the focus point is never invisible. */
+.btn:focus-visible,
+#rail .tool:focus-visible,
+.seg:focus-visible,
+.swatch:focus-visible,
+.block-actions button:focus-visible,
+#zoom-select:focus-visible,
+#page-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.swatch:focus-visible { outline-offset: 3px; }
+
 .btn.tool { font-size: 13px; }
 
 .btn.tool.active {
@@ -470,6 +485,7 @@ button { font: inherit; }
   position: absolute;
   font: inherit;
   font-size: 14px;
+  line-height: 1.3;
   padding: 2px 6px;
   border: 1.5px solid var(--accent);
   border-radius: 5px;
@@ -477,6 +493,10 @@ button { font: inherit; }
   min-width: 120px;
   z-index: 6;
   outline: none;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* PDF.js text layer (active only with the Page-text tool) */
@@ -521,16 +541,7 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
   background: #fff;
 }
 
-/* Continuous scroll: the tall canvas paints its own white page-sheets and
-   shadows, with transparent gaps between them — so the wrapper drops its single
-   sheet background/shadow and lets each page read separately. */
-#page-wrap.continuous {
-  background: transparent;
-  box-shadow: none;
-  border-radius: 0;
-}
-
-/* ---- Per-page virtualized PDF column (Phase 2) ---- */
+/* ---- Virtualized continuous-scroll column (per-page sheets) ---- */
 #page-column {
   display: flex;
   flex-direction: column;
@@ -539,20 +550,18 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
 }
 #page-column[hidden] { display: none; }
 
-/* Page mode snaps each sheet into place; Scroll mode is free. The snap target
-   is the scroll container (#viewer). */
-#viewer.snap { scroll-snap-type: y mandatory; }
-
+/* Each page is a sized placeholder sheet; its canvases mount only while near
+   the viewport. Offscreen pages still show as blank white sheets (background +
+   shadow below), so there is never a layout jump as they load. */
 .cpage {
   position: relative;
+  overflow: hidden;
   background: #fff;
   border-radius: 2px;
   box-shadow: 0 1px 2px rgba(20, 24, 28, 0.10), 0 6px 24px rgba(20, 24, 28, 0.12);
-  /* Offscreen pages cost nothing to render; the intrinsic size keeps the
-     scrollbar stable. `auto` remembers the real size once rendered. */
+  /* Skip rendering offscreen sheets; the explicit size + intrinsic size keep
+     the scrollbar stable whether or not the page is mounted. */
   content-visibility: auto;
-  scroll-snap-align: start;
-  scroll-margin-top: 12px;
 }
 .cpage > canvas {
   position: absolute;
@@ -589,6 +598,17 @@ body.textselect .cpage > canvas.canno { pointer-events: none; }
 }
 #html-frame[hidden] { display: none; }
 
+/* Fixed-layout HTML page: #page-wrap is sized (in JS) to the SCALED page, and
+   the iframe keeps its base width and fills that box via a CSS transform — so
+   the content never re-flows and the annotation overlay stays pinned to it. */
+#page-wrap.htmlpage { overflow: hidden; }
+#page-wrap.htmlpage #html-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
 #anno-canvas {
   position: absolute;
   inset: 0;
@@ -600,6 +620,7 @@ body.textselect .cpage > canvas.canno { pointer-events: none; }
   position: absolute;
   font: inherit;
   font-size: 15px;
+  line-height: 1.3;
   padding: 3px 8px;
   border: 1.5px solid var(--accent);
   border-radius: 6px;
@@ -608,7 +629,80 @@ body.textselect .cpage > canvas.canno { pointer-events: none; }
   min-width: 190px;
   z-index: 5;
   outline: none;
+  /* multi-line: grows with content (height set in JS), never shows scrollbars */
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
+
+/* ---------- keyboard-shortcuts overlay ---------- */
+
+#help-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(20, 24, 28, 0.45);
+}
+#help-overlay[hidden] { display: none; }
+
+#help-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(20, 24, 28, 0.3);
+  width: min(680px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 6px 18px 18px;
+}
+#help-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0 8px;
+  font-weight: 700;
+  font-size: 15px;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+.help-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px 24px;
+}
+.help-cols h3 {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 12px 0 6px;
+}
+.help-cols dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 10px;
+  align-items: baseline;
+}
+.help-cols dt {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink);
+  background: #f0f2f5;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  justify-self: start;
+}
+.help-cols dd { margin: 0; font-size: 13px; color: var(--ink); }
 
 /* ---------- status toast ---------- */
 
