@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "47";
+const APP_VERSION = "48";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 
@@ -649,6 +649,7 @@ async function openHtml(file) {
   }
   try {
     if (pdfDoc) { try { await pdfDoc.destroy(); } catch { /* ignore */ } pdfDoc = null; }
+    contTeardown(); // drop any virtualized PDF column (+ its IntersectionObserver)
     docMode = "html";
     app = new App();
     dirtySinceFileSave = false;
@@ -1276,7 +1277,7 @@ async function loadJsonFile(file) {
   renderNotes();
   if (app.notes_len() > 0 && els.notesPane.hidden) toggleNotes(true);
   if (!els.thumbs.hidden) await buildThumbnails();
-  await renderPage();
+  await renderDoc(); // re-render the CURRENT mode (HTML / continuous / paged)
 }
 
 // ---------- export annotated PDF ----------
@@ -2289,7 +2290,14 @@ function dragHandle(block) {
   h.className = "drag-handle";
   h.title = "Drag to reorder";
   h.textContent = "⠿";
-  h.addEventListener("mousedown", () => { block.draggable = true; });
+  h.addEventListener("mousedown", () => {
+    block.draggable = true;
+    // Clear draggable once the mouse is released even if no drag happened,
+    // otherwise a plain grip-click would leave the block draggable and break
+    // text selection inside it. (A real drag also clears via dragend below.)
+    const reset = () => { block.draggable = false; document.removeEventListener("mouseup", reset); };
+    document.addEventListener("mouseup", reset);
+  });
   block.addEventListener("dragend", () => { block.draggable = false; });
   return h;
 }
