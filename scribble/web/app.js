@@ -3,9 +3,17 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "48";
+const APP_VERSION = "49";
 
 import init, { App } from "./pkg/scribble.js?v=12";
+import {
+  bytesToB64,
+  b64ToBlobUrl,
+  autoGrow,
+  looksLikeText,
+  wrapLine,
+  sha256Hex,
+} from "./utils.js?v=49";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -550,14 +558,6 @@ function syncZoomSelect() {
 
 // ---------- PDF loading ----------
 
-async function sha256Hex(buf) {
-  // crypto.subtle needs a secure context (https or localhost). Degrade
-  // gracefully: without it we just skip the PDF-match check.
-  if (!crypto?.subtle) return "";
-  const digest = await crypto.subtle.digest("SHA-256", buf);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 async function openPdf(file) {
   if (file.size > MAX_PDF_BYTES) {
     status("PDF too large (max 50 MB).");
@@ -1063,15 +1063,6 @@ els.annoCanvas.addEventListener("contextmenu", onAnnoContextMenu);
 
 // Chunked conversion — spreading a megabyte-sized array into fromCharCode
 // overflows the call stack.
-function bytesToB64(bytes) {
-  let bin = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(bin);
-}
-
 function drawSnipMarquee(ctx) {
   if (!snip) return;
   const r = curRatio();
@@ -1382,21 +1373,6 @@ function buildPdf(pages) {
 
 const NOTE_PAGE = { w: 612, h: 792, margin: 54, size: 11, leading: 14.85 };
 
-function wrapLine(text, cols) {
-  const out = [];
-  for (const raw of text.split("\n")) {
-    let line = raw;
-    while (line.length > cols) {
-      let cut = line.lastIndexOf(" ", cols);
-      if (cut <= 0) cut = cols;
-      out.push(line.slice(0, cut));
-      line = line.slice(cut).trimStart();
-    }
-    out.push(line);
-  }
-  return out;
-}
-
 async function pngB64ToJpeg(b64) {
   const url = b64ToBlobUrl(b64);
   try {
@@ -1574,13 +1550,6 @@ async function snipHtmlRegion(x0, y0, w, h) {
 // Does this look like real text rather than symbol-font garbage? Some PDFs have
 // a broken Unicode map, so extraction yields dingbats (★ ✂ ☎ …) that aren't
 // letters or numbers. Require a few real word-characters and a decent ratio.
-function looksLikeText(s) {
-  if (!s) return false;
-  const wordChars = (s.match(/[\p{L}\p{N}]/gu) || []).length;
-  const nonSpace = s.replace(/\s/g, "").length;
-  return wordChars >= 2 && nonSpace > 0 && wordChars / nonSpace >= 0.5;
-}
-
 // Extract readable text (incl. link URLs) from the iframe DOM whose layout boxes
 // fall inside the region — far more reliable than glyph-anchor heuristics, and
 // it actually handles links. Coords are page units (CSS px at base width).
@@ -2047,18 +2016,6 @@ window.addEventListener("beforeunload", (ev) => {
 // ---------- notes pane (working document) ----------
 // Blocks live in the Rust document; this renders them. Text uses textareas
 // (native undo); clippings render via blob: URLs (never HTML from content).
-
-function b64ToBlobUrl(b64) {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
-}
-
-function autoGrow(ta) {
-  ta.style.height = "auto";
-  ta.style.height = `${ta.scrollHeight}px`;
-}
 
 function blockActions(i, total) {
   const wrap = document.createElement("div");
