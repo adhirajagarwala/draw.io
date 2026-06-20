@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "58";
+const APP_VERSION = "59";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=58";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=58";
-import { initEmbed } from "./embed.js?v=58";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=58";
+} from "./utils.js?v=59";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=59";
+import { initEmbed } from "./embed.js?v=59";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=59";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -115,6 +115,7 @@ const cont = {
   token: 0,    // bumped on each rebuild to drop stale async page renders
 };
 const CONT_MAX_BACKING = 16000; // safe single-canvas dimension ceiling (HTML page)
+const MAX_CANVAS_DIM = 32767;   // browser hard per-axis canvas limit (over → silent blank)
 // The on-screen backing ratio in use right now. Continuous pages render per-page
 // at devicePixelRatio; only HTML caps its own ratio for very tall pages.
 const curRatio = () => (docMode === "html" ? htmlRatio : dpr());
@@ -674,6 +675,15 @@ async function openHtml(file) {
       // Fallback in case onload doesn't fire promptly.
       setTimeout(resolve, 1200);
     });
+
+    // Let web fonts settle before measuring: a late font swap changes line
+    // breaks and page height (which would drift every annotation already drawn,
+    // and mismap the cached snip raster). Bounded so a CSP-blocked @font-face
+    // can never wedge the open.
+    try {
+      const fonts = els.htmlFrame.contentDocument?.fonts;
+      if (fonts?.ready) await Promise.race([fonts.ready, new Promise((r) => setTimeout(r, 800))]);
+    } catch { /* same-origin guard / no FontFaceSet — proceed */ }
 
     measureHtmlHeight();
     renderHtmlPage();
@@ -1430,8 +1440,12 @@ function htmlPageToCanvas(ratio = EXPORT_SCALE) {
     const img = new Image();
     img.onload = () => {
       const c = document.createElement("canvas");
-      c.width = Math.max(1, Math.round(w * ratio));
-      c.height = Math.max(1, Math.round(h * ratio));
+      // Clamp so neither axis exceeds the browser's hard ~32767px canvas limit
+      // (beyond it the canvas silently yields a blank image). No-op for normal
+      // pages; only bites pathologically tall ones — shared by snip + export.
+      const safe = Math.max(1, Math.min(ratio, MAX_CANVAS_DIM / Math.max(w, h)));
+      c.width = Math.max(1, Math.round(w * safe));
+      c.height = Math.max(1, Math.round(h * safe));
       const ctx = c.getContext("2d");
       ctx.fillStyle = "#fff";
       ctx.fillRect(0, 0, c.width, c.height);
@@ -1443,30 +1457,45 @@ function htmlPageToCanvas(ratio = EXPORT_SCALE) {
   });
 }
 
-// Snip resolution for the uploaded HTML page (3x the page CSS size keeps small
-// figures/equations crisp). Cached per page render so repeat snips are fast.
-const HTML_SNIP_RATIO = 3;
-let htmlSnipCanvas = null; // full-page raster reused across snips until re-render
+// Snip raster resolution for the uploaded HTML page: match the CURRENT view
+// (zoom × DPR) so a magnified region stays crisp, clamped to a sane range. The
+// full-page raster is cached and rebuilt only when the effective ratio changes
+// (e.g. after a zoom) or the page is re-measured.
+const SNIP_RATIO_MIN = 2, SNIP_RATIO_MAX = 4;
+let htmlSnipCanvas = null;   // full-page raster reused across snips until re-render
+let htmlSnipCanvasRatio = 0; // the ratio it was built at
+
+function htmlSnipRatio() {
+  return Math.max(SNIP_RATIO_MIN, Math.min(SNIP_RATIO_MAX, Math.round(scale() * dpr())));
+}
 
 // Crop a region (page coords) out of a crisp full-page HTML raster, with the
 // annotation overlay composited on top. Fixes blurry / empty HTML snips.
 async function snipHtmlRegion(x0, y0, w, h) {
-  if (!htmlSnipCanvas) htmlSnipCanvas = await htmlPageToCanvas(HTML_SNIP_RATIO);
+  const ratio = htmlSnipRatio();
+  if (!htmlSnipCanvas || htmlSnipCanvasRatio !== ratio) {
+    htmlSnipCanvas = await htmlPageToCanvas(ratio);
+    htmlSnipCanvasRatio = ratio;
+  }
   const full = htmlSnipCanvas;
-  const sc = full.width / basePage.w; // raster px per page unit
+  const sc = full.width / basePage.w; // actual raster px per page unit (post-cap)
+  // Pixel-snap the source rect to integer raster px and draw it 1:1 so the crop
+  // is never bilinear-softened.
+  const sx = Math.round(x0 * sc), sy = Math.round(y0 * sc);
+  const sw = Math.max(1, Math.round(w * sc)), sh = Math.max(1, Math.round(h * sc));
   const out = document.createElement("canvas");
-  out.width = Math.max(1, Math.round(w * sc));
-  out.height = Math.max(1, Math.round(h * sc));
+  out.width = sw;
+  out.height = sh;
   const ctx = out.getContext("2d");
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, out.width, out.height);
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(full, x0 * sc, y0 * sc, w * sc, h * sc, 0, 0, out.width, out.height);
+  ctx.fillRect(0, 0, sw, sh);
+  ctx.drawImage(full, sx, sy, sw, sh, 0, 0, sw, sh); // 1:1 — crisp, no resample
   // annotations live on the on-screen anno canvas at its own backing scale
   const anno = els.annoCanvas;
   if (anno.width > 1) {
     const a = anno.width / basePage.w;
-    ctx.drawImage(anno, x0 * a, y0 * a, w * a, h * a, 0, 0, out.width, out.height);
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(anno, x0 * a, y0 * a, w * a, h * a, 0, 0, sw, sh);
   }
   return out;
 }
@@ -1482,7 +1511,7 @@ function htmlTextInRegion(x0, y0, w, h) {
   try { doc = els.htmlFrame.contentDocument; } catch { return ""; }
   if (!doc || !doc.body) return "";
   const x1 = x0 + w, y1 = y0 + h;
-  const parts = [];
+  const hits = [];
   const seenLinks = new Set();
   const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
   const range = doc.createRange();
@@ -1490,22 +1519,33 @@ function htmlTextInRegion(x0, y0, w, h) {
     const s = n.nodeValue.trim();
     if (!s) continue;
     range.selectNodeContents(n);
-    const rects = range.getClientRects();
-    let hit = false;
-    for (const rc of rects) {
-      // The iframe is laid out at base width with no scroll, so its client rect
-      // is already in page units.
-      if (rc.right >= x0 && rc.left <= x1 && rc.bottom >= y0 && rc.top <= y1) { hit = true; break; }
+    // The iframe's content geometry is in page units regardless of the parent
+    // transform:scale — the transform lives on the <iframe> element and is
+    // invisible to the child document's getClientRects (verified live at zoom
+    // 0.5/1/2), so no scale division is needed.
+    let box = null;
+    for (const rc of range.getClientRects()) {
+      if (rc.right >= x0 && rc.left <= x1 && rc.bottom >= y0 && rc.top <= y1) { box = rc; break; }
     }
-    if (!hit) continue;
-    parts.push(s);
+    if (!box) continue;
+    let str = s;
     const a = n.parentElement && n.parentElement.closest("a[href]");
     if (a) {
       const href = a.getAttribute("href");
-      if (href && !seenLinks.has(href)) { seenLinks.add(href); parts.push(`(${href})`); }
+      if (href && !seenLinks.has(href)) { seenLinks.add(href); str += ` (${href})`; }
     }
+    hits.push({ top: box.top, left: box.left, str });
   }
-  return parts.join(" ").replace(/\s+/g, " ").trim();
+  // Reconstruct reading order: rows top-to-bottom, then left-to-right within a
+  // row — so multi-column / absolutely-positioned text doesn't read scrambled.
+  hits.sort((p, q) => (Math.abs(p.top - q.top) > 6 ? p.top - q.top : p.left - q.left));
+  let text = "", prevTop = null;
+  for (const it of hits) {
+    if (prevTop !== null) text += (it.top - prevTop > 6) ? "\n" : " ";
+    text += it.str;
+    prevTop = it.top;
+  }
+  return text.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 // Extract PDF text overlapping the region, in reading order. Uses each glyph
