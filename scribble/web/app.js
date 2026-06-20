@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "52";
+const APP_VERSION = "53";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,9 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=52";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=52";
-import { initEmbed } from "./embed.js?v=52";
+} from "./utils.js?v=53";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=53";
+import { initEmbed } from "./embed.js?v=53";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=53";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -2588,33 +2589,6 @@ function applyPrefs() {
   if (cb.collapsed) setCbarCollapsed(true);
   applyPalette(p.palette === "safe"); // also paints the swatches for the active palette
 }
-
-// --- IndexedDB key/value helpers (one object store, keyed by PDF hash) ---
-const IDB_NAME = "scribble";
-const IDB_STORE = "autosave";
-let idbPromise = null;
-function idb() {
-  if (!idbPromise) {
-    idbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(IDB_NAME, 1);
-      req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-  }
-  return idbPromise;
-}
-function idbReq(mode, fn) {
-  return idb().then((db) => new Promise((resolve, reject) => {
-    const store = db.transaction(IDB_STORE, mode).objectStore(IDB_STORE);
-    const req = fn(store);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  }));
-}
-const idbGet = (key) => idbReq("readonly", (s) => s.get(key));
-const idbPut = (key, val) => idbReq("readwrite", (s) => s.put(val, key));
-const idbDelete = (key) => idbReq("readwrite", (s) => s.delete(key));
 
 // "Dirty since the last save to a FILE." Autosave calls save_json(), which
 // clears the Rust dirty flag, so is_dirty() alone can't tell whether the work
