@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "53";
+const APP_VERSION = "54";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=53";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=53";
-import { initEmbed } from "./embed.js?v=53";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=53";
+} from "./utils.js?v=54";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=54";
+import { initEmbed } from "./embed.js?v=54";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=54";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -551,6 +551,29 @@ function syncZoomSelect() {
 
 // ---------- PDF loading ----------
 
+// Reset the shared per-document state when a fresh PDF or HTML doc is opened.
+function newDocument(mode) {
+  app = new App();
+  docMode = mode;
+  dirtySinceFileSave = false;
+  pageNum = 0;
+  selectedId = -1;
+  zoomMode = "fit-width"; // fill the viewer width; the page scales, never reflows
+}
+
+// Enable the document toolbar + controls shared by both open flows. `thumbs` and
+// `pageNav` are PDF-only (HTML is a single, non-paged page).
+function enableDocUI({ thumbs, pageNav }) {
+  els.btn.save.disabled = false;
+  els.btn.load.disabled = false;
+  els.btn.export.disabled = false;
+  els.btn.notes.disabled = false;
+  els.zoomSelect.disabled = false;
+  els.btn.thumbs.disabled = !thumbs;
+  els.pageInput.disabled = !pageNav;
+  els.docControls.hidden = false;
+}
+
 async function openPdf(file) {
   if (file.size > MAX_PDF_BYTES) {
     status("PDF too large (max 50 MB).");
@@ -571,18 +594,14 @@ async function openPdf(file) {
     }
     if (pdfDoc) await pdfDoc.destroy();
     pdfDoc = doc;
-    docMode = "pdf";
     els.htmlFrame.hidden = true;
     els.htmlFrame.srcdoc = "";
     els.pdfCanvas.hidden = false;
-    app = new App(); // fresh document per PDF
+    newDocument("pdf"); // fresh document per PDF
     if (hash) app.set_pdf_sha256(hash);
-    dirtySinceFileSave = false;
     // Recover annotations autosaved for this exact PDF, if any (before the doc
     // is read for thumbnails/render below).
     const restored = await maybeRestoreAutosave(hash);
-    pageNum = 0;
-    zoomMode = "fit-width"; // fill the viewer width — 100% leaves a tiny page
     // Default to continuous scroll for multi-page PDFs so "scroll = next page"
     // works natively out of the box (single page has nothing to scroll between,
     // so it opens paged). Either way the Page/Scroll switch is one click.
@@ -591,16 +610,8 @@ async function openPdf(file) {
     syncScrollUI();
     els.placeholder.hidden = true;
     els.wrap.hidden = false;
-    els.btn.save.disabled = false;
-    els.btn.load.disabled = false;
-    els.btn.export.disabled = false;
-    els.pageInput.disabled = false;
-    els.zoomSelect.disabled = false;
-    els.btn.thumbs.disabled = false;
-    els.btn.notes.disabled = false;
-    els.docControls.hidden = false;
+    enableDocUI({ thumbs: true, pageNav: true });
     updateContextBar(activeTool());
-    selectedId = -1;
     els.thumbs.textContent = "";
     // Show the page thumbnails by default for any multi-page document (they're
     // the primary way to see where your marks are and to jump around).
@@ -643,17 +654,12 @@ async function openHtml(file) {
   try {
     if (pdfDoc) { try { await pdfDoc.destroy(); } catch { /* ignore */ } pdfDoc = null; }
     contTeardown(); // drop any virtualized PDF column (+ its IntersectionObserver)
-    docMode = "html";
-    app = new App();
-    dirtySinceFileSave = false;
-    pageNum = 0;
-    zoomMode = "fit-width"; // fill the viewer width; the page scales, never reflows
+    newDocument("html");
     scrollMode = "paged"; // continuous scroll is PDF-only
     setScrollEnabled(false);
     syncScrollUI();
     els.wrap.classList.remove("continuous");
     currentScale = 1;
-    selectedId = -1;
 
     // The uploaded HTML renders in a same-origin sandboxed iframe with NO
     // script permission, so embedded scripts never run — it shows as static
@@ -673,16 +679,9 @@ async function openHtml(file) {
     renderHtmlPage();
     watchHtmlImages(); // re-measure once late-loading images settle
 
-    els.btn.save.disabled = false;
-    els.btn.load.disabled = false;
-    els.btn.notes.disabled = false;
-    els.btn.export.disabled = false;  // export rasterizes the HTML + vectors
-    els.btn.thumbs.disabled = true;
+    enableDocUI({ thumbs: false, pageNav: false }); // single, non-paged page
     els.thumbs.hidden = true;
     els.btn.thumbs.classList.remove("active");
-    els.docControls.hidden = false;
-    els.pageInput.disabled = true;     // single page: nav stays off
-    els.zoomSelect.disabled = false;   // but HTML IS zoomable (fixed-layout page)
     els.pageInput.value = "1";
     els.pageCount.textContent = "/ 1";
     els.btn.prev.disabled = true;
