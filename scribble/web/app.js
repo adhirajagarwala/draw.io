@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "55";
+const APP_VERSION = "56";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=55";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=55";
-import { initEmbed } from "./embed.js?v=55";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=55";
+} from "./utils.js?v=56";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=56";
+import { initEmbed } from "./embed.js?v=56";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=56";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -2176,6 +2176,79 @@ function dragHandle(block) {
 
 let dragFromIndex = -1;
 
+// The draggable wrapper shared by every note block (reorder handlers included).
+function newNoteBlock(i) {
+  const div = document.createElement("div");
+  div.className = "note-block";
+  div.dataset.idx = String(i);
+  div.appendChild(dragHandle(div));
+  div.addEventListener("dragstart", (e) => {
+    dragFromIndex = i;
+    div.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+  });
+  div.addEventListener("dragend", () => {
+    div.classList.remove("dragging");
+    els.notesList.querySelectorAll(".note-block.drop-before,.note-block.drop-after")
+      .forEach((b) => b.classList.remove("drop-before", "drop-after"));
+  });
+  return div;
+}
+
+// A sketch note: a resizable scratch canvas. Returns the canvas so the caller
+// creates its SketchView AFTER the block is attached to the DOM (it measures the
+// live element).
+function buildSketchBlock(div) {
+  const holder = document.createElement("div");
+  holder.className = "sketch-holder";
+  const canvas = document.createElement("canvas");
+  canvas.className = "sketch-canvas";
+  const grip = document.createElement("div");
+  grip.className = "sketch-resize";
+  grip.title = "Drag to resize the canvas";
+  holder.append(canvas, grip);
+  div.appendChild(holder);
+  return canvas;
+}
+
+// A text note: an auto-growing editable textarea bound to the note text.
+function buildTextBlock(div, i) {
+  const ta = document.createElement("textarea");
+  ta.value = app.note_text(i);
+  ta.placeholder = "Write a note…";
+  ta.addEventListener("input", () => {
+    app.update_note_text(i, ta.value);
+    autoGrow(ta);
+  });
+  div.appendChild(ta);
+  queueMicrotask(() => autoGrow(ta));
+}
+
+// A clipping note: the snipped image (click to jump to its source page) plus an
+// auto-growing caption.
+function buildClippingBlock(div, i) {
+  const img = document.createElement("img");
+  img.src = b64ToBlobUrl(app.note_png(i));
+  img.dataset.blob = "1";
+  img.alt = "clipping";
+  const srcPage = app.note_source_page(i);
+  if (srcPage >= 0) {
+    img.title = `Snipped from page ${srcPage + 1} — click to jump there`;
+    img.style.cursor = "pointer";
+    img.addEventListener("click", () => goToPage(srcPage));
+  }
+  // Caption wraps to fit the width (auto-growing) rather than truncating.
+  const cap = document.createElement("textarea");
+  cap.className = "caption";
+  cap.maxLength = 300;
+  cap.rows = 1;
+  cap.placeholder = "Caption…";
+  cap.value = app.note_caption(i);
+  cap.addEventListener("input", () => { app.update_note_caption(i, cap.value); autoGrow(cap); });
+  div.append(img, cap);
+  queueMicrotask(() => autoGrow(cap));
+}
+
 function renderNotes() {
   // Revoke old blob URLs before rebuilding.
   for (const img of els.notesList.querySelectorAll("img[data-blob]")) {
@@ -2186,69 +2259,14 @@ function renderNotes() {
   const total = app.notes_len();
   for (let i = 0; i < total; i++) {
     const kind = app.note_kind(i);
-    const div = document.createElement("div");
-    div.className = "note-block";
-    div.dataset.idx = String(i);
-    div.appendChild(dragHandle(div));
-    div.addEventListener("dragstart", (e) => {
-      dragFromIndex = i;
-      div.classList.add("dragging");
-      e.dataTransfer.effectAllowed = "move";
-    });
-    div.addEventListener("dragend", () => {
-      div.classList.remove("dragging");
-      els.notesList.querySelectorAll(".note-block.drop-before,.note-block.drop-after")
-        .forEach((b) => b.classList.remove("drop-before", "drop-after"));
-    });
-    if (kind === "sketch") {
-      const holder = document.createElement("div");
-      holder.className = "sketch-holder";
-      const canvas = document.createElement("canvas");
-      canvas.className = "sketch-canvas";
-      const grip = document.createElement("div");
-      grip.className = "sketch-resize";
-      grip.title = "Drag to resize the canvas";
-      holder.append(canvas, grip);
-      div.appendChild(holder);
-      div.appendChild(blockActions(i, total));
-      els.notesList.appendChild(div);
-      sketchViews.push(new SketchView(i, canvas));
-      continue;
-    }
-    if (kind === "text") {
-      const ta = document.createElement("textarea");
-      ta.value = app.note_text(i);
-      ta.placeholder = "Write a note…";
-      ta.addEventListener("input", () => {
-        app.update_note_text(i, ta.value);
-        autoGrow(ta);
-      });
-      div.appendChild(ta);
-      queueMicrotask(() => autoGrow(ta));
-    } else if (kind === "clipping") {
-      const img = document.createElement("img");
-      img.src = b64ToBlobUrl(app.note_png(i));
-      img.dataset.blob = "1";
-      img.alt = "clipping";
-      const srcPage = app.note_source_page(i);
-      if (srcPage >= 0) {
-        img.title = `Snipped from page ${srcPage + 1} — click to jump there`;
-        img.style.cursor = "pointer";
-        img.addEventListener("click", () => goToPage(srcPage));
-      }
-      // Caption wraps to fit the width (auto-growing) rather than truncating.
-      const cap = document.createElement("textarea");
-      cap.className = "caption";
-      cap.maxLength = 300;
-      cap.rows = 1;
-      cap.placeholder = "Caption…";
-      cap.value = app.note_caption(i);
-      cap.addEventListener("input", () => { app.update_note_caption(i, cap.value); autoGrow(cap); });
-      div.append(img, cap);
-      queueMicrotask(() => autoGrow(cap));
-    }
+    const div = newNoteBlock(i);
+    let sketchCanvas = null;
+    if (kind === "sketch") sketchCanvas = buildSketchBlock(div);
+    else if (kind === "text") buildTextBlock(div, i);
+    else if (kind === "clipping") buildClippingBlock(div, i);
     div.appendChild(blockActions(i, total));
     els.notesList.appendChild(div);
+    if (sketchCanvas) sketchViews.push(new SketchView(i, sketchCanvas));
   }
 }
 
