@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "56";
+const APP_VERSION = "57";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=56";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=56";
-import { initEmbed } from "./embed.js?v=56";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=56";
+} from "./utils.js?v=57";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=57";
+import { initEmbed } from "./embed.js?v=57";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=57";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1311,94 +1311,102 @@ async function pngB64ToJpeg(b64) {
   }
 }
 
+// Running layout state for the export notes pages: the accumulated pages, the
+// current page being filled, and the vertical cursor — plus the page-break
+// helpers. Keeping cur/yTop as object fields (not closure-captured lets) lets the
+// per-kind emitters below share and advance the same cursor.
+function makeNotesLayout() {
+  const { w, h, margin, size, leading } = NOTE_PAGE;
+  const contentW = w - 2 * margin;
+  const cols = Math.floor(contentW / (size * 0.5)); // conservative wrap
+  const L = {
+    w, h, margin, size, leading, contentW, cols,
+    pages: [],
+    cur: { w, h, ops: "", images: [] },
+    yTop: margin, // distance consumed from the top
+    remaining() { return L.h - L.margin - L.yTop; },
+    newPage() {
+      L.pages.push(L.cur);
+      L.cur = { w: L.w, h: L.h, ops: "", images: [] };
+      L.yTop = L.margin;
+    },
+    // Push the current accumulation page only if it holds real content.
+    flush() {
+      if (L.cur.images.length || L.yTop > L.margin + 1) L.newPage();
+    },
+  };
+  return L;
+}
+
+// A sketch exports as its own full page in its own coordinate space; its
+// annotations are crisp PDF vectors (no rasterization).
+function emitSketchPage(L, i) {
+  const dims = app.sketch_size(i);
+  if (dims.length === 2) {
+    L.flush();
+    L.pages.push({ w: dims[0], h: dims[1], ops: app.sketch_export_ops(i), images: [] });
+  }
+}
+
+// Wrap a text note across as many notes pages as it needs.
+function emitTextNote(L, i) {
+  const lines = wrapLine(app.note_text(i), L.cols);
+  let idx = 0;
+  while (idx < lines.length) {
+    const fit = Math.max(1, Math.floor(L.remaining() / L.leading));
+    if (fit < 1 || (L.remaining() < L.leading && L.yTop > L.margin)) {
+      L.newPage();
+      continue;
+    }
+    const slice = lines.slice(idx, idx + fit);
+    L.cur.ops += app.note_text_block_ops(slice.join("\n"), L.margin, L.h - L.yTop - L.size, L.size);
+    L.yTop += slice.length * L.leading + 6;
+    idx += slice.length;
+  }
+}
+
+// Place a clipping image (scaled to fit) plus its wrapped caption.
+async function emitClippingNote(L, i) {
+  let im;
+  try {
+    im = await pngB64ToJpeg(app.note_png(i));
+  } catch {
+    return; // unrenderable clipping: skip rather than fail the export
+  }
+  let drawW = Math.min(L.contentW, im.pxW / 2); // snips are 2x resolution
+  let drawH = drawW * (im.pxH / im.pxW);
+  const maxH = L.h - 2 * L.margin - 20;
+  if (drawH > maxH) {
+    drawH = maxH;
+    drawW = drawH * (im.pxW / im.pxH);
+  }
+  if (drawH + 16 > L.remaining() && L.yTop > L.margin) L.newPage();
+  L.cur.images.push({ ...im, x: L.margin, y: L.h - L.yTop - drawH, w: drawW, h: drawH });
+  L.yTop += drawH + 4;
+  const caption = app.note_caption(i);
+  if (caption) {
+    const capLines = wrapLine(caption, L.cols + 10).slice(0, 4);
+    L.cur.ops += app.note_text_block_ops(capLines.join("\n"), L.margin, L.h - L.yTop - 9, 9);
+    L.yTop += capLines.length * 12;
+  }
+  L.yTop += 10;
+}
+
 // Lay the note blocks out across as many letter-size pages as needed.
 async function buildNotesPages() {
   const total = app.notes_len();
   if (total === 0) return [];
-  const { w, h, margin, size, leading } = NOTE_PAGE;
-  const contentW = w - 2 * margin;
-  const cols = Math.floor(contentW / (size * 0.5)); // conservative wrap
-  const pages = [];
-  let cur = { w, h, ops: "", images: [] };
-  let yTop = margin; // distance consumed from the top
-  const newPage = () => {
-    pages.push(cur);
-    cur = { w, h, ops: "", images: [] };
-    yTop = margin;
-  };
-  // Push the current accumulation page only if it holds real content.
-  const flush = () => {
-    if (cur.images.length || yTop > margin + 1) {
-      pages.push(cur);
-      cur = { w, h, ops: "", images: [] };
-      yTop = margin;
-    }
-  };
-  const remaining = () => h - margin - yTop;
-
-  cur.ops += app.note_text_block_ops("Notes", margin, h - margin, 16) ;
-  yTop += 30;
-
+  const L = makeNotesLayout();
+  L.cur.ops += app.note_text_block_ops("Notes", L.margin, L.h - L.margin, 16);
+  L.yTop += 30;
   for (let i = 0; i < total; i++) {
     const kind = app.note_kind(i);
-    if (kind === "sketch") {
-      // A sketch exports as its own full page in its own coordinate space;
-      // its annotations are crisp PDF vectors (no rasterization).
-      const dims = app.sketch_size(i);
-      if (dims.length === 2) {
-        flush();
-        pages.push({ w: dims[0], h: dims[1], ops: app.sketch_export_ops(i), images: [] });
-      }
-    } else if (kind === "text") {
-      const lines = wrapLine(app.note_text(i), cols);
-      let idx = 0;
-      while (idx < lines.length) {
-        const fit = Math.max(1, Math.floor(remaining() / leading));
-        if (fit < 1 || (remaining() < leading && yTop > margin)) {
-          newPage();
-          continue;
-        }
-        const slice = lines.slice(idx, idx + fit);
-        cur.ops += app.note_text_block_ops(
-          slice.join("\n"), margin, h - yTop - size, size);
-        yTop += slice.length * leading + 6;
-        idx += slice.length;
-      }
-    } else if (kind === "clipping") {
-      let im;
-      try {
-        im = await pngB64ToJpeg(app.note_png(i));
-      } catch {
-        continue; // unrenderable clipping: skip rather than fail the export
-      }
-      let drawW = Math.min(contentW, im.pxW / 2); // snips are 2x resolution
-      let drawH = drawW * (im.pxH / im.pxW);
-      const maxH = h - 2 * margin - 20;
-      if (drawH > maxH) {
-        drawH = maxH;
-        drawW = drawH * (im.pxW / im.pxH);
-      }
-      if (drawH + 16 > remaining() && yTop > margin) newPage();
-      cur.images.push({
-        ...im,
-        x: margin,
-        y: h - yTop - drawH,
-        w: drawW,
-        h: drawH,
-      });
-      yTop += drawH + 4;
-      const caption = app.note_caption(i);
-      if (caption) {
-        const capLines = wrapLine(caption, cols + 10).slice(0, 4);
-        cur.ops += app.note_text_block_ops(
-          capLines.join("\n"), margin, h - yTop - 9, 9);
-        yTop += capLines.length * 12;
-      }
-      yTop += 10;
-    }
+    if (kind === "sketch") emitSketchPage(L, i);
+    else if (kind === "text") emitTextNote(L, i);
+    else if (kind === "clipping") await emitClippingNote(L, i);
   }
-  flush();
-  return pages;
+  L.flush();
+  return L.pages;
 }
 
 // Rasterize the uploaded HTML page (same-origin sandboxed iframe) to a canvas
