@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "50";
+const APP_VERSION = "51";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,7 +13,8 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=50";
+} from "./utils.js?v=51";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=51";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1265,98 +1266,6 @@ async function loadJsonFile(file) {
 // Output contains only flattened page images — nothing executable.
 
 const EXPORT_SCALE = 2;
-const JPEG_QUALITY = 0.9;
-
-async function canvasJpegBytes(canvas) {
-  const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", JPEG_QUALITY));
-  if (!blob) throw new Error("could not encode page image");
-  return new Uint8Array(await blob.arrayBuffer());
-}
-
-function buildPdf(pages) {
-  // pages: [{ w, h, ops, images: [{jpeg, pxW, pxH, x, y, w, h}] }] — page
-  // coords in PDF points (x, y = bottom-left of the placed image). `ops` is
-  // Rust-generated vector content (annotations stay crisp vectors; text is
-  // real, selectable PDF text). Paper pages have one full-page image; notes
-  // pages have any number of clipping images.
-  const enc = new TextEncoder();
-  const chunks = [];
-  let offset = 0;
-  const offsets = [];
-  const push = (data) => {
-    const b = typeof data === "string" ? enc.encode(data) : data;
-    chunks.push(b);
-    offset += b.length;
-  };
-  let nextObj = 1;
-  const obj = (body) => {
-    const n = nextObj++;
-    offsets[n] = offset;
-    push(`${n} 0 obj\n${body}\nendobj\n`);
-    return n;
-  };
-  const streamObj = (head, bytes) => {
-    const n = nextObj++;
-    offsets[n] = offset;
-    push(`${n} 0 obj\n${head}\nstream\n`);
-    push(bytes);
-    push("\nendstream\nendobj\n");
-    return n;
-  };
-
-  push("%PDF-1.4\n");
-  push(new Uint8Array([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a])); // binary marker
-
-  const fontName = app.text_font_name();
-  const gsName = app.highlight_gstate_name();
-  // Fixed low object numbers so forward references in pages are simple.
-  const catalogN = obj("<< /Type /Catalog /Pages 2 0 R >>"); // 1
-  const pagesN = nextObj++; // 2, body written after pages exist
-  offsets[pagesN] = -1;
-  const fontN = obj(
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
-  const gsN = obj("<< /Type /ExtGState /CA 0.35 /ca 0.35 /BM /Multiply >>");
-
-  const pageObjNumbers = [];
-  for (const p of pages) {
-    const w = p.w.toFixed(2), h = p.h.toFixed(2);
-    const imageNs = p.images.map((im) =>
-      streamObj(
-        `<< /Type /XObject /Subtype /Image /Width ${im.pxW} /Height ${im.pxH} ` +
-        `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.jpeg.length} >>`,
-        im.jpeg));
-    let stream = "";
-    p.images.forEach((im, k) => {
-      stream += `q ${im.w.toFixed(2)} 0 0 ${im.h.toFixed(2)} ` +
-        `${im.x.toFixed(2)} ${im.y.toFixed(2)} cm /Im${k} Do Q\n`;
-    });
-    stream += p.ops || "";
-    const bytes = enc.encode(stream);
-    const contentN = streamObj(`<< /Length ${bytes.length} >>`, bytes);
-    const xobjects = imageNs.map((n, k) => `/Im${k} ${n} 0 R`).join(" ");
-    pageObjNumbers.push(obj(
-      `<< /Type /Page /Parent ${pagesN} 0 R /MediaBox [0 0 ${w} ${h}] /Resources << ` +
-      `/XObject << ${xobjects} >> /Font << /${fontName} ${fontN} 0 R >> ` +
-      `/ExtGState << /${gsName} ${gsN} 0 R >> >> /Contents ${contentN} 0 R >>`));
-  }
-
-  // Pages object, written after its kids (out-of-order objects are legal —
-  // the xref table is what locates them).
-  offsets[pagesN] = offset;
-  push(`${pagesN} 0 obj\n<< /Type /Pages /Kids [${pageObjNumbers
-    .map((n) => `${n} 0 R`).join(" ")}] /Count ${pages.length} >>\nendobj\n`);
-
-  const count = nextObj;
-  const xrefAt = offset;
-  push(`xref\n0 ${count}\n`);
-  push("0000000000 65535 f \n");
-  for (let n = 1; n < count; n++) {
-    push(`${String(offsets[n]).padStart(10, "0")} 00000 n \n`);
-  }
-  push(`trailer\n<< /Size ${count} /Root ${catalogN} 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`);
-
-  return new Blob(chunks, { type: "application/pdf" });
-}
 
 // ---------- notes pages for export ----------
 
@@ -1659,7 +1568,10 @@ async function exportPdf() {
       status("Adding your notes pages…");
       pages.push(...await buildNotesPages());
     }
-    const blob = buildPdf(pages);
+    const blob = buildPdf(pages, {
+      fontName: app.text_font_name(),
+      gsName: app.highlight_gstate_name(),
+    });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
