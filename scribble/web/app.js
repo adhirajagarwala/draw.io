@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "59";
+const APP_VERSION = "60";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=59";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=59";
-import { initEmbed } from "./embed.js?v=59";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=59";
+} from "./utils.js?v=60";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=60";
+import { initEmbed } from "./embed.js?v=60";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=60";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1098,6 +1098,29 @@ function drawSnipMarquee(ctx) {
   ctx.restore();
 }
 
+// Trim a caption to a sane length on a word/line boundary. HTML DOM text is
+// trustworthy, so it gets more room than glyph-mapped PDF text.
+function clampCaption(text, max) {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const brk = Math.max(cut.lastIndexOf("\n"), cut.lastIndexOf(" "));
+  return (brk > max * 0.5 ? cut.slice(0, brk) : cut).trimEnd() + "…";
+}
+
+// True if an <img> overlapping the region failed to load (e.g. a CSP-blocked
+// external image) — it'll be blank in the raster, so we warn the user.
+function regionHasBrokenImage(x0, y0, x1, y1) {
+  try {
+    for (const im of els.htmlFrame.contentDocument.images) {
+      if (im.complete && im.naturalWidth === 0) {
+        const r = im.getBoundingClientRect();
+        if (r.right >= x0 && r.left <= x1 && r.bottom >= y0 && r.top <= y1) return true;
+      }
+    }
+  } catch { /* same-origin guard */ }
+  return false;
+}
+
 async function finishSnip(r) {
   const x0 = Math.min(r.x0, r.x1), y0 = Math.min(r.y0, r.y1);
   const w = Math.abs(r.x1 - r.x0), h = Math.abs(r.y1 - r.y0);
@@ -1107,12 +1130,14 @@ async function finishSnip(r) {
   }
   try {
     // 1. Pixels + 2. Text — captured differently for HTML vs PDF.
-    let out, text = "";
+    let out = null, text = "", hadMath = false;
     if (docMode === "html") {
       // High-DPI raster of the HTML region (the iframe can't be drawn to a
-      // canvas directly) + reliable DOM text extraction.
-      out = await snipHtmlRegion(x0, y0, w, h);
-      text = htmlTextInRegion(x0, y0, w, h);
+      // canvas directly) + reliable DOM text extraction. If the raster fails
+      // we keep going — the text alone is still worth saving.
+      try { out = await snipHtmlRegion(x0, y0, w, h); }
+      catch (e) { console.warn("snip raster failed:", e); }
+      ({ text, hadMath } = htmlTextInRegion(x0, y0, w, h));
     } else {
       // Copy the region from the active page's live canvases (single page, or
       // the active continuous page).
@@ -1130,13 +1155,29 @@ async function finishSnip(r) {
       }
       text = await pdfTextInRegion(x0, y0, w, h);
     }
+
+    // Keep recovered equations and DOM text even when symbol-heavy: the dingbat
+    // filter is only meant for broken-font PDF glyphs, not real HTML/TeX. Cap on
+    // a word boundary so a long caption never cuts mid-word.
+    const usable = (hadMath || looksLikeText(text))
+      ? clampCaption(text, docMode === "html" ? 600 : 280) : "";
+
+    // The HTML raster failed but we have text: save it as a text note rather
+    // than losing the snip entirely.
+    if (!out) {
+      if (usable) {
+        app.add_text_note(usable);
+        renderNotes();
+        if (els.notesPane.hidden) toggleNotes(true);
+        status("Snipped text only — the image couldn't be captured.");
+      } else {
+        status("Couldn't capture that region.");
+      }
+      return;
+    }
+
     const blob = await new Promise((res) => out.toBlob(res, "image/png"));
     const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
-
-    // Discard extracted text that's mostly symbols/dingbats — some PDFs have a
-    // broken font Unicode map, so the glyphs render fine but the text comes out
-    // as garbage. Keep just the image rather than polluting the note.
-    const usable = looksLikeText(text) ? text.slice(0, 280) : "";
     const caption = usable
       || (docMode === "html" ? "from the page" : `from page ${pageNum + 1}`);
     app.add_clipping(b64, pageNum, caption);
@@ -1149,7 +1190,9 @@ async function finishSnip(r) {
         await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
       }
     } catch { /* clipboard permission is optional */ }
-    status(usable ? "Snipped — image and text added to notes." : "Snipped to notes.");
+    const imgWarn = (docMode === "html" && regionHasBrokenImage(x0, y0, x0 + w, y0 + h))
+      ? " (some external images couldn't be captured)" : "";
+    status((usable ? "Snipped — image and text added to notes." : "Snipped to notes.") + imgWarn);
   } catch (e) {
     console.error("snip failed:", e);
     status(`Snip failed: ${e?.message || e}`);
@@ -1506,13 +1549,30 @@ async function snipHtmlRegion(x0, y0, w, h) {
 // Extract readable text (incl. link URLs) from the iframe DOM whose layout boxes
 // fall inside the region — far more reliable than glyph-anchor heuristics, and
 // it actually handles links. Coords are page units (CSS px at base width).
+// Climb to the nearest equation container (KaTeX, MathJax, raw MathML, or a
+// data-latex element) so an equation is captured once as its source rather than
+// as garbled, doubled rendered glyphs.
+function mathContainerOf(node) {
+  let el = node.parentElement;
+  while (el) {
+    if (el.matches?.(".katex, mjx-container, math, [data-latex]")) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
+// Returns { text, hadMath }: the readable text under the region (reading order,
+// links, recovered equations) and whether any equation source was recovered (so
+// the caller can keep symbol-heavy math past the dingbat filter).
 function htmlTextInRegion(x0, y0, w, h) {
   let doc;
-  try { doc = els.htmlFrame.contentDocument; } catch { return ""; }
-  if (!doc || !doc.body) return "";
+  try { doc = els.htmlFrame.contentDocument; } catch { return { text: "", hadMath: false }; }
+  if (!doc || !doc.body) return { text: "", hadMath: false };
   const x1 = x0 + w, y1 = y0 + h;
   const hits = [];
   const seenLinks = new Set();
+  const mathSeen = new Set();
+  let hadMath = false;
   const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
   const range = doc.createRange();
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
@@ -1528,6 +1588,23 @@ function htmlTextInRegion(x0, y0, w, h) {
       if (rc.right >= x0 && rc.left <= x1 && rc.bottom >= y0 && rc.top <= y1) { box = rc; break; }
     }
     if (!box) continue;
+    // Equations: KaTeX/MathJax render the visible glyphs AND a hidden MathML+TeX
+    // twin, so naive text-walking doubles/garbles them. Capture the recoverable
+    // TeX source once per container and skip its glyph/annotation runs entirely.
+    const mc = mathContainerOf(n);
+    if (mc) {
+      if (!mathSeen.has(mc)) {
+        mathSeen.add(mc);
+        const ann = mc.querySelector?.('annotation[encoding="application/x-tex"]');
+        const tex = (ann ? ann.textContent : (mc.getAttribute?.("data-latex") || "")).trim();
+        if (tex) {
+          const r = mc.getBoundingClientRect();
+          hits.push({ top: r.top, left: r.left, str: tex });
+          hadMath = true;
+        }
+      }
+      continue; // never emit an equation's raw rendered/annotation text
+    }
     let str = s;
     const a = n.parentElement && n.parentElement.closest("a[href]");
     if (a) {
@@ -1545,7 +1622,10 @@ function htmlTextInRegion(x0, y0, w, h) {
     text += it.str;
     prevTop = it.top;
   }
-  return text.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return {
+    text: text.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim(),
+    hadMath,
+  };
 }
 
 // Extract PDF text overlapping the region, in reading order. Uses each glyph
