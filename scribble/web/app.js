@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "54";
+const APP_VERSION = "55";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=54";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=54";
-import { initEmbed } from "./embed.js?v=54";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=54";
+} from "./utils.js?v=55";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=55";
+import { initEmbed } from "./embed.js?v=55";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=55";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -873,44 +873,49 @@ function onAnnoPointerDown(ev) {
 }
 els.annoCanvas.addEventListener("pointerdown", onAnnoPointerDown);
 
-function onAnnoPointerMove(ev) {
-  if (snip) {
-    const [x, y] = pageCoords(ev);
-    snip.x1 = x;
-    snip.y1 = y;
+// Drag the open snip marquee's far corner.
+function moveSnip(ev) {
+  const [x, y] = pageCoords(ev);
+  snip.x1 = x;
+  snip.y1 = y;
+  redrawAnnotations();
+}
+
+// Scale the selected item by how far the grabbed corner moved from its anchor.
+function moveResize(ev) {
+  const [x, y] = pageCoords(ev);
+  const [ax, ay] = resizeDrag.anchor;
+  const bb = resizeDrag.startBB;
+  const w0 = Math.max(1e-3, Math.abs(bb[2] - bb[0]));
+  const h0 = Math.max(1e-3, Math.abs(bb[3] - bb[1]));
+  let sx = Math.abs(x - ax) / w0;
+  let sy = Math.abs(y - ay) / h0;
+  if (resizeDrag.uniform) {
+    // Strokes and text scale uniformly (stretching them looks broken).
+    sx = sy = Math.max(sx, sy);
+  }
+  app.scale_dragged_item(ax, ay, sx, sy);
+  redrawAnnotations();
+}
+
+// Move the selected item, but only once it's dragged past a small threshold
+// (so a click that barely moves doesn't nudge it).
+function moveItem(ev) {
+  const [x, y] = pageCoords(ev);
+  if (Math.hypot(x - itemDrag.startX, y - itemDrag.startY) > 3 / scale()) {
+    itemDrag.moved = true;
+  }
+  if (itemDrag.moved) {
+    app.drag_item(x, y);
     redrawAnnotations();
-    return;
   }
-  if (resizeDrag) {
-    const [x, y] = pageCoords(ev);
-    const [ax, ay] = resizeDrag.anchor;
-    const bb = resizeDrag.startBB;
-    // Scale factors from how far the dragged corner moved relative to anchor.
-    const w0 = Math.max(1e-3, Math.abs(bb[2] - bb[0]));
-    const h0 = Math.max(1e-3, Math.abs(bb[3] - bb[1]));
-    let sx = Math.abs(x - ax) / w0;
-    let sy = Math.abs(y - ay) / h0;
-    if (resizeDrag.uniform) {
-      // Strokes and text scale uniformly (stretching them looks broken).
-      sx = sy = Math.max(sx, sy);
-    }
-    app.scale_dragged_item(ax, ay, sx, sy);
-    redrawAnnotations();
-    return;
-  }
-  if (itemDrag) {
-    const [x, y] = pageCoords(ev);
-    if (Math.hypot(x - itemDrag.startX, y - itemDrag.startY) > 3 / scale()) {
-      itemDrag.moved = true;
-    }
-    if (itemDrag.moved) {
-      app.drag_item(x, y);
-      redrawAnnotations();
-    }
-    return;
-  }
-  // Hover feedback for the select tool (never changes the active page).
-  if (!drawing && docOpen() && activeTool() === "select") {
+}
+
+// Hover feedback for the select tool: resize cursor on a handle, move cursor over
+// an item, default otherwise (never changes the active page). Other tools clear
+// any leftover select-hover cursor and fall back to the CSS crosshair.
+function updateHoverCursor(ev) {
+  if (docOpen() && activeTool() === "select") {
     let hp = pageNum, hx, hy;
     if (isContinuous()) {
       const cp = ev.currentTarget.closest(".cpage");
@@ -928,11 +933,14 @@ function onAnnoPointerMove(ev) {
       : h === 1 || h === 3 ? "nesw-resize"
       : app.find_item(hp, hx, hy) >= 0 ? "move"
       : "default";
-  } else if (!drawing && !itemDrag && !resizeDrag && !snip) {
-    // Other tools use the CSS crosshair; clear any leftover select-hover cursor.
+  } else {
     ev.currentTarget.style.cursor = "";
   }
-  if (!drawing) return;
+}
+
+// Feed a freehand/erase/shape drag to the core, coalescing batched moves so
+// fast strokes stay smooth.
+function moveDraw(ev) {
   const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
   for (const e of events) {
     const [x, y] = pageCoords(e);
@@ -940,6 +948,15 @@ function onAnnoPointerMove(ev) {
   }
   if (regionDraw) { const [x, y] = pageCoords(ev); regionDraw.x1 = x; regionDraw.y1 = y; }
   redrawAnnotations();
+}
+
+// Pointer-move dispatcher: one in-progress gesture at a time, else hover/draw.
+function onAnnoPointerMove(ev) {
+  if (snip) { moveSnip(ev); return; }
+  if (resizeDrag) { moveResize(ev); return; }
+  if (itemDrag) { moveItem(ev); return; }
+  if (!drawing) { updateHoverCursor(ev); return; }
+  moveDraw(ev);
 }
 els.annoCanvas.addEventListener("pointermove", onAnnoPointerMove);
 
