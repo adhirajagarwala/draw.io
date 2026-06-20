@@ -118,14 +118,15 @@ button { font: inherit; }
   color: var(--ink);
   cursor: pointer;
   font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
 }
 #rail .tool svg {
   width: 17px; height: 17px; flex: none;
-  fill: none; stroke: currentColor; stroke-width: 1.8;
+  fill: none; stroke: currentColor; stroke-width: 2;
   stroke-linecap: round; stroke-linejoin: round;
 }
-#rail .tool:hover { background: #f2f4f7; }
+#rail .tool:hover { background: #f2f4f7; border-color: var(--line); }
 #rail .tool.active {
   background: var(--accent-soft);
   color: var(--accent);
@@ -150,6 +151,7 @@ button { font: inherit; }
   -webkit-user-select: none;
   touch-action: manipulation;
   white-space: nowrap;
+  transition: background .12s, border-color .12s;
 }
 
 .btn svg {
@@ -157,13 +159,13 @@ button { font: inherit; }
   height: 17px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.8;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
   flex: none;
 }
 
-.btn:hover:not(:disabled) { background: #f2f4f7; }
+.btn:hover:not(:disabled) { background: #f2f4f7; border-color: var(--line); }
 .btn:active:not(:disabled) { background: #e9ecf1; }
 .btn:disabled { opacity: 0.35; cursor: default; }
 .btn[hidden] { display: none; } /* .btn's inline-flex would otherwise beat [hidden] */
@@ -190,6 +192,15 @@ button { font: inherit; }
   color: var(--accent);
   border-color: #c4d2f5;
   font-weight: 600;
+}
+
+/* Stateful top-bar / palette toggles: JS adds .active for the ON state, so it
+   needs a persistent pressed look. Without this rule the button only flashed
+   its hover background and snapped back on mouse-out — which read as "glitchy". */
+#btn-thumbs.active, #btn-notes.active, #btn-big.active, #btn-palette.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: #c4d2f5;
 }
 
 .btn.primary {
@@ -251,7 +262,7 @@ button { font: inherit; }
 #zoom-select:disabled, #page-input:disabled { opacity: 0.4; }
 
 /* width picker */
-.btn.width { min-width: 30px; padding: 0 6px; }
+.btn.width { min-width: 30px; padding: 0 6px; border-color: var(--line); }
 .btn.width .dot { border-radius: 50%; background: var(--ink); display: block; }
 .btn.width .d1 { width: 4px; height: 4px; }
 .btn.width .d2 { width: 7px; height: 7px; }
@@ -267,10 +278,12 @@ button { font: inherit; }
   margin: 0 2px;
   padding: 0;
   border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.18);
+  border: 2px solid rgba(0, 0, 0, 0.22);
   cursor: pointer;
   flex: none;
+  transition: transform .1s;
 }
+.swatch:hover { transform: scale(1.08); }
 
 .swatch[data-color="black"]  { background: #1a1a1a; }
 .swatch[data-color="red"]    { background: #d32f2f; }
@@ -356,13 +369,13 @@ button { font: inherit; }
 }
 
 /* Contextual colour + thickness bar: movable, collapsible, semi-transparent,
-   and horizontally scrollable when it doesn't fit. Default: top-centre. Once
-   dragged, JS sets explicit left/top and clears the centring transform. */
+   and horizontally scrollable when it doesn't fit. Default: top-left, beside
+   the Open button (easiest to reach). Once dragged, JS sets explicit left/top. */
 #context-bar {
   position: absolute;
   top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 12px;
+  transform: none;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -395,7 +408,7 @@ button { font: inherit; }
 .cbar-grip {
   flex: none;
   cursor: grab;
-  color: var(--muted);
+  color: #4a5560;
   font-size: 13px;
   line-height: 1;
   padding: 0 2px;
@@ -409,7 +422,7 @@ button { font: inherit; }
   height: 26px;
   border: none;
   background: transparent;
-  color: var(--muted);
+  color: #4a5560;
   cursor: pointer;
   border-radius: 6px;
   font-size: 12px;
@@ -418,13 +431,13 @@ button { font: inherit; }
 #context-bar.collapsed .cbar-collapse { transform: rotate(-90deg); }
 .cbar-resize {
   flex: none;
-  width: 8px;
+  width: 10px;
   align-self: stretch;
   margin-right: -2px;
   cursor: ew-resize;
   border-radius: 0 8px 8px 0;
   background:
-    linear-gradient(var(--line), var(--line)) center / 1px 12px no-repeat;
+    linear-gradient(#9aa3ad, #9aa3ad) center / 2px 16px no-repeat;
   touch-action: none;
 }
 
@@ -609,34 +622,6 @@ button { font: inherit; }
   word-break: break-word;
 }
 
-/* PDF.js text layer (active only with the Page-text tool) */
-/* PDF.js selectable text layers — the single-page one and the per-page ones in
-   the continuous column behave identically. */
-#text-layer,
-.cpage .ctext {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  line-height: 1;
-  z-index: 4; /* above the page + annotation canvases */
-}
-#text-layer span,
-.cpage .ctext span {
-  position: absolute;
-  color: transparent;
-  white-space: pre;
-  transform-origin: 0 0;
-  cursor: text;
-}
-#text-layer ::selection,
-.cpage .ctext ::selection { background: rgba(47, 95, 222, 0.35); }
-body.textselect #text-layer,
-body.textselect .cpage .ctext { pointer-events: auto; }
-body.textselect #anno-canvas { pointer-events: none; }
-/* HTML mode: let the iframe receive selection while Copy-text is active. */
-body.textselect #html-frame { pointer-events: auto; }
-
 /* embedded-mode action buttons (Snip from problem / Grab problem text) */
 .embed-actions { display: flex; gap: 4px; align-items: center; margin-left: 8px; }
 .embed-actions .btn { border: 1px solid var(--line); background: #fff; }
@@ -690,7 +675,6 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
   height: 100%;
 }
 .cpage > canvas.canno { touch-action: none; cursor: crosshair; }
-body.textselect .cpage > canvas.canno { pointer-events: none; }
 
 /* Segmented Page / Scroll view-mode switch in the doc-controls bar. */
 .seg-group { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }

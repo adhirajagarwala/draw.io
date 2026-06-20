@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "49";
+const APP_VERSION = "50";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,7 +13,7 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=49";
+} from "./utils.js?v=50";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -60,7 +60,6 @@ const els = {
   notesPane: $("notes-pane"),
   notesList: $("notes-list"),
   splitter: $("splitter"),
-  textLayer: $("text-layer"),
   contextBar: $("context-bar"),
   docControls: $("doc-controls"),
   widths: $("widths"),
@@ -81,7 +80,7 @@ const els = {
 
 // Tools that exist only in the UI layer (the Rust core stays in a neutral
 // tool while they're active).
-const JS_TOOLS = new Set(["snip", "pagetext"]);
+const JS_TOOLS = new Set(["snip"]);
 const activeTool = () =>
   document.querySelector(".tool.active")?.dataset.tool;
 
@@ -306,10 +305,6 @@ async function renderPage() {
   els.btn.zoomIn.disabled = currentScale >= ZOOM_MAX;
   redrawAnnotations();
   markActiveThumb();
-  // The selectable text layer is only built on demand (Page-text tool), so it
-  // never competes with normal rendering or export for the PDF.js worker.
-  if (activeTool() === "pagetext") buildTextLayer(page);
-  else els.textLayer.textContent = "";
 }
 
 // ---------- continuous scroll (virtualized, PDF only) ----------
@@ -349,7 +344,6 @@ async function renderContinuous() {
   if (cont.io) cont.io.disconnect();
   els.htmlFrame.hidden = true;
   els.wrap.hidden = true;
-  els.textLayer.textContent = "";
   els.column.hidden = false;
   els.column.textContent = "";
   cont.pages = [];
@@ -370,11 +364,9 @@ async function renderContinuous() {
     pdfCanvas.className = "cpdf";
     const annoCanvas = document.createElement("canvas");
     annoCanvas.className = "canno";
-    const textLayer = document.createElement("div"); // Copy-text selectable layer
-    textLayer.className = "ctext";
-    el.append(pdfCanvas, annoCanvas, textLayer);
+    el.append(pdfCanvas, annoCanvas);
     els.column.appendChild(el);
-    const p = { el, pdfCanvas, annoCanvas, textLayer, base: bases[i], mounted: false };
+    const p = { el, pdfCanvas, annoCanvas, base: bases[i], mounted: false };
     cont.pages.push(p);
     // Same page-aware pointer pipeline as the single-page canvas.
     annoCanvas.addEventListener("pointerdown", onAnnoPointerDown);
@@ -452,7 +444,6 @@ async function contMount(i) {
   }
   if (token !== cont.token || !p.mounted) return; // rebuilt or scrolled away
   contDrawAnnos(i);
-  if (activeTool() === "pagetext") buildContTextLayer(i); // keep selectable text in sync
 }
 
 // Free a page's canvases when it scrolls far away (keeps memory bounded).
@@ -461,7 +452,6 @@ function contUnmount(i) {
   if (!p || !p.mounted) return;
   p.mounted = false;
   for (const c of [p.pdfCanvas, p.annoCanvas]) { c.width = 0; c.height = 0; }
-  if (p.textLayer) p.textLayer.textContent = ""; // free Copy-text spans too
 }
 
 // Paint a mounted page's annotation canvas (marks + selection/snip if active).
@@ -668,7 +658,6 @@ async function openHtml(file) {
     els.placeholder.hidden = true;
     els.wrap.hidden = false;
     els.pdfCanvas.hidden = true;
-    els.textLayer.textContent = "";
     els.htmlFrame.hidden = false;
     await new Promise((resolve) => {
       els.htmlFrame.onload = () => resolve();
@@ -1782,14 +1771,10 @@ for (const b of document.querySelectorAll(".tool")) {
     document.querySelectorAll(".tool").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     hideRegionButton();
-    document.body.classList.toggle("textselect", name === "pagetext");
     if (name !== "select") setSelection(-1);
     els.annoCanvas.style.cursor = name === "snip" ? "crosshair" : "";
     updateContextBar(name);
     syncAria();
-    // Build/tear down selectable text as the Copy-text tool toggles (works in
-    // single-page PDF, continuous PDF per page, and HTML via direct selection).
-    setCopyText(name === "pagetext");
   });
 }
 
@@ -1934,7 +1919,7 @@ window.addEventListener("resize", () => {
 
 const TOOL_KEYS = {
   v: "select", p: "pen", h: "highlighter", t: "text", e: "eraser",
-  s: "snip", i: "pagetext",
+  s: "snip",
 };
 
 document.addEventListener("keydown", (ev) => {
@@ -2152,7 +2137,7 @@ class SketchView {
       return;
     }
     // drawing tools (snip is PDF-only and ignored on sketches)
-    if (tool === "snip" || tool === "pagetext") return;
+    if (tool === "snip") return;
     this.state = { mode: "draw" };
     app.pointer_down_sketch(this.note, x, y, 10 / this.scale);
     this.draw();
@@ -2503,66 +2488,6 @@ els.btn.thumbs.addEventListener("click", async () => {
   }
 });
 
-// ---------- PDF.js text layer (Page-text tool) ----------
-
-let textLayerTask = null;
-
-// Build a selectable PDF.js text layer for `page` into `container` at scale
-// factor `sf`. Used for the single-page view and for each continuous .cpage.
-async function buildTextLayer(page, container = els.textLayer, sf = scale()) {
-  container.textContent = "";
-  if (container === els.textLayer && textLayerTask?.cancel) textLayerTask.cancel();
-  try {
-    const lib = await getPdfjs();
-    if (typeof lib.TextLayer !== "function") return; // not in this build
-    const vp = page.getViewport({ scale: sf });
-    container.style.setProperty("--scale-factor", String(sf));
-    const task = new lib.TextLayer({
-      textContentSource: page.streamTextContent(),
-      container,
-      viewport: vp,
-    });
-    if (container === els.textLayer) textLayerTask = task;
-    await task.render();
-  } catch (e) {
-    if (e?.name !== "AbortException") console.warn("text layer:", e);
-  }
-}
-
-// Build the text layer for one mounted continuous page (Copy-text tool only).
-async function buildContTextLayer(i) {
-  const p = cont.pages[i];
-  if (!p || !p.mounted || !p.textLayer || !pdfDoc) return;
-  try {
-    const page = await pdfDoc.getPage(i + 1);
-    await buildTextLayer(page, p.textLayer, cont.scale);
-  } catch { /* best-effort */ }
-}
-
-// Build/clear selectable text across the whole continuous column.
-function buildAllContTextLayers() {
-  for (let i = 0; i < cont.pages.length; i++) {
-    if (cont.pages[i].mounted) buildContTextLayer(i);
-  }
-}
-function clearAllTextLayers() {
-  els.textLayer.textContent = "";
-  for (const p of cont.pages) if (p.textLayer) p.textLayer.textContent = "";
-}
-
-// Activate/deactivate selectable text for the Copy-text tool across every mode.
-function setCopyText(on) {
-  if (!on) { clearAllTextLayers(); return; }
-  if (docMode === "html") {
-    status("Select text on the page, then ⌘/Ctrl-C to copy.");
-    return; // the iframe text is selected directly (see body.textselect CSS)
-  }
-  if (!pdfDoc) return;
-  status("Select text on the page, then ⌘/Ctrl-C to copy.");
-  if (isContinuous()) buildAllContTextLayers();
-  else pdfDoc.getPage(pageNum + 1).then((pg) => buildTextLayer(pg));
-}
-
 // ---------- accessibility toggles ----------
 
 function applyBig(on) {
@@ -2575,13 +2500,26 @@ els.btn.big.addEventListener("click", () => {
   savePrefs();
 });
 
+// Swatch tooltips track the colour-blind palette so they never lie about the
+// ink that will actually be drawn.
+function swatchTitle(color, safe) {
+  const base = { black: "Black", red: "Red", blue: "Blue", green: "Green", yellow: "Yellow" };
+  if (safe && color === "green") return "Green — drawn as brown in colour-safe mode";
+  if (safe && color === "red") return "Red — drawn as vermillion in colour-safe mode";
+  return base[color] || color;
+}
+
 // Apply the standard or colorblind-safe palette. Shared by the toggle and the
 // boot-time preference restore. Colors still come from the closed Rust enum.
 function applyPalette(safe, announce = false) {
   app.set_palette(safe ? "safe" : "standard");
   els.btn.palette.classList.toggle("active", safe);
+  els.btn.palette.title = safe
+    ? "Colour-blind-safe palette: on — click to return to standard colours"
+    : "Colour-blind-safe palette: off — click to recolour (green→brown, red→vermillion)";
   for (const s of document.querySelectorAll("#colors .swatch")) {
     s.style.background = app.color_css(s.dataset.color);
+    s.title = swatchTitle(s.dataset.color, safe);
   }
   if (docOpen()) {
     redrawAnnotations();
