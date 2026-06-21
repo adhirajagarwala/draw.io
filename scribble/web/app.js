@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "61";
+const APP_VERSION = "62";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=61";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=61";
-import { initEmbed } from "./embed.js?v=61";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=61";
+} from "./utils.js?v=62";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=62";
+import { initEmbed } from "./embed.js?v=62";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=62";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1095,6 +1095,24 @@ function drawSnipMarquee(ctx) {
     Math.abs(snip.x1 - snip.x0) * k,
     Math.abs(snip.y1 - snip.y0) * k,
   );
+  // Live W×H readout (screen px) pinned to the dragged corner, so the box can be
+  // aimed precisely. Esc cancels the drag (see the keydown handler).
+  const wPx = Math.round(Math.abs(snip.x1 - snip.x0) * scale());
+  const hPx = Math.round(Math.abs(snip.y1 - snip.y0) * scale());
+  if (wPx > 6 || hPx > 6) {
+    const fs = 12 * r, pad = 4 * r;
+    ctx.font = `${fs}px system-ui, -apple-system, sans-serif`;
+    ctx.textBaseline = "top";
+    const label = `${wPx} × ${hPx}`;
+    const tw = ctx.measureText(label).width, bh = fs + pad * 2;
+    let lx = snip.x1 * k + 8 * r, ly = snip.y1 * k + 8 * r;
+    if (lx + tw + pad * 2 > ctx.canvas.width) lx = ctx.canvas.width - tw - pad * 2;
+    if (ly + bh > ctx.canvas.height) ly = snip.y1 * k - bh - 8 * r;
+    ctx.fillStyle = "rgba(20, 24, 28, 0.85)";
+    ctx.fillRect(lx, ly, tw + pad * 2, bh);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(label, lx + pad, ly + pad);
+  }
   ctx.restore();
 }
 
@@ -2030,6 +2048,7 @@ document.addEventListener("keydown", (ev) => {
       activeSketch.remove();
     }
   } else if (ev.key === "Escape") {
+    if (snip) { snip = null; redrawAnnotations(); } // cancel an in-progress snip
     if (selectedId >= 0) setSelection(-1);
     if (activeSketch && activeSketch.selected >= 0) {
       activeSketch.selected = -1;
