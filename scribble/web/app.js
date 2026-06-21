@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "60";
+const APP_VERSION = "61";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=60";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=60";
-import { initEmbed } from "./embed.js?v=60";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=60";
+} from "./utils.js?v=61";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=61";
+import { initEmbed } from "./embed.js?v=61";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=61";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1098,11 +1098,13 @@ function drawSnipMarquee(ctx) {
   ctx.restore();
 }
 
-// Trim a caption to a sane length on a word/line boundary. HTML DOM text is
-// trustworthy, so it gets more room than glyph-mapped PDF text.
+// Trim a caption to a sane length on a word/line boundary, leaving room for the
+// ellipsis so the result never exceeds `max` (the Rust core hard-caps captions
+// at MAX_CAPTION_LEN=300 with a blind char chop — clamp to that so the word
+// boundary actually holds and isn't re-cut mid-word).
 function clampCaption(text, max) {
   if (text.length <= max) return text;
-  const cut = text.slice(0, max);
+  const cut = text.slice(0, max - 1);
   const brk = Math.max(cut.lastIndexOf("\n"), cut.lastIndexOf(" "));
   return (brk > max * 0.5 ? cut.slice(0, brk) : cut).trimEnd() + "…";
 }
@@ -1160,7 +1162,7 @@ async function finishSnip(r) {
     // filter is only meant for broken-font PDF glyphs, not real HTML/TeX. Cap on
     // a word boundary so a long caption never cuts mid-word.
     const usable = (hadMath || looksLikeText(text))
-      ? clampCaption(text, docMode === "html" ? 600 : 280) : "";
+      ? clampCaption(text, docMode === "html" ? 300 : 280) : "";
 
     // The HTML raster failed but we have text: save it as a text note rather
     // than losing the snip entirely.
