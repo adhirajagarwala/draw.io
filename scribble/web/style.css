@@ -787,6 +787,22 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
 }
 .modal-actions .btn.primary { border-color: var(--ink); }
 
+/* captured-text preview in the "keep text?" snip dialog */
+.snip-text-preview {
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f4f5f7;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
 /* ---------- clipping lightbox (click a snipped image to enlarge) ---------- */
 .lightbox { flex-direction: column; gap: 14px; cursor: zoom-out; }
 .lightbox-img {

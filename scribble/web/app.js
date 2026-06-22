@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "64";
+const APP_VERSION = "65";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=64";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=64";
-import { initEmbed } from "./embed.js?v=64";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=64";
+} from "./utils.js?v=65";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=65";
+import { initEmbed } from "./embed.js?v=65";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=65";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1141,6 +1141,44 @@ function regionHasBrokenImage(x0, y0, x1, y1) {
   return false;
 }
 
+// Ask whether to add a snip's captured text to the note (the image goes in
+// either way — the caller adds it after this resolves). Enter = keep, Esc = skip.
+function confirmSnipText(text) {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.className = "modal-overlay";
+    const card = document.createElement("div");
+    card.className = "modal-card";
+    const h = document.createElement("h3");
+    h.textContent = "Keep the captured text?";
+    const pre = document.createElement("p");
+    pre.className = "snip-text-preview";
+    pre.textContent = text; // textContent — never innerHTML of captured content
+    const actions = document.createElement("div");
+    actions.className = "modal-actions";
+    const add = document.createElement("button");
+    add.className = "btn primary";
+    add.textContent = "Keep text (Enter)";
+    const skip = document.createElement("button");
+    skip.className = "btn";
+    skip.textContent = "Image only (Esc)";
+    const done = (v) => { ov.remove(); document.removeEventListener("keydown", onKey, true); resolve(v); };
+    const onKey = (e) => {
+      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); done(true); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); }
+    };
+    add.addEventListener("click", () => done(true));
+    skip.addEventListener("click", () => done(false));
+    ov.addEventListener("click", (e) => { if (e.target === ov) done(false); });
+    actions.append(add, skip);
+    card.append(h, pre, actions);
+    ov.appendChild(card);
+    document.addEventListener("keydown", onKey, true);
+    document.body.appendChild(ov);
+    add.focus();
+  });
+}
+
 async function finishSnip(r) {
   const x0 = Math.min(r.x0, r.x1), y0 = Math.min(r.y0, r.y1);
   const w = Math.abs(r.x1 - r.x0), h = Math.abs(r.y1 - r.y0);
@@ -1181,12 +1219,14 @@ async function finishSnip(r) {
     // a word boundary so a long caption never cuts mid-word.
     const usable = (hadMath || looksLikeText(text))
       ? clampCaption(text, docMode === "html" ? 300 : 280) : "";
+    // Never add captured text without asking — the image still goes in regardless.
+    const finalText = (usable && await confirmSnipText(usable)) ? usable : "";
 
     // The HTML raster failed but we have text: save it as a text note rather
     // than losing the snip entirely.
     if (!out) {
-      if (usable) {
-        app.add_text_note(usable);
+      if (finalText) {
+        app.add_text_note(finalText);
         renderNotes();
         if (els.notesPane.hidden) toggleNotes(true);
         status("Snipped text only — the image couldn't be captured.");
@@ -1198,7 +1238,7 @@ async function finishSnip(r) {
 
     const blob = await new Promise((res) => out.toBlob(res, "image/png"));
     const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
-    const caption = usable
+    const caption = finalText
       || (docMode === "html" ? "from the page" : `from page ${pageNum + 1}`);
     app.add_clipping(b64, pageNum, caption);
     renderNotes();
@@ -1212,7 +1252,7 @@ async function finishSnip(r) {
     } catch { /* clipboard permission is optional */ }
     const imgWarn = (docMode === "html" && regionHasBrokenImage(x0, y0, x0 + w, y0 + h))
       ? " (some external images couldn't be captured)" : "";
-    status((usable ? "Snipped — image and text added to notes." : "Snipped to notes.") + imgWarn);
+    status((finalText ? "Snipped — image and text added to notes." : "Snipped to notes.") + imgWarn);
   } catch (e) {
     console.error("snip failed:", e);
     status(`Snip failed: ${e?.message || e}`);
