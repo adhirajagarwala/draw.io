@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "62";
+const APP_VERSION = "63";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=62";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=62";
-import { initEmbed } from "./embed.js?v=62";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=62";
+} from "./utils.js?v=63";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=63";
+import { initEmbed } from "./embed.js?v=63";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=63";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;

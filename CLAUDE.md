@@ -138,6 +138,14 @@ render lock, PDF export raster) may still check `pdfDoc`.
   numbers, caps, bidi/zero-width stripping) **before** anything is applied.
 - Uploaded HTML renders in a sandboxed iframe with **no script permission**
   (`sandbox="allow-same-origin"`, no `allow-scripts`).
+- `style-src` includes `'unsafe-inline'` **on purpose** (do NOT "tighten" it back).
+  A `srcdoc` iframe inherits the page CSP, so without it the uploaded HTML's
+  inline styles + `<style>` blocks are silently stripped — the page renders
+  unstyled and the snip image (rendered from a *styled* SVG raster) no longer
+  matches the on-screen selection. It's safe here: `script-src` stays `'self'`
+  (no scripts, reinforced by the no-`allow-scripts` sandbox), and `default-src`/
+  `img-src` stay `'self' blob: data:` so inline CSS still can't load anything
+  external (no CSS exfiltration). Never add `'unsafe-inline'` to `script-src`.
 
 ## 8. After Rust changes, the checks that must pass
 

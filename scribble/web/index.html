@@ -8,14 +8,14 @@
        app.js?v= and making fixes look broken. Force a re-fetch each load. -->
   <meta http-equiv="Cache-Control" content="no-store">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; img-src 'self' blob: data:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'">
+        content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'">
   <title>Scribble — annotate your question paper</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <!-- ?v= queries bust browser caches: python http.server sends no cache
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=62">
+  <link rel="stylesheet" href="style.css?v=63">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -311,6 +311,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=62"></script>
+  <script type="module" src="app.js?v=63"></script>
 </body>
 </html>
