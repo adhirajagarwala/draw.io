@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "74";
+const APP_VERSION = "75";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,11 +13,12 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=74";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=74";
-import { initEmbed } from "./embed.js?v=74";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=74";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=74";
+} from "./utils.js?v=75";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=75";
+import { initEmbed } from "./embed.js?v=75";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=75";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=75";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=75";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1134,63 +1135,6 @@ function regionHasBrokenImage(x0, y0, x1, y1) {
   return false;
 }
 
-// Ask whether to add a snip's captured text to the note (the image goes in
-// either way — the caller adds it after this resolves). Enter = keep, Esc = skip.
-// Make a freshly-created `.modal-overlay` behave like an accessible dialog:
-// announce it to assistive tech and keep Tab focus inside it until it's removed.
-function trapModalFocus(ov, label) {
-  ov.setAttribute("role", "dialog");
-  ov.setAttribute("aria-modal", "true");
-  if (label) ov.setAttribute("aria-label", label);
-  ov.addEventListener("keydown", (e) => {
-    if (e.key !== "Tab") return;
-    const f = [...ov.querySelectorAll('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])')]
-      .filter((el) => !el.disabled && el.offsetParent !== null);
-    if (!f.length) { e.preventDefault(); return; }
-    const first = f[0], last = f[f.length - 1];
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-  });
-}
-
-function confirmSnipText(text) {
-  return new Promise((resolve) => {
-    const opener = document.activeElement;
-    const ov = document.createElement("div");
-    ov.className = "modal-overlay";
-    const card = document.createElement("div");
-    card.className = "modal-card";
-    const h = document.createElement("h3");
-    h.textContent = "Keep the captured text?";
-    const pre = document.createElement("p");
-    pre.className = "snip-text-preview";
-    pre.textContent = text; // textContent — never innerHTML of captured content
-    const actions = document.createElement("div");
-    actions.className = "modal-actions";
-    const add = document.createElement("button");
-    add.className = "btn primary";
-    add.textContent = "Keep text (Enter)";
-    const skip = document.createElement("button");
-    skip.className = "btn";
-    skip.textContent = "Image only (Esc)";
-    const done = (v) => { ov.remove(); document.removeEventListener("keydown", onKey, true); opener?.focus?.(); resolve(v); };
-    const onKey = (e) => {
-      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); done(true); }
-      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); }
-    };
-    add.addEventListener("click", () => done(true));
-    skip.addEventListener("click", () => done(false));
-    ov.addEventListener("click", (e) => { if (e.target === ov) done(false); });
-    actions.append(add, skip);
-    card.append(h, pre, actions);
-    ov.appendChild(card);
-    trapModalFocus(ov, "Keep the captured text?");
-    document.addEventListener("keydown", onKey, true);
-    document.body.appendChild(ov);
-    add.focus();
-  });
-}
-
 async function finishSnip(r) {
   // Snapshot the document identity up front: the confirm-text modal below is
   // interactive, so the user could navigate to another page or close the doc
@@ -1703,46 +1647,6 @@ async function exportPdf() {
 }
 
 // ---------- toolbar wiring ----------
-
-// A small modal that asks what to do with unsaved work before opening a file.
-// Resolves to "save" | "newtab" | "discard" | "cancel".
-function confirmOpenDialog() {
-  return new Promise((resolve) => {
-    const opener = document.activeElement;
-    const ov = document.createElement("div");
-    ov.className = "modal-overlay";
-    const card = document.createElement("div");
-    card.className = "modal-card";
-    const h = document.createElement("h3");
-    h.textContent = "You have unsaved work";
-    const p = document.createElement("p");
-    p.textContent = "Opening a file replaces what's on screen. What would you like to do?";
-    const row = document.createElement("div");
-    row.className = "modal-actions";
-    const cleanup = () => { ov.remove(); document.removeEventListener("keydown", onKey); opener?.focus?.(); };
-    const mk = (label, val, cls = "") => {
-      const b = document.createElement("button");
-      b.className = `btn labeled ${cls}`;
-      b.textContent = label;
-      b.addEventListener("click", () => { cleanup(); resolve(val); });
-      return b;
-    };
-    row.append(
-      mk("Save, then open", "save", "primary"),
-      mk("Open in a new tab", "newtab"),
-      mk("Discard & open", "discard"),
-      mk("Cancel", "cancel"),
-    );
-    card.append(h, p, row);
-    ov.append(card);
-    const onKey = (e) => { if (e.key === "Escape") { cleanup(); resolve("cancel"); } };
-    ov.addEventListener("click", (e) => { if (e.target === ov) { cleanup(); resolve("cancel"); } });
-    trapModalFocus(ov, "You have unsaved work");
-    document.addEventListener("keydown", onKey);
-    document.body.append(ov);
-    row.querySelector("button")?.focus();
-  });
-}
 
 els.btn.open.addEventListener("click", async () => {
   // Opening replaces the current document — guard unsaved work with a choice.
@@ -2331,35 +2235,6 @@ function buildTextBlock(div, i) {
 
 // A clipping note: the snipped image (click to jump to its source page) plus an
 // auto-growing caption.
-// Show a clipping enlarged in a dismissible lightbox (click the image to open;
-// click anywhere or press Esc to close). For PDF snips it also offers a jump to
-// the source page.
-function showClippingLightbox(src, srcPage) {
-  const opener = document.activeElement; // restore focus here when the lightbox closes
-  const ov = document.createElement("div");
-  ov.className = "modal-overlay lightbox";
-  ov.tabIndex = -1;
-  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
-  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey, true); opener?.focus?.(); };
-  const big = document.createElement("img");
-  big.src = src; big.className = "lightbox-img"; big.alt = "enlarged clipping";
-  ov.appendChild(big);
-  let firstFocus = null;
-  if (srcPage >= 0 && docMode === "pdf") {
-    const go = document.createElement("button");
-    go.className = "btn primary";
-    go.textContent = `Go to page ${srcPage + 1}`;
-    go.addEventListener("click", (e) => { e.stopPropagation(); close(); goToPage(srcPage); });
-    ov.appendChild(go);
-    firstFocus = go;
-  }
-  ov.addEventListener("click", close);
-  trapModalFocus(ov, "Enlarged clipping");
-  document.addEventListener("keydown", onKey, true);
-  document.body.appendChild(ov);
-  (firstFocus || ov).focus?.();
-}
-
 function buildClippingBlock(div, i) {
   const img = document.createElement("img");
   img.src = b64ToBlobUrl(app.note_png(i));
@@ -2373,7 +2248,7 @@ function buildClippingBlock(div, i) {
     ? `Enlarge clipping (snipped from page ${srcPage + 1})` : "Enlarge clipping";
   img.title = enlargeLabel;
   img.setAttribute("aria-label", enlargeLabel);
-  const openLightbox = () => showClippingLightbox(img.src, srcPage);
+  const openLightbox = () => showClippingLightbox(img.src, srcPage, docMode, goToPage);
   img.addEventListener("click", openLightbox);
   img.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openLightbox(); }
