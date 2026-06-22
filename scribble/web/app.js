@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "72";
+const APP_VERSION = "73";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=72";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=72";
-import { initEmbed } from "./embed.js?v=72";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=72";
+} from "./utils.js?v=73";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=73";
+import { initEmbed } from "./embed.js?v=73";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=73";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -43,6 +43,7 @@ const MAX_PAGES = 100;
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 4;
 const FIT_MARGIN = 48; // px breathing room for fit modes
+const SKETCH_SCALE_MIN = 0.3, SKETCH_SCALE_MAX = 4; // user-dragged sketch zoom range
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -2257,7 +2258,7 @@ class SketchView {
     const avail = Math.max(120, els.notesList.clientWidth - 28);
     const auto = Math.min(avail / this.w, 2);
     // A user-dragged scale overrides the auto-fit (clamped to a sane range).
-    this.scale = this.userScale ? Math.max(0.3, Math.min(4, this.userScale)) : auto;
+    this.scale = this.userScale ? Math.max(SKETCH_SCALE_MIN, Math.min(SKETCH_SCALE_MAX,this.userScale)) : auto;
     const r = dpr();
     this.canvas.width = Math.round(this.w * this.scale * r);
     this.canvas.height = Math.round(this.h * this.scale * r);
@@ -2278,7 +2279,7 @@ class SketchView {
     });
     handle.addEventListener("pointermove", (e) => {
       if (!rz) return;
-      this.userScale = Math.max(0.3, Math.min(4, (rz.w + (e.clientX - rz.x)) / this.w));
+      this.userScale = Math.max(SKETCH_SCALE_MIN, Math.min(SKETCH_SCALE_MAX,(rz.w + (e.clientX - rz.x)) / this.w));
       this.layout();
       this.draw();
     });
