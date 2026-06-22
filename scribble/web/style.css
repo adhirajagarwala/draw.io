@@ -787,6 +787,17 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
 }
 .modal-actions .btn.primary { border-color: var(--ink); }
 
+/* ---------- clipping lightbox (click a snipped image to enlarge) ---------- */
+.lightbox { flex-direction: column; gap: 14px; cursor: zoom-out; }
+.lightbox-img {
+  max-width: 92vw;
+  max-height: 82vh;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 12px 40px rgba(20, 24, 28, 0.4);
+}
+
 /* ---------- keyboard-shortcuts overlay ---------- */
 
 #help-overlay {

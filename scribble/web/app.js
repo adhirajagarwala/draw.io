@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "63";
+const APP_VERSION = "64";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=63";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=63";
-import { initEmbed } from "./embed.js?v=63";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=63";
+} from "./utils.js?v=64";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=64";
+import { initEmbed } from "./embed.js?v=64";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=64";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -2387,17 +2387,39 @@ function buildTextBlock(div, i) {
 
 // A clipping note: the snipped image (click to jump to its source page) plus an
 // auto-growing caption.
+// Show a clipping enlarged in a dismissible lightbox (click the image to open;
+// click anywhere or press Esc to close). For PDF snips it also offers a jump to
+// the source page.
+function showClippingLightbox(src, srcPage) {
+  const ov = document.createElement("div");
+  ov.className = "modal-overlay lightbox";
+  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey, true); };
+  const big = document.createElement("img");
+  big.src = src; big.className = "lightbox-img"; big.alt = "enlarged clipping";
+  ov.appendChild(big);
+  if (srcPage >= 0 && docMode === "pdf") {
+    const go = document.createElement("button");
+    go.className = "btn primary";
+    go.textContent = `Go to page ${srcPage + 1}`;
+    go.addEventListener("click", (e) => { e.stopPropagation(); close(); goToPage(srcPage); });
+    ov.appendChild(go);
+  }
+  ov.addEventListener("click", close);
+  document.addEventListener("keydown", onKey, true);
+  document.body.appendChild(ov);
+}
+
 function buildClippingBlock(div, i) {
   const img = document.createElement("img");
   img.src = b64ToBlobUrl(app.note_png(i));
   img.dataset.blob = "1";
   img.alt = "clipping";
   const srcPage = app.note_source_page(i);
-  if (srcPage >= 0) {
-    img.title = `Snipped from page ${srcPage + 1} — click to jump there`;
-    img.style.cursor = "pointer";
-    img.addEventListener("click", () => goToPage(srcPage));
-  }
+  img.style.cursor = "zoom-in";
+  img.title = (srcPage >= 0 && docMode === "pdf")
+    ? `Click to enlarge (snipped from page ${srcPage + 1})` : "Click to enlarge";
+  img.addEventListener("click", () => showClippingLightbox(img.src, srcPage));
   // Caption wraps to fit the width (auto-growing) rather than truncating.
   const cap = document.createElement("textarea");
   cap.className = "caption";
