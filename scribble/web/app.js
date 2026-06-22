@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "67";
+const APP_VERSION = "68";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=67";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=67";
-import { initEmbed } from "./embed.js?v=67";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=67";
+} from "./utils.js?v=68";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=68";
+import { initEmbed } from "./embed.js?v=68";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=68";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -2729,8 +2729,19 @@ $("cbar-collapse").addEventListener("click", () => {
 const topbarEl = $("topbar");
 function isCbarDocked() { return document.body.classList.contains("cbar-docked"); }
 function clampDockLeft(left) {
+  // Pin a docked bar to the free zone between the Open button and the right-hand
+  // controls so it never sits on top of the toolbar's own buttons.
   const bw = els.contextBar.offsetWidth || 220;
-  return Math.max(4, Math.min(Math.max(4, topbarEl.clientWidth - bw - 4), left));
+  const tr = topbarEl.getBoundingClientRect();
+  const openEl = $("btn-open");
+  const rightEl = topbarEl.querySelector(".topbar-right");
+  const GAP = 8;
+  let lo = 4;
+  let hi = tr.width - bw - 4;
+  if (openEl) lo = openEl.getBoundingClientRect().right - tr.left + GAP;
+  if (rightEl) hi = rightEl.getBoundingClientRect().left - tr.left - bw - GAP;
+  if (hi < lo) hi = lo; // gap narrower than the bar — pin at the zone's left edge
+  return Math.max(lo, Math.min(hi, left));
 }
 function dockCbar(left) {
   const cb = els.contextBar;
