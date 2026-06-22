@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "71";
+const APP_VERSION = "72";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=71";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=71";
-import { initEmbed } from "./embed.js?v=71";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=71";
+} from "./utils.js?v=72";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=72";
+import { initEmbed } from "./embed.js?v=72";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=72";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -303,8 +303,6 @@ async function renderPage() {
   syncZoomSelect();
   els.btn.prev.disabled = pageNum === 0;
   els.btn.next.disabled = pageNum >= pdfDoc.numPages - 1;
-  els.btn.zoomOut.disabled = currentScale <= ZOOM_MIN;
-  els.btn.zoomIn.disabled = currentScale >= ZOOM_MAX;
   redrawAnnotations();
   markActiveThumb();
 }
@@ -384,8 +382,6 @@ async function renderContinuous() {
   els.pageInput.value = String(pageNum + 1);
   els.pageCount.textContent = `/ ${pdfDoc.numPages}`;
   syncZoomSelect();
-  els.btn.zoomOut.disabled = currentScale <= ZOOM_MIN;
-  els.btn.zoomIn.disabled = currentScale >= ZOOM_MAX;
   els.btn.prev.disabled = pageNum === 0;
   els.btn.next.disabled = pageNum >= cont.pages.length - 1;
   markActiveThumb(pageNum);
@@ -545,6 +541,10 @@ function syncZoomSelect() {
     }
     sel.value = opt.value;
   }
+  // The zoom buttons reflect the current zoom limits — keep them in sync here so
+  // all three render paths get it for free.
+  els.btn.zoomOut.disabled = currentScale <= ZOOM_MIN;
+  els.btn.zoomIn.disabled = currentScale >= ZOOM_MAX;
 }
 
 // ---------- PDF loading ----------
@@ -757,8 +757,6 @@ function renderHtmlPage() {
   els.annoCanvas.style.width = `${cssW}px`;
   els.annoCanvas.style.height = `${cssH}px`;
   syncZoomSelect();
-  els.btn.zoomOut.disabled = currentScale <= ZOOM_MIN;
-  els.btn.zoomIn.disabled = currentScale >= ZOOM_MAX;
   redrawAnnotations();
   if (htmlTruncated) {
     status(`This HTML page is very tall — content past ${HTML_MAX_PAGE_H}px isn't shown or annotatable.`);
@@ -1239,34 +1237,24 @@ async function finishSnip(r) {
     // Never add captured text without asking — the image still goes in regardless.
     const finalText = (usable && await confirmSnipText(usable)) ? usable : "";
 
-    // The HTML raster failed but we have text: save it as a text note rather
-    // than losing the snip entirely.
-    if (!out) {
+    // When the image can't be captured, keep the recovered text as a note rather
+    // than lose the snip entirely (and if there's no text either, just report).
+    const saveTextOnly = (reason) => {
       if (finalText) {
         app.add_text_note(finalText);
         renderNotes();
         if (els.notesPane.hidden) toggleNotes(true);
-        status("Snipped text only — the image couldn't be captured.");
+        status(`Snipped text only — ${reason}.`);
       } else {
         status("Couldn't capture that region.");
       }
-      return;
-    }
+    };
+    // The HTML raster failed (iframe → canvas can fail); save the text instead.
+    if (!out) { saveTextOnly("the image couldn't be captured"); return; }
 
     const blob = await new Promise((res) => out.toBlob(res, "image/png"));
-    if (!blob) {
-      // PNG encode failed (e.g. the canvas exceeded the browser encode limit) —
-      // don't throw away a confirmed caption; fall back to a text-only note.
-      if (finalText) {
-        app.add_text_note(finalText);
-        renderNotes();
-        if (els.notesPane.hidden) toggleNotes(true);
-        status("Snipped text only — the image was too large to capture.");
-      } else {
-        status("Couldn't capture that region.");
-      }
-      return;
-    }
+    // PNG encode can return null (e.g. canvas over the encode limit).
+    if (!blob) { saveTextOnly("the image was too large to capture"); return; }
     const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
     const caption = finalText
       || (snipMode === "html" ? "from the page" : `from page ${snipPage + 1}`);
@@ -1355,12 +1343,7 @@ function downloadJson() {
   try {
     const json = app.save_json();
     const blob = new Blob([json], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    a.download = `annotations-${ts}.json`; // fixed sanitized pattern
-    a.click();
-    URL.revokeObjectURL(a.href);
+    downloadBlob(blob, `annotations-${fileStamp()}.json`);
     dirtySinceFileSave = false; // work is now in a file the user controls
     status("Annotations saved.");
   } catch (e) {
@@ -1854,6 +1837,9 @@ async function pdfPaperPages() {
   return pages;
 }
 
+// Filesystem-safe timestamp (e.g. 2026-06-22T13-40-05) for download filenames.
+function fileStamp() { return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19); }
+
 // Trigger a browser download of a blob under `filename`.
 function downloadBlob(blob, filename) {
   const a = document.createElement("a");
@@ -1878,8 +1864,7 @@ async function exportPdf() {
       fontName: app.text_font_name(),
       gsName: app.highlight_gstate_name(),
     });
-    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    downloadBlob(blob, `annotated-${ts}.pdf`);
+    downloadBlob(blob, `annotated-${fileStamp()}.pdf`);
     status("Annotated PDF exported.");
   } catch (e) {
     console.error("export failed:", e);
@@ -2318,18 +2303,16 @@ class SketchView {
     // selection box + handles (same look as the PDF view)
     if (this.selected >= 0) {
       const bb = app.item_bbox_of_sketch(this.note, this.selected);
-      if (bb.length === 4) drawSelectionBox(ctx, bb, this.corners(bb), this.scale, dpr());
+      if (bb.length === 4) drawSelectionBox(ctx, bb, handlePoints(bb), this.scale, dpr());
     }
   }
-
-  corners(bb) { return [[bb[0], bb[1]], [bb[2], bb[1]], [bb[2], bb[3]], [bb[0], bb[3]]]; }
 
   handleAt(x, y) {
     if (this.selected < 0) return -1;
     const bb = app.item_bbox_of_sketch(this.note, this.selected);
     if (bb.length !== 4) return -1;
     const tol = (7 + 3) / this.scale;
-    return this.corners(bb).findIndex(([hx, hy]) => Math.abs(x - hx) <= tol && Math.abs(y - hy) <= tol);
+    return handlePoints(bb).findIndex(([hx, hy]) => Math.abs(x - hx) <= tol && Math.abs(y - hy) <= tol);
   }
 
   down(ev) {
@@ -2348,7 +2331,7 @@ class SketchView {
       const h = this.handleAt(x, y);
       if (h >= 0 && app.begin_item_drag_sketch(this.note, this.selected, x, y)) {
         const bb = app.item_bbox_of_sketch(this.note, this.selected);
-        this.state = { mode: "resize", anchor: this.corners(bb)[(h + 2) % 4], bb,
+        this.state = { mode: "resize", anchor: handlePoints(bb)[(h + 2) % 4], bb,
                        uniform: app.item_kind_sketch(this.note, this.selected) !== "shape" };
         return;
       }
