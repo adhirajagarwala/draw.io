@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "69";
+const APP_VERSION = "70";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=69";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=69";
-import { initEmbed } from "./embed.js?v=69";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=69";
+} from "./utils.js?v=70";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=70";
+import { initEmbed } from "./embed.js?v=70";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=70";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1658,6 +1658,30 @@ function mathContainerOf(node) {
   return null;
 }
 
+// Keep only the characters of a text node whose glyph-box centre lies inside the
+// region (page units), so a box over half a line yields that half — not the
+// whole line. Whitespace on an in-region line is kept (words stay separated) and
+// a wrap to a new line inserts a space. Returns { str, top, left } or null.
+function clipNodeChars(range, node, x0, y0, x1, y1) {
+  const text = node.nodeValue;
+  let str = "", top = null, left = null, prevCy = null;
+  for (let i = 0; i < text.length; i++) {
+    range.setStart(node, i);
+    range.setEnd(node, i + 1);
+    const rc = range.getBoundingClientRect();
+    if (rc.width === 0 && rc.height === 0) continue; // collapsed glyph (e.g. soft wrap)
+    const cx = (rc.left + rc.right) / 2, cy = (rc.top + rc.bottom) / 2;
+    if (cy < y0 || cy > y1) continue;               // a different line
+    const ws = /\s/.test(text[i]);
+    if (!ws && (cx < x0 || cx > x1)) continue;      // glyph outside the box horizontally
+    if (prevCy !== null && Math.abs(cy - prevCy) > 4 && str && !str.endsWith(" ")) str += " ";
+    if (!ws && top === null) { top = rc.top; left = rc.left; }
+    str += text[i];
+    prevCy = cy;
+  }
+  return top === null ? null : { str, top, left };
+}
+
 // Returns { text, hadMath }: the readable text under the region (reading order,
 // links, recovered equations) and whether any equation source was recovered (so
 // the caller can keep symbol-heavy math past the dingbat filter).
@@ -1702,13 +1726,29 @@ function htmlTextInRegion(x0, y0, w, h) {
       }
       continue; // never emit an equation's raw rendered/annotation text
     }
-    let str = s;
+    // Sub-region precision: keep only the characters under the selection so a box
+    // over half a line yields that half, not the whole line. A node fully inside
+    // the region (or one too long to scan per-char) is taken whole.
+    const ub = range.getBoundingClientRect();
+    const wholeIn = ub.left >= x0 - 0.5 && ub.right <= x1 + 0.5 &&
+                    ub.top >= y0 - 0.5 && ub.bottom <= y1 + 0.5;
+    let str, anchorTop = box.top, anchorLeft = box.left;
+    if (wholeIn || n.nodeValue.length > 4000) {
+      str = s;
+    } else {
+      const clip = clipNodeChars(range, n, x0, y0, x1, y1);
+      if (!clip) continue;
+      str = clip.str.replace(/\s+/g, " ").trim();
+      if (!str) continue;
+      anchorTop = clip.top;
+      anchorLeft = clip.left;
+    }
     const a = n.parentElement && n.parentElement.closest("a[href]");
     if (a) {
       const href = a.getAttribute("href");
       if (href && !seenLinks.has(href)) { seenLinks.add(href); str += ` (${href})`; }
     }
-    hits.push({ top: box.top, left: box.left, str });
+    hits.push({ top: anchorTop, left: anchorLeft, str });
   }
   // Reconstruct reading order: rows top-to-bottom, then left-to-right within a
   // row — so multi-column / absolutely-positioned text doesn't read scrambled.
@@ -1744,7 +1784,21 @@ async function pdfTextInRegion(x0, y0, w, h) {
       const bottom = basePage.h - f;     // baseline, flipped top-down
       const top = bottom - ih;
       if (right >= x0 && left <= x1 && bottom >= y0 && top <= y1) {
-        hits.push({ x: left, y: top, str: item.str, eol: item.hasEOL });
+        // Sub-region precision: if the run is only partly inside the box, keep
+        // just the characters whose estimated centre falls in it. PDF.js gives no
+        // per-glyph boxes, so the run width is split proportionally — approximate,
+        // but far better than dumping the whole line for a half-line selection.
+        let str = item.str;
+        if ((left < x0 || right > x1) && item.str.length > 1 && iw > 0) {
+          const cw = iw / item.str.length;
+          let s2 = "";
+          for (let k = 0; k < item.str.length; k++) {
+            const cxk = left + cw * (k + 0.5);
+            if (cxk >= x0 && cxk <= x1) s2 += item.str[k];
+          }
+          str = s2;
+        }
+        if (str) hits.push({ x: Math.max(left, x0), y: top, str, eol: item.hasEOL });
       }
     }
     hits.sort((a, b) => (Math.abs(a.y - b.y) > 4 ? a.y - b.y : a.x - b.x));
