@@ -24,6 +24,7 @@ html, body {
 /* ---------- top bar (file + view) ---------- */
 
 #topbar {
+  position: relative; /* containing block for a docked colour bar */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -32,7 +33,10 @@ html, body {
   border-bottom: 1px solid var(--line);
   flex: none;
   z-index: 10;
+  transition: box-shadow .14s ease;
 }
+/* Soft hint band while a drag is hovering the toolbar — "let go to dock here". */
+#topbar.cbar-drop { box-shadow: inset 0 -3px 0 var(--accent); }
 
 .topbar-right {
   margin-left: auto;
@@ -389,8 +393,18 @@ button { font: inherit; }
   box-shadow: 0 2px 12px rgba(20, 24, 28, 0.16);
   z-index: 6;
   touch-action: none;
+  transition: box-shadow .14s ease;
 }
 #context-bar.moved { transform: none; } /* explicit left/top after a drag */
+/* Picked up: fixed to the viewport so it tracks the cursor with no reparent jumps,
+   lifted with a stronger shadow for a light "in-hand" feel. */
+#context-bar.cbar-dragging {
+  position: fixed !important;
+  transform: none !important;
+  z-index: 80;
+  box-shadow: 0 10px 30px rgba(20, 24, 28, 0.28);
+  cursor: grabbing;
+}
 .cbar-content {
   display: flex;
   align-items: center;
@@ -441,20 +455,13 @@ button { font: inherit; }
   touch-action: none;
 }
 
-/* Dock target in the top toolbar (empty = zero width until something docks). */
-#cbar-dock { display: flex; align-items: center; }
-#cbar-dock.drop-target {
-  outline: 2px dashed var(--accent);
-  outline-offset: 2px;
-  border-radius: 8px;
-  min-width: 44px;
-  min-height: 30px;
-}
-/* Docked: the bar becomes a flat inline strip in the toolbar (no floating chrome,
-   no resize). The grip stays so it can be dragged back out onto the page. */
+/* Docked: a flat strip absolutely placed in the toolbar at any horizontal offset
+   (set in JS), vertically centred. No floating chrome, no resize handle. The grip
+   stays so it can be slid along the bar or dragged back out onto the page. */
 body.cbar-docked #context-bar {
-  position: static;
-  transform: none;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
   background: transparent;
   border: none;
   box-shadow: none;
@@ -464,8 +471,10 @@ body.cbar-docked #context-bar {
   max-width: none;
   width: auto !important;
 }
+/* While actively dragging, the fixed-position rule above wins over the docked
+   centring transform. */
+body.cbar-docked #context-bar.cbar-dragging { transform: none !important; }
 body.cbar-docked #context-bar .cbar-resize { display: none; }
-body.cbar-docked #context-bar .cbar-grip { cursor: grab; }
 
 /* floating page + zoom + undo controls, bottom center */
 #doc-controls {

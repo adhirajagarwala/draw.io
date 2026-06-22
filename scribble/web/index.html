@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=66">
+  <link rel="stylesheet" href="style.css?v=67">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -31,9 +31,6 @@
       <svg viewBox="0 0 24 24"><path d="M4 20V4a1 1 0 0 1 1-1h8l6 6v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M13 3v6h6"/></svg>
       Open
     </button>
-
-    <!-- Drop zone: drag the colour bar up here to dock it in the toolbar. -->
-    <div id="cbar-dock" aria-hidden="true"></div>
 
     <div class="topbar-right">
       <!-- View toggles -->
@@ -314,6 +311,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=66"></script>
+  <script type="module" src="app.js?v=67"></script>
 </body>
 </html>
