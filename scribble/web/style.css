@@ -441,6 +441,32 @@ button { font: inherit; }
   touch-action: none;
 }
 
+/* Dock target in the top toolbar (empty = zero width until something docks). */
+#cbar-dock { display: flex; align-items: center; }
+#cbar-dock.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+  min-width: 44px;
+  min-height: 30px;
+}
+/* Docked: the bar becomes a flat inline strip in the toolbar (no floating chrome,
+   no resize). The grip stays so it can be dragged back out onto the page. */
+body.cbar-docked #context-bar {
+  position: static;
+  transform: none;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  padding: 0;
+  max-width: none;
+  width: auto !important;
+}
+body.cbar-docked #context-bar .cbar-resize { display: none; }
+body.cbar-docked #context-bar .cbar-grip { cursor: grab; }
+
 /* floating page + zoom + undo controls, bottom center */
 #doc-controls {
   position: absolute;

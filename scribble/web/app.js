@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "65";
+const APP_VERSION = "66";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=65";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=65";
-import { initEmbed } from "./embed.js?v=65";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=65";
+} from "./utils.js?v=66";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=66";
+import { initEmbed } from "./embed.js?v=66";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=66";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1918,7 +1918,9 @@ const WIDTH_TOOLS = new Set(["pen", "highlighter", "tick", "cross", "circle", "a
 // Show the contextual colour/thickness bar only when a marking tool is active
 // and a document is open — so it never distracts during select/snip/etc.
 function updateContextBar(tool) {
-  const show = docOpen() && MARKING_TOOLS.has(tool);
+  // When docked in the toolbar the bar is persistent; floating it stays
+  // contextual to the marking tools.
+  const show = docOpen() && (isCbarDocked() || MARKING_TOOLS.has(tool));
   els.contextBar.hidden = !show;
   // The colorblind-safe palette toggle now lives inside this bar, so it shows
   // and hides with it automatically (only relevant while choosing colours).
@@ -2721,28 +2723,62 @@ $("cbar-collapse").addEventListener("click", () => {
   savePrefs();
 });
 
-// Drag the bar by its grip; keep it within the stage.
+// Dock the colour bar into the top toolbar, or float it over the page.
+const cbarDock = $("cbar-dock");
+function isCbarDocked() { return document.body.classList.contains("cbar-docked"); }
+function setCbarDocked(docked) {
+  if (docked === isCbarDocked()) return;
+  const cb = els.contextBar;
+  if (docked) {
+    cb.classList.remove("moved");
+    cb.style.left = cb.style.top = "";
+    document.body.classList.add("cbar-docked");
+    cbarDock.appendChild(cb);
+  } else {
+    document.body.classList.remove("cbar-docked");
+    $("stage").appendChild(cb);
+  }
+}
+
+// Drag the bar by its grip: drop it over the top toolbar to DOCK it there, or
+// anywhere over the page to float it.
 (() => {
   const cb = els.contextBar;
   const grip = cb.querySelector(".cbar-grip");
+  const topbar = $("topbar");
   let drag = null;
+  const overTopbar = (y) => y <= topbar.getBoundingClientRect().bottom + 8;
   grip.addEventListener("pointerdown", (ev) => {
-    const stage = cb.offsetParent || cb.parentElement;
-    const sr = stage.getBoundingClientRect();
     const br = cb.getBoundingClientRect();
-    drag = { dx: ev.clientX - br.left, dy: ev.clientY - br.top, sr, bw: br.width, bh: br.height };
+    if (isCbarDocked()) {
+      // pick it up: float at its current on-screen spot, then follow the cursor
+      setCbarDocked(false);
+      const sr = $("stage").getBoundingClientRect();
+      cb.classList.add("moved");
+      cb.style.left = `${Math.round(br.left - sr.left)}px`;
+      cb.style.top = `${Math.round(Math.max(4, br.top - sr.top))}px`;
+    }
+    drag = { dx: ev.clientX - br.left, dy: ev.clientY - br.top };
     grip.setPointerCapture?.(ev.pointerId);
     ev.preventDefault();
   });
   grip.addEventListener("pointermove", (ev) => {
     if (!drag) return;
-    const left = Math.max(4, Math.min(drag.sr.width - drag.bw - 4, ev.clientX - drag.sr.left - drag.dx));
-    const top = Math.max(4, Math.min(drag.sr.height - drag.bh - 4, ev.clientY - drag.sr.top - drag.dy));
+    const sr = $("stage").getBoundingClientRect();
+    const left = Math.max(4, Math.min(sr.width - cb.offsetWidth - 4, ev.clientX - sr.left - drag.dx));
+    const top = Math.max(4, Math.min(sr.height - cb.offsetHeight - 4, ev.clientY - sr.top - drag.dy));
     cb.classList.add("moved");
     cb.style.left = `${Math.round(left)}px`;
     cb.style.top = `${Math.round(top)}px`;
+    cbarDock.classList.toggle("drop-target", overTopbar(ev.clientY));
   });
-  const endDrag = () => { if (drag) { drag = null; savePrefs(); } };
+  const endDrag = (ev) => {
+    if (!drag) return;
+    drag = null;
+    cbarDock.classList.remove("drop-target");
+    if (ev && overTopbar(ev.clientY)) setCbarDocked(true);
+    savePrefs();
+  };
   grip.addEventListener("pointerup", endDrag);
   grip.addEventListener("pointercancel", endDrag);
 
@@ -2822,6 +2858,7 @@ function savePrefs() {
       big: document.body.classList.contains("big"),
       notesWidth: els.notesPane.style.width || "",
       cbar: {
+        docked: isCbarDocked(),
         left: cb.classList.contains("moved") ? cb.style.left : "",
         top: cb.classList.contains("moved") ? cb.style.top : "",
         width: cb.style.width || "",
@@ -2837,7 +2874,9 @@ function applyPrefs() {
   if (p.big) applyBig(true);
   if (p.notesWidth) els.notesPane.style.width = p.notesWidth;
   const cb = p.cbar || {};
-  if (cb.left && cb.top) {
+  if (cb.docked) {
+    setCbarDocked(true);
+  } else if (cb.left && cb.top) {
     els.contextBar.classList.add("moved");
     els.contextBar.style.left = cb.left;
     els.contextBar.style.top = cb.top;
