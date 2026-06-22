@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "70";
+const APP_VERSION = "71";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=70";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=70";
-import { initEmbed } from "./embed.js?v=70";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=70";
+} from "./utils.js?v=71";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=71";
+import { initEmbed } from "./embed.js?v=71";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=71";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -172,8 +172,6 @@ function status(msg) {
   statusTimer = setTimeout(() => els.status.classList.remove("show"), 4000);
 }
 
-// ---------- rendering ----------
-
 // ---------- selection ----------
 
 let selectedId = -1;          // current selection (select tool)
@@ -262,7 +260,7 @@ async function renderPage() {
   // Single-page PDF sheet styling; also clear any HTML-mode page sizing left
   // over from a previously-opened HTML document.
   els.wrap.hidden = false;
-  els.wrap.classList.remove("continuous", "htmlpage");
+  els.wrap.classList.remove("htmlpage");
   els.wrap.style.width = "";
   els.wrap.style.height = "";
   els.htmlFrame.style.transform = "none";
@@ -365,7 +363,6 @@ async function renderContinuous() {
     el.style.height = `${hCss}px`;
     el.style.containIntrinsicSize = `${wCss}px ${hCss}px`;
     const pdfCanvas = document.createElement("canvas");
-    pdfCanvas.className = "cpdf";
     const annoCanvas = document.createElement("canvas");
     annoCanvas.className = "canno";
     el.append(pdfCanvas, annoCanvas);
@@ -659,7 +656,6 @@ async function openHtml(file) {
     scrollMode = "paged"; // continuous scroll is PDF-only
     setScrollEnabled(false);
     syncScrollUI();
-    els.wrap.classList.remove("continuous");
     currentScale = 1;
 
     // The uploaded HTML renders in a same-origin sandboxed iframe with NO
@@ -734,7 +730,6 @@ function measureHtmlHeight() {
 function renderHtmlPage() {
   if (docMode !== "html" || els.wrap.hidden) return;
   commitTextInput();
-  els.wrap.classList.remove("continuous");
   els.wrap.classList.add("htmlpage");
   els.pdfCanvas.hidden = true;
   els.htmlFrame.hidden = false;
@@ -832,7 +827,7 @@ function onAnnoPointerDown(ev) {
     const cp = ev.currentTarget.closest(".cpage");
     if (cp) { pageNum = Number(cp.dataset.page); basePage = cont.pages[pageNum].base; }
   }
-  const tool = document.querySelector(".tool.active")?.dataset.tool;
+  const tool = activeTool();
   const [x, y] = pageCoords(ev);
   if (tool === "snip") {
     ev.preventDefault();
@@ -1079,8 +1074,6 @@ function onAnnoContextMenu(ev) {
 }
 els.annoCanvas.addEventListener("contextmenu", onAnnoContextMenu);
 
-// Chunked conversion — spreading a megabyte-sized array into fromCharCode
-// overflows the call stack.
 function drawSnipMarquee(ctx) {
   if (!snip) return;
   const r = curRatio();
@@ -2988,16 +2981,6 @@ helpOverlay.addEventListener("click", (ev) => {
   if (ev.target === helpOverlay) toggleHelp(false);
 });
 
-// ---------- embedded mode (the FULL app, running inside an exam page) ----------
-//
-// When Scribble is framed same-origin inside a host page (e.g. PrairieLearn),
-// it is the complete tool — every drawing tool, the notes pane, sketches — and
-// it gains the ability to pull the host's problem content (text, figures,
-// equations) straight into the Notes pane. It only READS the host DOM and
-// turns it into an image or escaped text; it never executes host markup.
-//
-// Activated by `?embed` plus a reachable, same-origin parent document.
-// Everything here is additive — standalone mode never runs it.
 // ---------- persistence: UI prefs (localStorage) + autosave recovery (IndexedDB) ----------
 //
 // Two independent layers, both best-effort (private-mode / disabled storage just

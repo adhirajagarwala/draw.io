@@ -189,15 +189,6 @@ button { font: inherit; }
 }
 .swatch:focus-visible { outline-offset: 3px; }
 
-.btn.tool { font-size: 13px; }
-
-.btn.tool.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: #c4d2f5;
-  font-weight: 600;
-}
-
 /* Stateful top-bar / palette toggles: JS adds .active for the ON state, so it
    needs a persistent pressed look. Without this rule the button only flashed
    its hover background and snapped back on mouse-out — which read as "glitchy". */
