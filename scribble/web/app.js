@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "68";
+const APP_VERSION = "69";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,10 +13,10 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=68";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=68";
-import { initEmbed } from "./embed.js?v=68";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=68";
+} from "./utils.js?v=69";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=69";
+import { initEmbed } from "./embed.js?v=69";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=69";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1143,8 +1143,26 @@ function regionHasBrokenImage(x0, y0, x1, y1) {
 
 // Ask whether to add a snip's captured text to the note (the image goes in
 // either way — the caller adds it after this resolves). Enter = keep, Esc = skip.
+// Make a freshly-created `.modal-overlay` behave like an accessible dialog:
+// announce it to assistive tech and keep Tab focus inside it until it's removed.
+function trapModalFocus(ov, label) {
+  ov.setAttribute("role", "dialog");
+  ov.setAttribute("aria-modal", "true");
+  if (label) ov.setAttribute("aria-label", label);
+  ov.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    const f = [...ov.querySelectorAll('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])')]
+      .filter((el) => !el.disabled && el.offsetParent !== null);
+    if (!f.length) { e.preventDefault(); return; }
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+}
+
 function confirmSnipText(text) {
   return new Promise((resolve) => {
+    const opener = document.activeElement;
     const ov = document.createElement("div");
     ov.className = "modal-overlay";
     const card = document.createElement("div");
@@ -1162,7 +1180,7 @@ function confirmSnipText(text) {
     const skip = document.createElement("button");
     skip.className = "btn";
     skip.textContent = "Image only (Esc)";
-    const done = (v) => { ov.remove(); document.removeEventListener("keydown", onKey, true); resolve(v); };
+    const done = (v) => { ov.remove(); document.removeEventListener("keydown", onKey, true); opener?.focus?.(); resolve(v); };
     const onKey = (e) => {
       if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); done(true); }
       else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); }
@@ -1173,6 +1191,7 @@ function confirmSnipText(text) {
     actions.append(add, skip);
     card.append(h, pre, actions);
     ov.appendChild(card);
+    trapModalFocus(ov, "Keep the captured text?");
     document.addEventListener("keydown", onKey, true);
     document.body.appendChild(ov);
     add.focus();
@@ -1180,6 +1199,11 @@ function confirmSnipText(text) {
 }
 
 async function finishSnip(r) {
+  // Snapshot the document identity up front: the confirm-text modal below is
+  // interactive, so the user could navigate to another page or close the doc
+  // while it's open — the clipping must still be attributed to THIS page/mode.
+  const snipPage = pageNum;
+  const snipMode = docMode;
   const x0 = Math.min(r.x0, r.x1), y0 = Math.min(r.y0, r.y1);
   const w = Math.abs(r.x1 - r.x0), h = Math.abs(r.y1 - r.y0);
   if (w < 4 || h < 4) {
@@ -1189,7 +1213,7 @@ async function finishSnip(r) {
   try {
     // 1. Pixels + 2. Text — captured differently for HTML vs PDF.
     let out = null, text = "", hadMath = false;
-    if (docMode === "html") {
+    if (snipMode === "html") {
       // High-DPI raster of the HTML region (the iframe can't be drawn to a
       // canvas directly) + reliable DOM text extraction. If the raster fails
       // we keep going — the text alone is still worth saving.
@@ -1200,8 +1224,8 @@ async function finishSnip(r) {
       // Copy the region from the active page's live canvases (single page, or
       // the active continuous page).
       const k = scale() * curRatio();
-      const srcPdf = isContinuous() ? cont.pages[pageNum]?.pdfCanvas : els.pdfCanvas;
-      const srcAnno = isContinuous() ? cont.pages[pageNum]?.annoCanvas : els.annoCanvas;
+      const srcPdf = isContinuous() ? cont.pages[snipPage]?.pdfCanvas : els.pdfCanvas;
+      const srcAnno = isContinuous() ? cont.pages[snipPage]?.annoCanvas : els.annoCanvas;
       out = document.createElement("canvas");
       out.width = Math.max(1, Math.round(w * k));
       out.height = Math.max(1, Math.round(h * k));
@@ -1218,7 +1242,7 @@ async function finishSnip(r) {
     // filter is only meant for broken-font PDF glyphs, not real HTML/TeX. Cap on
     // a word boundary so a long caption never cuts mid-word.
     const usable = (hadMath || looksLikeText(text))
-      ? clampCaption(text, docMode === "html" ? 300 : 280) : "";
+      ? clampCaption(text, snipMode === "html" ? 300 : 280) : "";
     // Never add captured text without asking — the image still goes in regardless.
     const finalText = (usable && await confirmSnipText(usable)) ? usable : "";
 
@@ -1237,10 +1261,23 @@ async function finishSnip(r) {
     }
 
     const blob = await new Promise((res) => out.toBlob(res, "image/png"));
+    if (!blob) {
+      // PNG encode failed (e.g. the canvas exceeded the browser encode limit) —
+      // don't throw away a confirmed caption; fall back to a text-only note.
+      if (finalText) {
+        app.add_text_note(finalText);
+        renderNotes();
+        if (els.notesPane.hidden) toggleNotes(true);
+        status("Snipped text only — the image was too large to capture.");
+      } else {
+        status("Couldn't capture that region.");
+      }
+      return;
+    }
     const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
     const caption = finalText
-      || (docMode === "html" ? "from the page" : `from page ${pageNum + 1}`);
-    app.add_clipping(b64, pageNum, caption);
+      || (snipMode === "html" ? "from the page" : `from page ${snipPage + 1}`);
+    app.add_clipping(b64, snipPage, caption);
     renderNotes();
     if (els.notesPane.hidden) toggleNotes(true);
 
@@ -1250,7 +1287,7 @@ async function finishSnip(r) {
         await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
       }
     } catch { /* clipboard permission is optional */ }
-    const imgWarn = (docMode === "html" && regionHasBrokenImage(x0, y0, x0 + w, y0 + h))
+    const imgWarn = (snipMode === "html" && regionHasBrokenImage(x0, y0, x0 + w, y0 + h))
       ? " (some external images couldn't be captured)" : "";
     status((finalText ? "Snipped — image and text added to notes." : "Snipped to notes.") + imgWarn);
   } catch (e) {
@@ -1811,6 +1848,7 @@ async function exportPdf() {
 // Resolves to "save" | "newtab" | "discard" | "cancel".
 function confirmOpenDialog() {
   return new Promise((resolve) => {
+    const opener = document.activeElement;
     const ov = document.createElement("div");
     ov.className = "modal-overlay";
     const card = document.createElement("div");
@@ -1821,7 +1859,7 @@ function confirmOpenDialog() {
     p.textContent = "Opening a file replaces what's on screen. What would you like to do?";
     const row = document.createElement("div");
     row.className = "modal-actions";
-    const cleanup = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+    const cleanup = () => { ov.remove(); document.removeEventListener("keydown", onKey); opener?.focus?.(); };
     const mk = (label, val, cls = "") => {
       const b = document.createElement("button");
       b.className = `btn labeled ${cls}`;
@@ -1839,8 +1877,10 @@ function confirmOpenDialog() {
     ov.append(card);
     const onKey = (e) => { if (e.key === "Escape") { cleanup(); resolve("cancel"); } };
     ov.addEventListener("click", (e) => { if (e.target === ov) { cleanup(); resolve("cancel"); } });
+    trapModalFocus(ov, "You have unsaved work");
     document.addEventListener("keydown", onKey);
     document.body.append(ov);
+    row.querySelector("button")?.focus();
   });
 }
 
@@ -2066,6 +2106,10 @@ document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape" || ev.key === "?") { ev.preventDefault(); toggleHelp(false); }
     return;
   }
+  // A pop-up dialog (snip-text confirm, clipping lightbox, unsaved-work prompt)
+  // owns the keyboard while open — its own handlers take Enter/Esc/Tab; don't let
+  // shortcuts, deletes or page-nav fire on the document behind it.
+  if (document.querySelector(".modal-overlay:not([hidden])")) return;
   const mod = ev.ctrlKey || ev.metaKey;
   const key = ev.key.toLowerCase();
   // Word/Docs-style: Ctrl+Z undo, Ctrl+Y or Ctrl+Shift+Z redo, Ctrl+S save.
@@ -2433,23 +2477,29 @@ function buildTextBlock(div, i) {
 // click anywhere or press Esc to close). For PDF snips it also offers a jump to
 // the source page.
 function showClippingLightbox(src, srcPage) {
+  const opener = document.activeElement; // restore focus here when the lightbox closes
   const ov = document.createElement("div");
   ov.className = "modal-overlay lightbox";
+  ov.tabIndex = -1;
   const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
-  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey, true); };
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey, true); opener?.focus?.(); };
   const big = document.createElement("img");
   big.src = src; big.className = "lightbox-img"; big.alt = "enlarged clipping";
   ov.appendChild(big);
+  let firstFocus = null;
   if (srcPage >= 0 && docMode === "pdf") {
     const go = document.createElement("button");
     go.className = "btn primary";
     go.textContent = `Go to page ${srcPage + 1}`;
     go.addEventListener("click", (e) => { e.stopPropagation(); close(); goToPage(srcPage); });
     ov.appendChild(go);
+    firstFocus = go;
   }
   ov.addEventListener("click", close);
+  trapModalFocus(ov, "Enlarged clipping");
   document.addEventListener("keydown", onKey, true);
   document.body.appendChild(ov);
+  (firstFocus || ov).focus?.();
 }
 
 function buildClippingBlock(div, i) {
@@ -2459,9 +2509,17 @@ function buildClippingBlock(div, i) {
   img.alt = "clipping";
   const srcPage = app.note_source_page(i);
   img.style.cursor = "zoom-in";
-  img.title = (srcPage >= 0 && docMode === "pdf")
-    ? `Click to enlarge (snipped from page ${srcPage + 1})` : "Click to enlarge";
-  img.addEventListener("click", () => showClippingLightbox(img.src, srcPage));
+  img.tabIndex = 0;
+  img.setAttribute("role", "button");
+  const enlargeLabel = (srcPage >= 0 && docMode === "pdf")
+    ? `Enlarge clipping (snipped from page ${srcPage + 1})` : "Enlarge clipping";
+  img.title = enlargeLabel;
+  img.setAttribute("aria-label", enlargeLabel);
+  const openLightbox = () => showClippingLightbox(img.src, srcPage);
+  img.addEventListener("click", openLightbox);
+  img.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openLightbox(); }
+  });
   // Caption wraps to fit the width (auto-growing) rather than truncating.
   const cap = document.createElement("textarea");
   cap.className = "caption";
@@ -2667,6 +2725,7 @@ function applyBig(on) {
   document.body.classList.toggle("big", on);
   els.btn.big.classList.toggle("active", on);
   syncAria();
+  clampContextBar(); // larger controls shrink the toolbar gap → re-fit a docked bar
 }
 els.btn.big.addEventListener("click", () => {
   applyBig(!document.body.classList.contains("big"));
@@ -2728,28 +2787,38 @@ $("cbar-collapse").addEventListener("click", () => {
 // position:relative, so a docked bar can sit at any horizontal offset).
 const topbarEl = $("topbar");
 function isCbarDocked() { return document.body.classList.contains("cbar-docked"); }
-function clampDockLeft(left) {
-  // Pin a docked bar to the free zone between the Open button and the right-hand
-  // controls so it never sits on top of the toolbar's own buttons.
+// The free horizontal zone for a docked bar's LEFT edge: between the Open button
+// and the right-hand controls. `fits` is false when the gap is narrower than the
+// bar — docking there would overlap the toolbar's own buttons.
+function dockZone() {
   const bw = els.contextBar.offsetWidth || 220;
   const tr = topbarEl.getBoundingClientRect();
   const openEl = $("btn-open");
   const rightEl = topbarEl.querySelector(".topbar-right");
   const GAP = 8;
-  let lo = 4;
-  let hi = tr.width - bw - 4;
-  if (openEl) lo = openEl.getBoundingClientRect().right - tr.left + GAP;
-  if (rightEl) hi = rightEl.getBoundingClientRect().left - tr.left - bw - GAP;
-  if (hi < lo) hi = lo; // gap narrower than the bar — pin at the zone's left edge
-  return Math.max(lo, Math.min(hi, left));
+  const lo = openEl ? openEl.getBoundingClientRect().right - tr.left + GAP : 4;
+  const hi = rightEl ? rightEl.getBoundingClientRect().left - tr.left - bw - GAP
+                     : tr.width - bw - 4;
+  return { lo, hi, fits: hi >= lo };
+}
+function clampDockLeft(left) {
+  const { lo, hi } = dockZone();
+  return Math.max(lo, Math.min(Math.max(lo, hi), left));
 }
 function dockCbar(left) {
+  // Refuse to dock when the toolbar gap is too narrow — floating beats covering
+  // the Save/Resume/Export buttons. Returns whether it actually docked.
+  if (!dockZone().fits) {
+    floatCbar(12, 10);
+    return false;
+  }
   const cb = els.contextBar;
   if (cb.parentElement !== topbarEl) topbarEl.appendChild(cb);
   document.body.classList.add("cbar-docked");
   cb.classList.remove("moved");
   cb.style.top = ""; // vertical centring is handled in CSS
   cb.style.left = `${Math.round(clampDockLeft(left))}px`;
+  return true;
 }
 function floatCbar(left, top) {
   const cb = els.contextBar;
@@ -2794,7 +2863,8 @@ function floatCbar(left, top) {
     drag = null;
     cb.classList.remove("cbar-dragging");
     topbarEl.classList.remove("cbar-drop");
-    if (ev ? overTopbar(ev.clientY) : isCbarDocked()) {
+    const wantsDock = ev ? overTopbar(ev.clientY) : isCbarDocked();
+    if (wantsDock && dockZone().fits) {
       dockCbar(d.fx - topbarEl.getBoundingClientRect().left);
     } else {
       const sr = $("stage").getBoundingClientRect();
@@ -2802,6 +2872,7 @@ function floatCbar(left, top) {
         Math.max(4, Math.min(sr.width - cb.offsetWidth - 4, d.fx - sr.left)),
         Math.max(4, Math.min(sr.height - cb.offsetHeight - 4, d.fy - sr.top)),
       );
+      if (wantsDock) status("Not enough room to dock — widen the window. Kept it floating.");
     }
     savePrefs();
   };
@@ -2829,7 +2900,10 @@ function floatCbar(left, top) {
 function clampContextBar() {
   const cb = els.contextBar;
   if (cb.hidden) return;
-  if (isCbarDocked()) { // re-clamp the horizontal offset to the (possibly narrower) toolbar
+  if (isCbarDocked()) {
+    // On resize: if the toolbar gap can no longer fit the bar, float it rather
+    // than let it overlap the buttons; otherwise re-pin within the gap.
+    if (!dockZone().fits) { floatCbar(12, 10); return; }
     cb.style.left = `${Math.round(clampDockLeft(parseFloat(cb.style.left) || 0))}px`;
     return;
   }
