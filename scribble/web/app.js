@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "80";
+const APP_VERSION = "81";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,13 +13,13 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=80";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=80";
-import { initEmbed } from "./embed.js?v=80";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=80";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=80";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=80";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=80";
+} from "./utils.js?v=81";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=81";
+import { initEmbed } from "./embed.js?v=81";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=81";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=81";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=81";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=81";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1725,12 +1725,19 @@ async function exportPdf() {
 
 // ---------- toolbar wiring ----------
 
+let openToNewTab = false; // when set, the next picked file is handed to a fresh tab
+
 els.btn.open.addEventListener("click", async () => {
+  openToNewTab = false; // clear any stale flag from a previously-cancelled picker
   // Opening replaces the current document — guard unsaved work with a choice.
   if (docOpen() && (dirtySinceFileSave || app?.is_dirty())) {
     const choice = await confirmOpenDialog();
     if (choice === "cancel") return;
-    if (choice === "newtab") { window.open(location.pathname, "_blank"); return; }
+    // "Open in a new tab": pick the file HERE (this click is still a valid user
+    // gesture, so the dialog opens) and hand it to a fresh tab — this tab keeps its
+    // work. Browsers won't pop a file dialog unprompted in a freshly-loaded tab, so
+    // picking here is the only reliable way to land straight on the chooser.
+    if (choice === "newtab") { openToNewTab = true; els.filePdf.click(); return; }
     if (choice === "save") downloadJson();
     // "discard" and "save" both fall through to the picker.
   }
@@ -1740,13 +1747,45 @@ els.btn.save.addEventListener("click", downloadJson);
 els.btn.load.addEventListener("click", () => els.fileJson.click());
 els.btn.export.addEventListener("click", exportPdf);
 
+// Open a picked file as HTML or PDF (by extension/MIME, HTML otherwise PDF).
+function routeOpen(f) {
+  if (/\.html?$/i.test(f.name) || f.type === "text/html") openHtml(f);
+  else openPdf(f);
+}
+
 els.filePdf.addEventListener("change", () => {
   const f = els.filePdf.files[0];
   els.filePdf.value = "";
+  const toNewTab = openToNewTab;
+  openToNewTab = false;
   if (!f) return;
-  if (/\.html?$/i.test(f.name) || f.type === "text/html") openHtml(f);
-  else openPdf(f);
+  if (toNewTab) {
+    // Hand the file to a fresh tab, keeping THIS tab's document. window.open must
+    // run synchronously in this gesture (or pop-up blockers bite); the file is
+    // stashed in IndexedDB and the new tab polls for it on boot (openHandoffFile).
+    const key = `handoff-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const w = window.open(`${location.pathname}?openHandoff=${encodeURIComponent(key)}`, "_blank");
+    if (!w) { status("Your browser blocked the new tab — allow pop-ups for this site."); return; }
+    idbPut(key, f).catch(() => {});
+    status("Opening that file in a new tab…");
+    return;
+  }
+  routeOpen(f);
 });
+
+// If this tab was launched by "Open in a new tab", load the handed-off file from
+// IndexedDB (the opener stores it asynchronously, so poll briefly), then clean up.
+async function openHandoffFile() {
+  const key = new URLSearchParams(location.search).get("openHandoff");
+  if (!key) return;
+  history.replaceState({}, "", location.pathname); // don't re-open on reload
+  for (let tries = 0; tries < 30; tries++) {
+    const f = await idbGet(key).catch(() => null);
+    if (f) { idbDelete(key).catch(() => {}); routeOpen(f); return; }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  status("Couldn't load the file handed off to this tab.");
+}
 
 els.fileJson.addEventListener("change", () => {
   const f = els.fileJson.files[0];
@@ -2737,6 +2776,7 @@ init()
     applyPrefs();
     updateContextBar(activeTool()); // hide the colour UI (and palette) until a doc opens
     initEmbed({ app, els, status, toggleNotes, renderNotes });
+    openHandoffFile(); // "Open in a new tab" handoff, if this tab was launched that way
   })
   .catch((e) => {
     console.error("WASM init failed:", e);
