@@ -531,6 +531,17 @@ body.cbar-docked #context-bar .cbar-resize { display: none; }
   position: relative;
 }
 .note-block.dragging { opacity: 0.5; }
+.clip-copy {
+  margin-top: 4px;
+  padding: 3px 9px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+.clip-copy:hover { background: #eef0f3; border-color: #c4d2f5; }
 .note-block.drop-before { box-shadow: 0 -3px 0 -1px var(--accent); }
 .note-block.drop-after { box-shadow: 0 3px 0 -1px var(--accent); }
 .drag-handle {

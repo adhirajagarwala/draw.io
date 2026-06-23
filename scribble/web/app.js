@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "78";
+const APP_VERSION = "79";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,13 +13,13 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=78";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=78";
-import { initEmbed } from "./embed.js?v=78";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=78";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=78";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=78";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=78";
+} from "./utils.js?v=79";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=79";
+import { initEmbed } from "./embed.js?v=79";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=79";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=79";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=79";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=79";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -2252,6 +2252,19 @@ function buildTextBlock(div, i) {
 
 // A clipping note: the snipped image (click to jump to its source page) plus an
 // auto-growing caption.
+// Copy a notes clipping (its blob-URL PNG) to the system clipboard, with brief
+// in-button feedback. Needs a secure context (localhost / https) and a user gesture.
+async function copyImageToClipboard(src, btn) {
+  const label = btn && btn.textContent;
+  try {
+    const blob = await fetch(src).then((r) => r.blob());
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    if (btn) { btn.textContent = "Copied ✓"; setTimeout(() => { btn.textContent = label; }, 1400); }
+  } catch {
+    status("Couldn't copy the image — the browser blocked clipboard access.");
+  }
+}
+
 function buildClippingBlock(div, i) {
   const img = document.createElement("img");
   img.src = b64ToBlobUrl(app.note_png(i));
@@ -2278,7 +2291,13 @@ function buildClippingBlock(div, i) {
   cap.placeholder = "Caption…";
   cap.value = app.note_caption(i);
   cap.addEventListener("input", () => { app.update_note_caption(i, cap.value); autoGrow(cap); });
-  div.append(img, cap);
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "clip-copy";
+  copy.textContent = "Copy image";
+  copy.title = "Copy this image to the clipboard";
+  copy.addEventListener("click", () => copyImageToClipboard(img.src, copy));
+  div.append(img, cap, copy);
   queueMicrotask(() => autoGrow(cap));
 }
 
