@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "79";
+const APP_VERSION = "80";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,13 +13,13 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=79";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=79";
-import { initEmbed } from "./embed.js?v=79";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=79";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=79";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=79";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=79";
+} from "./utils.js?v=80";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=80";
+import { initEmbed } from "./embed.js?v=80";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=80";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=80";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=80";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=80";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1066,7 +1066,71 @@ function showRegionButton(r) {
   regionBtn = b;
 }
 
-// Right-click a shape (box/shade/etc.) to add its region to the notes.
+// Render the CURRENT page to a flat canvas (page content + annotations), so it can
+// be copied or saved as a real image. The browser's native "Save/Copy image" can't:
+// it only sees the transparent annotation canvas sitting on top of the page.
+async function capturePageCanvas() {
+  if (docMode === "html") {
+    const page = await htmlPageToCanvas(); // styled raster of the HTML page
+    const anno = els.annoCanvas;
+    if (anno.width > 1) page.getContext("2d").drawImage(anno, 0, 0, page.width, page.height);
+    return page;
+  }
+  const srcPdf = isContinuous() ? cont.pages[pageNum]?.pdfCanvas : els.pdfCanvas;
+  const srcAnno = isContinuous() ? cont.pages[pageNum]?.annoCanvas : els.annoCanvas;
+  if (!srcPdf || srcPdf.width < 2) return null;
+  const out = document.createElement("canvas");
+  out.width = srcPdf.width;
+  out.height = srcPdf.height;
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(srcPdf, 0, 0);                                   // the page (same backing size)
+  if (srcAnno && srcAnno.width > 1) ctx.drawImage(srcAnno, 0, 0, out.width, out.height);
+  return out;
+}
+
+// A small right-click menu offering "Copy image" / "Save image" of the page.
+let pageMenu = null;
+function hidePageMenu() {
+  if (pageMenu) {
+    document.removeEventListener("pointerdown", pageMenu._onAway, true);
+    pageMenu.remove();
+    pageMenu = null;
+  }
+}
+function showPageImageMenu(clientX, clientY) {
+  hidePageMenu();
+  const capture = async (fn, busy) => {
+    status(busy);
+    const canvas = await capturePageCanvas();
+    if (!canvas) { status("Couldn't capture the page."); return; }
+    canvas.toBlob((blob) => blob ? fn(blob) : status("Couldn't capture the page."), "image/png");
+  };
+  const menu = document.createElement("div");
+  menu.className = "page-ctx-menu";
+  menu.style.left = `${clientX}px`;
+  menu.style.top = `${clientY}px`;
+  const item = (label, onPick) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", () => { hidePageMenu(); onPick(); });
+    menu.appendChild(b);
+  };
+  item("Copy image", () => capture(async (blob) => {
+    try { await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]); status("Page image copied to the clipboard."); }
+    catch { status("Couldn't copy — the browser blocked clipboard access."); }
+  }, "Capturing the page…"));
+  item("Save image", () => capture((blob) => downloadBlob(blob, `page-${fileStamp()}.png`), "Capturing the page…"));
+  menu._onAway = (e) => { if (!menu.contains(e.target)) hidePageMenu(); };
+  document.body.appendChild(menu);
+  pageMenu = menu;
+  setTimeout(() => document.addEventListener("pointerdown", menu._onAway, true), 0);
+}
+
+// Right-click: on a shape (box/shade) add its region to the notes; otherwise offer
+// to copy/save the page as an image (the native menu only grabs the empty overlay).
 function onAnnoContextMenu(ev) {
   if (!docOpen()) return;
   if (isContinuous()) {
@@ -1075,11 +1139,16 @@ function onAnnoContextMenu(ev) {
   }
   const [x, y] = pageCoords(ev);
   const id = app.find_item(pageNum, x, y);
-  if (id < 0 || app.item_kind(pageNum, id) !== "shape") return;
-  const bb = app.item_bbox_of(pageNum, id);
-  if (bb.length !== 4) return;
+  if (id >= 0 && app.item_kind(pageNum, id) === "shape") {
+    const bb = app.item_bbox_of(pageNum, id);
+    if (bb.length === 4) {
+      ev.preventDefault();
+      showRegionButton({ x0: bb[0], y0: bb[1], x1: bb[2], y1: bb[3] });
+      return;
+    }
+  }
   ev.preventDefault();
-  showRegionButton({ x0: bb[0], y0: bb[1], x1: bb[2], y1: bb[3] });
+  showPageImageMenu(ev.clientX, ev.clientY);
 }
 els.annoCanvas.addEventListener("contextmenu", onAnnoContextMenu);
 

@@ -542,6 +542,31 @@ body.cbar-docked #context-bar .cbar-resize { display: none; }
   cursor: pointer;
 }
 .clip-copy:hover { background: #eef0f3; border-color: #c4d2f5; }
+
+/* Right-click "Copy image / Save image" of the page. */
+.page-ctx-menu {
+  position: fixed;
+  z-index: 90;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(20, 24, 28, 0.18);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+}
+.page-ctx-menu button {
+  text-align: left;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink);
+}
+.page-ctx-menu button:hover { background: var(--accent-soft); color: var(--accent); }
 .note-block.drop-before { box-shadow: 0 -3px 0 -1px var(--accent); }
 .note-block.drop-after { box-shadow: 0 3px 0 -1px var(--accent); }
 .drag-handle {
