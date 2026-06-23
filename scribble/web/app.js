@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "77";
+const APP_VERSION = "78";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,13 +13,13 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=77";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=77";
-import { initEmbed } from "./embed.js?v=77";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=77";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=77";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=77";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=77";
+} from "./utils.js?v=78";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=78";
+import { initEmbed } from "./embed.js?v=78";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=78";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=78";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=78";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=78";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1850,16 +1850,27 @@ els.seg.cont.addEventListener("click", () => setScrollMode("continuous"));
 
 // Re-render on resize: fit modes track the window, and devicePixelRatio
 // changes (browser zoom) re-rasterize so the page never goes fuzzy.
-let resizeTimer;
-window.addEventListener("resize", () => {
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    // HTML never re-flows on resize — renderHtmlPage only recomputes the scale,
-    // so annotations stay aligned. PDFs re-render for fit modes / dpr changes.
-    renderDoc();
-    clampContextBar(); // keep a dragged colour bar on-screen after the resize settles
-  }, 150);
-});
+// Re-fit the document whenever the viewer AREA changes size — not just on a window
+// resize, but also when the notes-pane splitter is dragged or the notes/thumbnails
+// panels are toggled. A ResizeObserver on #stage catches them all: #stage is a flex
+// sibling of the notes pane, so it grows/shrinks as the pane does, and the page
+// re-scales to the new width instead of spilling behind the divider. HTML only
+// recomputes its scale (annotations stay aligned); PDFs re-render for fit modes /
+// dpr. Coalesced to one re-fit per frame, never overlapping a PDF render, so a
+// live splitter drag tracks smoothly without thrashing.
+let refitPending = false;
+function scheduleRefit() {
+  if (refitPending) return; // a re-fit is already queued / in flight — coalesce
+  refitPending = true;
+  requestAnimationFrame(async () => {
+    try {
+      if (docOpen()) { await renderDoc(); clampContextBar(); }
+    } finally {
+      refitPending = false;
+    }
+  });
+}
+new ResizeObserver(scheduleRefit).observe($("stage"));
 
 const TOOL_KEYS = {
   v: "select", p: "pen", h: "highlighter", t: "text", e: "eraser",
