@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "76";
+const APP_VERSION = "77";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,13 +13,13 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=76";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=76";
-import { initEmbed } from "./embed.js?v=76";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=76";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=76";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=76";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=76";
+} from "./utils.js?v=77";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=77";
+import { initEmbed } from "./embed.js?v=77";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=77";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=77";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=77";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=77";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -180,6 +180,8 @@ function status(msg) {
 
 let selectedId = -1;          // current selection (select tool)
 const HANDLE_PX = 7;          // on-screen handle half-size (CSS px)
+const ERASE_RADIUS_PX = 10;   // eraser hit radius (CSS px; ÷ scale for page units)
+const MOVE_THRESHOLD_PX = 3;  // a drag must exceed this before it counts as a move
 
 function setSelection(id) {
   selectedId = id;
@@ -808,7 +810,7 @@ function pageCoords(ev) {
   ];
 }
 
-const eraseRadius = () => 10 / scale();
+const eraseRadius = () => ERASE_RADIUS_PX / scale();
 
 // setPointerCapture can throw (e.g. the pointer is already gone) — never
 // let that abort an input handler mid-state-change. Captures on the canvas the
@@ -889,18 +891,23 @@ function moveSnip(ev) {
 }
 
 // Scale the selected item by how far the grabbed corner moved from its anchor.
-function moveResize(ev) {
-  const [x, y] = pageCoords(ev);
-  const [ax, ay] = resizeDrag.anchor;
-  const bb = resizeDrag.startBB;
+// Corner-resize scale factors: how far the moving corner is from the fixed
+// anchor, relative to the original bbox size (epsilon-guarded). `uniform` locks
+// the aspect ratio (stretching strokes/text looks broken). Shared by the PDF view
+// and sketches.
+function resizeScale(bb, ax, ay, x, y, uniform) {
   const w0 = Math.max(1e-3, Math.abs(bb[2] - bb[0]));
   const h0 = Math.max(1e-3, Math.abs(bb[3] - bb[1]));
   let sx = Math.abs(x - ax) / w0;
   let sy = Math.abs(y - ay) / h0;
-  if (resizeDrag.uniform) {
-    // Strokes and text scale uniformly (stretching them looks broken).
-    sx = sy = Math.max(sx, sy);
-  }
+  if (uniform) sx = sy = Math.max(sx, sy);
+  return [sx, sy];
+}
+
+function moveResize(ev) {
+  const [x, y] = pageCoords(ev);
+  const [ax, ay] = resizeDrag.anchor;
+  const [sx, sy] = resizeScale(resizeDrag.startBB, ax, ay, x, y, resizeDrag.uniform);
   app.scale_dragged_item(ax, ay, sx, sy);
   redrawAnnotations();
 }
@@ -909,7 +916,7 @@ function moveResize(ev) {
 // (so a click that barely moves doesn't nudge it).
 function moveItem(ev) {
   const [x, y] = pageCoords(ev);
-  if (Math.hypot(x - itemDrag.startX, y - itemDrag.startY) > 3 / scale()) {
+  if (Math.hypot(x - itemDrag.startX, y - itemDrag.startY) > MOVE_THRESHOLD_PX / scale()) {
     itemDrag.moved = true;
   }
   if (itemDrag.moved) {
@@ -2044,7 +2051,7 @@ class SketchView {
     if (this.selected < 0) return -1;
     const bb = app.item_bbox_of_sketch(this.note, this.selected);
     if (bb.length !== 4) return -1;
-    const tol = (7 + 3) / this.scale;
+    const tol = (HANDLE_PX + 3) / this.scale;
     return handlePoints(bb).findIndex(([hx, hy]) => Math.abs(x - hx) <= tol && Math.abs(y - hy) <= tol);
   }
 
@@ -2079,7 +2086,7 @@ class SketchView {
     // drawing tools (snip is PDF-only and ignored on sketches)
     if (tool === "snip") return;
     this.state = { mode: "draw" };
-    app.pointer_down_sketch(this.note, x, y, 10 / this.scale);
+    app.pointer_down_sketch(this.note, x, y, ERASE_RADIUS_PX / this.scale);
     this.draw();
   }
 
@@ -2087,16 +2094,14 @@ class SketchView {
     if (!this.state) return;
     const [x, y] = this.coords(ev);
     if (this.state.mode === "resize") {
-      const [ax, ay] = this.state.anchor, bb = this.state.bb;
-      const w0 = Math.max(1e-3, Math.abs(bb[2] - bb[0])), h0 = Math.max(1e-3, Math.abs(bb[3] - bb[1]));
-      let sx = Math.abs(x - ax) / w0, sy = Math.abs(y - ay) / h0;
-      if (this.state.uniform) sx = sy = Math.max(sx, sy);
+      const [ax, ay] = this.state.anchor;
+      const [sx, sy] = resizeScale(this.state.bb, ax, ay, x, y, this.state.uniform);
       app.scale_dragged_item(ax, ay, sx, sy);
     } else if (this.state.mode === "move") {
-      if (Math.hypot(x - this.state.sx, y - this.state.sy) > 3 / this.scale) this.state.moved = true;
+      if (Math.hypot(x - this.state.sx, y - this.state.sy) > MOVE_THRESHOLD_PX / this.scale) this.state.moved = true;
       if (this.state.moved) app.drag_item(x, y);
     } else if (this.state.mode === "draw") {
-      app.pointer_move(x, y, 10 / this.scale);
+      app.pointer_move(x, y, ERASE_RADIUS_PX / this.scale);
     }
     this.draw();
   }
