@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=82">
+  <link rel="stylesheet" href="style.css?v=83">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -164,7 +164,7 @@
       <!-- Contextual color + thickness: shown only for marking tools. Movable,
            collapsible, semi-transparent, scrolls horizontally when narrow. -->
       <div id="context-bar" hidden>
-        <span class="cbar-grip" title="Drag to move the colour bar" aria-hidden="true">⠿</span>
+        <span class="cbar-grip" title="Drag to move the colour bar" aria-hidden="true"><svg viewBox="0 0 6 16"><circle cx="1.5" cy="4" r="1"/><circle cx="4.5" cy="4" r="1"/><circle cx="1.5" cy="8" r="1"/><circle cx="4.5" cy="8" r="1"/><circle cx="1.5" cy="12" r="1"/><circle cx="4.5" cy="12" r="1"/></svg></span>
         <div class="cbar-content">
           <div id="colors">
             <button class="swatch active" data-color="black" title="Black"></button>
@@ -184,7 +184,7 @@
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor" stroke="none"/></svg>
           </button>
         </div>
-        <button id="cbar-collapse" class="cbar-collapse" title="Hide the colour bar" aria-label="Hide the colour bar" aria-expanded="true">▾</button>
+        <button id="cbar-collapse" class="cbar-collapse" title="Hide the colour bar" aria-label="Hide the colour bar" aria-expanded="true"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
       </div>
 
       <!-- Floating document controls: page nav + zoom (viewer convention) -->
@@ -310,6 +310,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=82"></script>
+  <script type="module" src="app.js?v=83"></script>
 </body>
 </html>
