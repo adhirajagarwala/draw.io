@@ -409,8 +409,7 @@ button { font: inherit; }
 .cbar-content::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
 #context-bar #colors,
 #context-bar #widths { display: flex; align-items: center; gap: 2px; flex: none; }
-#context-bar.collapsed .cbar-content,
-#context-bar.collapsed .cbar-resize { display: none; }
+#context-bar.collapsed .cbar-content { display: none; }
 .cbar-grip {
   flex: none;
   cursor: grab;
@@ -424,28 +423,23 @@ button { font: inherit; }
 .cbar-grip:active { cursor: grabbing; }
 .cbar-collapse {
   flex: none;
-  width: 22px;
-  height: 26px;
-  border: none;
-  background: transparent;
-  color: #4a5560;
+  width: 26px;
+  height: 28px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
   cursor: pointer;
-  border-radius: 6px;
-  font-size: 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.cbar-collapse:hover { background: #eef0f3; color: var(--ink); }
+.cbar-collapse:hover { background: var(--accent-soft); color: var(--accent); border-color: #c4d2f5; }
 #context-bar.collapsed .cbar-collapse { transform: rotate(-90deg); }
-.cbar-resize {
-  flex: none;
-  width: 10px;
-  align-self: stretch;
-  margin-right: -2px;
-  cursor: ew-resize;
-  border-radius: 0 8px 8px 0;
-  background:
-    linear-gradient(#9aa3ad, #9aa3ad) center / 2px 16px no-repeat;
-  touch-action: none;
-}
+/* The colour-blind toggle reads as a clearly-bordered button (active fills it). */
+#btn-palette { border-color: var(--line); }
 
 /* Docked: a flat strip absolutely placed in the toolbar at any horizontal offset
    (set in JS), vertically centred. No floating chrome, no resize handle. The grip
@@ -466,7 +460,6 @@ body.cbar-docked #context-bar {
 /* While actively dragging, the fixed-position rule above wins over the docked
    centring transform. */
 body.cbar-docked #context-bar.cbar-dragging { transform: none !important; }
-body.cbar-docked #context-bar .cbar-resize { display: none; }
 
 /* floating page + zoom + undo controls, bottom center */
 #doc-controls {
@@ -567,6 +560,14 @@ body.cbar-docked #context-bar .cbar-resize { display: none; }
   color: var(--ink);
 }
 .page-ctx-menu button:hover { background: var(--accent-soft); color: var(--accent); }
+
+/* Fallback when a freshly-opened tab can't auto-pop the file dialog: draw the eye
+   to the Open button so it's one obvious click. */
+@keyframes btn-attention {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(47, 95, 222, 0); }
+  50% { box-shadow: 0 0 0 4px var(--accent-soft); }
+}
+#btn-open.attention { animation: btn-attention 0.9s ease-in-out 3; }
 .note-block.drop-before { box-shadow: 0 -3px 0 -1px var(--accent); }
 .note-block.drop-after { box-shadow: 0 3px 0 -1px var(--accent); }
 .drag-handle {

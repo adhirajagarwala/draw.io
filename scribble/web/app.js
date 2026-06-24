@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "81";
+const APP_VERSION = "82";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,13 +13,13 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=81";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=81";
-import { initEmbed } from "./embed.js?v=81";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=81";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=81";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=81";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=81";
+} from "./utils.js?v=82";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=82";
+import { initEmbed } from "./embed.js?v=82";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=82";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=82";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=82";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=82";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1725,19 +1725,14 @@ async function exportPdf() {
 
 // ---------- toolbar wiring ----------
 
-let openToNewTab = false; // when set, the next picked file is handed to a fresh tab
-
 els.btn.open.addEventListener("click", async () => {
-  openToNewTab = false; // clear any stale flag from a previously-cancelled picker
   // Opening replaces the current document — guard unsaved work with a choice.
   if (docOpen() && (dirtySinceFileSave || app?.is_dirty())) {
     const choice = await confirmOpenDialog();
     if (choice === "cancel") return;
-    // "Open in a new tab": pick the file HERE (this click is still a valid user
-    // gesture, so the dialog opens) and hand it to a fresh tab — this tab keeps its
-    // work. Browsers won't pop a file dialog unprompted in a freshly-loaded tab, so
-    // picking here is the only reliable way to land straight on the chooser.
-    if (choice === "newtab") { openToNewTab = true; els.filePdf.click(); return; }
+    // Open the new file in a fresh tab (this one keeps its work). The new tab lands
+    // on ?open and pops the file picker for you (autoOpenIfRequested).
+    if (choice === "newtab") { window.open(`${location.pathname}?open`, "_blank"); return; }
     if (choice === "save") downloadJson();
     // "discard" and "save" both fall through to the picker.
   }
@@ -1756,35 +1751,19 @@ function routeOpen(f) {
 els.filePdf.addEventListener("change", () => {
   const f = els.filePdf.files[0];
   els.filePdf.value = "";
-  const toNewTab = openToNewTab;
-  openToNewTab = false;
-  if (!f) return;
-  if (toNewTab) {
-    // Hand the file to a fresh tab, keeping THIS tab's document. window.open must
-    // run synchronously in this gesture (or pop-up blockers bite); the file is
-    // stashed in IndexedDB and the new tab polls for it on boot (openHandoffFile).
-    const key = `handoff-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const w = window.open(`${location.pathname}?openHandoff=${encodeURIComponent(key)}`, "_blank");
-    if (!w) { status("Your browser blocked the new tab — allow pop-ups for this site."); return; }
-    idbPut(key, f).catch(() => {});
-    status("Opening that file in a new tab…");
-    return;
-  }
-  routeOpen(f);
+  if (f) routeOpen(f);
 });
 
-// If this tab was launched by "Open in a new tab", load the handed-off file from
-// IndexedDB (the opener stores it asynchronously, so poll briefly), then clean up.
-async function openHandoffFile() {
-  const key = new URLSearchParams(location.search).get("openHandoff");
-  if (!key) return;
-  history.replaceState({}, "", location.pathname); // don't re-open on reload
-  for (let tries = 0; tries < 30; tries++) {
-    const f = await idbGet(key).catch(() => null);
-    if (f) { idbDelete(key).catch(() => {}); routeOpen(f); return; }
-    await new Promise((r) => setTimeout(r, 150));
-  }
-  status("Couldn't load the file handed off to this tab.");
+// "Open in a new tab" lands here on ?open: pop the file picker immediately. A fresh
+// tab may need a click before the browser will show a file dialog — if so, the Open
+// button is focused and pulsing as an obvious one-click fallback.
+function autoOpenIfRequested() {
+  if (!new URLSearchParams(location.search).has("open")) return;
+  history.replaceState({}, "", location.pathname); // don't re-trigger on reload
+  els.btn.open.focus();
+  els.btn.open.classList.add("attention");
+  els.btn.open.addEventListener("click", () => els.btn.open.classList.remove("attention"), { once: true });
+  try { els.filePdf.click(); } catch { /* file dialog needs a user gesture in some browsers */ }
 }
 
 els.fileJson.addEventListener("change", () => {
@@ -2690,7 +2669,6 @@ function savePrefs() {
         dockLeft: isCbarDocked() ? cb.style.left : "",
         left: !isCbarDocked() && cb.classList.contains("moved") ? cb.style.left : "",
         top: !isCbarDocked() && cb.classList.contains("moved") ? cb.style.top : "",
-        width: cb.style.width || "",
         collapsed: cb.classList.contains("collapsed"),
       },
     }));
@@ -2710,7 +2688,6 @@ function applyPrefs() {
     els.contextBar.style.left = cb.left;
     els.contextBar.style.top = cb.top;
   }
-  if (cb.width) els.contextBar.style.width = cb.width;
   if (cb.collapsed) setCbarCollapsed(true);
   applyPalette(p.palette === "safe"); // also paints the swatches for the active palette
 }
@@ -2776,7 +2753,7 @@ init()
     applyPrefs();
     updateContextBar(activeTool()); // hide the colour UI (and palette) until a doc opens
     initEmbed({ app, els, status, toggleNotes, renderNotes });
-    openHandoffFile(); // "Open in a new tab" handoff, if this tab was launched that way
+    autoOpenIfRequested(); // "Open in a new tab" → pop the file picker here
   })
   .catch((e) => {
     console.error("WASM init failed:", e);

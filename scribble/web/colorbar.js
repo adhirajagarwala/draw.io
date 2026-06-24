@@ -140,22 +140,6 @@ export function initColorBar(deps) {
   grip.addEventListener("pointerup", endDrag);
   grip.addEventListener("pointercancel", endDrag);
 
-  // Resize the bar width (content scrolls horizontally within it).
-  const resize = cb.querySelector(".cbar-resize");
-  let rz = null;
-  resize.addEventListener("pointerdown", (ev) => {
-    rz = { x: ev.clientX, w: cb.getBoundingClientRect().width };
-    resize.setPointerCapture?.(ev.pointerId);
-    ev.preventDefault();
-  });
-  resize.addEventListener("pointermove", (ev) => {
-    if (!rz) return;
-    cb.style.width = `${Math.max(120, Math.round(rz.w + (ev.clientX - rz.x)))}px`;
-  });
-  const endRz = () => { if (rz) { rz = null; savePrefs(); } };
-  resize.addEventListener("pointerup", endRz);
-  resize.addEventListener("pointercancel", endRz);
-
   window.addEventListener("resize", clampContextBar);
 }
 

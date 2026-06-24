@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=81">
+  <link rel="stylesheet" href="style.css?v=82">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -180,12 +180,11 @@
             <button class="btn width" data-width="thick" title="Thick line — bold strokes"><span class="dot d3"></span></button>
           </div>
           <span class="bar-divider"></span>
-          <button id="btn-palette" class="btn" title="Toggle colorblind-safe palette (green→brown, red→vermillion)" aria-label="Toggle colorblind-safe palette" aria-pressed="false">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18"/><path d="M12 7v10M9.5 9.2 14.5 14.8M9.5 14.8 14.5 9.2"/></svg>
+          <button id="btn-palette" class="btn" title="Colour-blind-safe palette (green→brown, red→vermillion)" aria-label="Toggle colour-blind-safe palette" aria-pressed="false">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor" stroke="none"/></svg>
           </button>
         </div>
         <button id="cbar-collapse" class="cbar-collapse" title="Hide the colour bar" aria-label="Hide the colour bar" aria-expanded="true">▾</button>
-        <span class="cbar-resize" title="Drag to make the colour bar wider" aria-hidden="true"></span>
       </div>
 
       <!-- Floating document controls: page nav + zoom (viewer convention) -->
@@ -311,6 +310,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=81"></script>
+  <script type="module" src="app.js?v=82"></script>
 </body>
 </html>
