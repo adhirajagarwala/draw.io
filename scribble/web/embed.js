@@ -31,21 +31,34 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
     try {
       const frame = window.frameElement;
       const card = frame && (frame.closest(".question-body") || frame.closest(".question-block"));
-      if (!card) { status("Embedded — couldn't find the question to annotate."); return; }
-      const clone = card.cloneNode(true);
-      clone.querySelectorAll(".pl-scribble-wrap, script").forEach((el) => el.remove());
+      const scope = card || host;
+      // Preferred: the author wraps the annotatable content in
+      // <div class="pl-scribble-source">…</div>; answer inputs live OUTSIDE it, so PL still
+      // grades them. Fallback: the whole question card minus Scribble + any inputs.
+      const src = scope.querySelector(".pl-scribble-source");
+      let inner;
+      if (src) {
+        const c = src.cloneNode(true);
+        c.querySelectorAll("script").forEach((el) => el.remove());
+        inner = c.innerHTML;
+        src.style.display = "none";                                   // shown inside Scribble instead
+      } else if (card) {
+        const c = card.cloneNode(true);
+        c.querySelectorAll(".pl-scribble-wrap, script, input, select, textarea, button").forEach((el) => el.remove());
+        inner = c.innerHTML;
+        [...card.children].forEach((el) => {
+          if (el.classList.contains("pl-scribble-wrap")) return;      // keep Scribble
+          if (el.querySelector("input,select,textarea,button")) return; // keep answer inputs
+          el.style.display = "none";                                  // hide duplicated prose
+        });
+      } else { status("Embedded — couldn't find the question content."); return; }
       const docHtml =
         '<!doctype html><html><head><meta charset="utf-8">' +
         '<style>body{font-family:-apple-system,system-ui,sans-serif;color:#1f2428;' +
         'line-height:1.6;padding:24px;max-width:780px;margin:0 auto;}' +
         'img,svg{max-width:100%;height:auto;}</style></head><body>' +
-        clone.innerHTML + '</body></html>';
+        inner + '</body></html>';
       openHtml(new File([docHtml], "question.html", { type: "text/html" }));
-      [...card.children].forEach((el) => {
-        if (el.classList.contains("pl-scribble-wrap")) return;        // keep Scribble
-        if (el.querySelector("input,select,textarea,button")) return; // keep answer inputs
-        el.style.display = "none";                                    // hide duplicated prose
-      });
     } catch (e) {
       status("Embedded — couldn't load the question: " + (e.message || e));
     }

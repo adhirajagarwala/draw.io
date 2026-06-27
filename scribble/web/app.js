@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "84";
+const APP_VERSION = "85";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,13 +13,13 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=84";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=84";
-import { initEmbed } from "./embed.js?v=84";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=84";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=84";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=84";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=84";
+} from "./utils.js?v=85";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=85";
+import { initEmbed } from "./embed.js?v=85";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=85";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=85";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=85";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=85";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
