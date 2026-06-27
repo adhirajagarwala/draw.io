@@ -82,6 +82,14 @@ reload pick up changes for the user (and for the live tests).
 Current version lives in `scribble/web/index.html` (`?v=`) and the top of
 `scribble/web/app.js` (`APP_VERSION`).
 
+**Don't forget the wasm-bindgen glue counter.** `app.js` imports the glue with a
+**separate manual `?v=`** on `./pkg/scribble.js` (it is NOT interpolated from
+`APP_VERSION`). Bump it together with `APP_VERSION`, **especially after a Rust
+rebuild** — the glue is regenerated then, and a stale cached glue (missing a
+newly-added export) against fresh JS is a real normal-reload break. The wasm
+**binary** is versioned via `init({ module_or_path: \`./pkg/scribble_bg.wasm?v=${APP_VERSION}\` })`,
+so it tracks `APP_VERSION` automatically — only the glue import needs hand-bumping.
+
 ## 3. Rebuild the WASM after ANY Rust change
 
 Editing `scribble/src/*.rs` does nothing until you rebuild:

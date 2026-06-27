@@ -34,3 +34,28 @@ jobs:
         run: |
           cargo install cargo-audit --locked
           cargo audit
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: JS syntax check
+        run: |
+          for f in scribble/web/*.js; do node --check "$f"; done
+      - name: Cache-version consistency
+        # Every hand-written ?v= literal in app.js + index.html must equal APP_VERSION.
+        # This is the guard that would have caught the pkg/scribble.js glue drifting to
+        # ?v=12 while everything else moved to 90 (see CLAUDE.md rule 2).
+        run: |
+          N=$(grep -oE 'APP_VERSION = "[0-9]+"' scribble/web/app.js | grep -oE '[0-9]+')
+          test -n "$N" || { echo "::error::could not read APP_VERSION from app.js"; exit 1; }
+          echo "APP_VERSION=$N"
+          BAD=$(grep -hoE '\?v=[0-9]+' scribble/web/app.js scribble/web/index.html | sort -u | grep -vF "?v=$N" || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::cache-version drift — found $(echo "$BAD" | tr '\n' ' ') but APP_VERSION is $N. Bump every ?v= together (including the pkg/scribble.js glue import)."
+            exit 1
+          fi
+          echo "OK: all ?v= literals match ?v=$N"

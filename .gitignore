@@ -1,6 +1,9 @@
 # build artifacts
 scribble/target/
 *.log
+# Python bytecode (PrairieLearn element controllers)
+__pycache__/
+*.pyc
 
 # local test files — never commit student papers or annotations
 test-paper.pdf

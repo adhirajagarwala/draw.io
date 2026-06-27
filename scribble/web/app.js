@@ -3,9 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "90";
+const APP_VERSION = "91";
 
-import init, { App } from "./pkg/scribble.js?v=12";
+// wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
+// release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
+// against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
+// bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
+import init, { App } from "./pkg/scribble.js?v=91";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -13,14 +17,14 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=90";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=90";
-import { initEmbed } from "./embed.js?v=90";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=90";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=90";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=90";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=90";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=90";
+} from "./utils.js?v=91";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=91";
+import { initEmbed } from "./embed.js?v=91";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=91";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=91";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=91";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=91";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=91";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -2817,7 +2821,13 @@ if (new URLSearchParams(location.search).has("debug")) {
   Object.defineProperty(window, "__pdf", { get: () => pdfDoc });
 }
 
-init()
+// Pass a versioned wasm URL so a normal reload re-fetches the binary too (the glue's
+// default carries no ?v=, so the wasm would otherwise cache path-stable and need a hard
+// refresh — a fresh glue against a stale wasm is a binding mismatch waiting to happen).
+// Resolve against import.meta.url (this module's own location), NOT a relative string: the
+// glue fetch()es a string against the DOCUMENT base, which in PL srcdoc mode hinges on
+// pl-scribble.py's injected <base href>. new URL(..., import.meta.url) is base-independent.
+init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.meta.url) })
   .then(() => {
     app = new App();
     const prefs = applyPrefs();
