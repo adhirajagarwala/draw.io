@@ -517,6 +517,45 @@ body.cbar-docked #context-bar.cbar-dragging { transform: none !important; }
   border-left: 1px solid var(--line);
 }
 
+/* Embedded (PrairieLearn): tools on the LEFT · document on top · notes BELOW,
+   resizable UP by dragging the splitter so they can come over the question. */
+body.embedded #main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: minmax(60px, 1fr) auto auto;
+  grid-template-areas:
+    "rail stage"
+    "rail split"
+    "rail notes";
+}
+body.embedded #rail  { grid-area: rail; }
+body.embedded #stage { grid-area: stage; }
+body.embedded #splitter {
+  grid-area: split;
+  width: auto;
+  height: 6px;
+  cursor: row-resize;
+}
+body.embedded #notes-pane {
+  grid-area: notes;
+  height: var(--notes-h, 240px);
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  border-left: none;
+  border-top: 1px solid var(--line);
+}
+
+/* Embed: drop the document-management buttons (the question auto-loads, there are
+   no PDF thumbnails, and save/export come with the graded upgrade) — this declutters
+   the toolbar AND frees the gap so the colour bar docks there, off the question. */
+body.embedded #btn-open,
+body.embedded #btn-thumbs,
+body.embedded #btn-save,
+body.embedded #btn-load,
+body.embedded #btn-export,
+body.embedded .bar-divider { display: none; }
+
 #notes-pane header {
   display: flex;
   justify-content: space-between;

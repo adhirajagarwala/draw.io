@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "85";
+const APP_VERSION = "87";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,13 +13,13 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=85";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=85";
-import { initEmbed } from "./embed.js?v=85";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=85";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=85";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=85";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=85";
+} from "./utils.js?v=87";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=87";
+import { initEmbed } from "./embed.js?v=87";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=87";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=87";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=87";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=87";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -2478,20 +2478,33 @@ function relayoutSketches() {
 }
 window.addEventListener("resize", relayoutSketches);
 
-// Splitter: drag to resize the notes pane; double-click to reset.
+// Splitter: drag to resize the notes pane; double-click to reset. In embedded
+// (PrairieLearn) mode the notes pane sits BELOW the document, so the splitter is
+// horizontal and resizes its HEIGHT — drag up to grow the notes over the question.
 let splitDrag = null;
 els.splitter.addEventListener("pointerdown", (ev) => {
-  splitDrag = { startX: ev.clientX, startW: els.notesPane.offsetWidth };
+  splitDrag = document.body.classList.contains("embedded")
+    ? { vertical: true, startY: ev.clientY, startH: els.notesPane.offsetHeight }
+    : { startX: ev.clientX, startW: els.notesPane.offsetWidth };
   els.splitter.setPointerCapture(ev.pointerId);
 });
 els.splitter.addEventListener("pointermove", (ev) => {
   if (!splitDrag) return;
-  const w = splitDrag.startW + (splitDrag.startX - ev.clientX);
-  els.notesPane.style.width = `${Math.max(220, Math.min(window.innerWidth * 0.6, w))}px`;
+  if (splitDrag.vertical) {
+    const h = splitDrag.startH + (splitDrag.startY - ev.clientY); // drag up → taller
+    $("main").style.setProperty("--notes-h", `${Math.max(80, Math.min(window.innerHeight * 0.82, h))}px`);
+  } else {
+    const w = splitDrag.startW + (splitDrag.startX - ev.clientX);
+    els.notesPane.style.width = `${Math.max(220, Math.min(window.innerWidth * 0.6, w))}px`;
+  }
   relayoutSketches();
 });
 els.splitter.addEventListener("pointerup", () => { splitDrag = null; savePrefs(); });
-els.splitter.addEventListener("dblclick", () => { els.notesPane.style.width = ""; savePrefs(); });
+els.splitter.addEventListener("dblclick", () => {
+  if (document.body.classList.contains("embedded")) $("main").style.removeProperty("--notes-h");
+  else els.notesPane.style.width = "";
+  savePrefs();
+});
 
 // ---------- thumbnails sidebar ----------
 
@@ -2753,6 +2766,8 @@ init()
     applyPrefs();
     updateContextBar(activeTool()); // hide the colour UI (and palette) until a doc opens
     initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml });
+    // In embed mode, keep the colour bar docked in the toolbar — never floating over the question.
+    if (document.body.classList.contains("embedded")) dockCbar(12);
     autoOpenIfRequested(); // "Open in a new tab" → pop the file picker here
   })
   .catch((e) => {
