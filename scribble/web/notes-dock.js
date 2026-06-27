@@ -51,7 +51,9 @@ export function dockNotes() {
 // Keep a floating pane inside #stage when the window/stage resizes (mirror clampContextBar).
 export function clampNotes() {
   const pane = els.notesPane;
-  if (pane.hidden || !isNotesFloating()) return;
+  // Skip while hidden (offset* read 0) or mid-lift (position:fixed → style.left/top
+  // are viewport, not stage, coords — clamping them against stage bounds would jump it).
+  if (pane.hidden || pane.classList.contains("notes-dragging") || !isNotesFloating()) return;
   const sr = stageEl.getBoundingClientRect();
   const w = Math.min(pane.offsetWidth, sr.width - 8);
   const h = Math.min(pane.offsetHeight, sr.height - 8);
@@ -76,7 +78,7 @@ export function initNotesDock(deps) {
   grip.addEventListener("pointerdown", (ev) => {
     if (ev.button !== 0 || ev.target.closest("button")) return; // ignore right/middle + header buttons
     const br = pane.getBoundingClientRect();
-    drag = { dx: ev.clientX - br.left, dy: ev.clientY - br.top, fx: br.left, fy: br.top, w: br.width, h: br.height };
+    drag = { dx: ev.clientX - br.left, dy: ev.clientY - br.top, fx: br.left, fy: br.top, w: br.width, h: br.height, fromDocked: !isNotesFloating() };
     pane.classList.add("notes-dragging"); // position:fixed lift-in-place — no reparent, no jump
     els.splitter.hidden = true;           // hide the now-orphaned docked splitter while lifting
     pane.style.left = `${Math.round(br.left)}px`;
@@ -90,7 +92,7 @@ export function initNotesDock(deps) {
     if (!drag) return;
     drag.fx = ev.clientX - drag.dx;
     drag.fy = ev.clientY - drag.dy;
-    const over = overDockZone(ev.clientY);
+    const over = drag.fromDocked && overDockZone(ev.clientY); // drag-to-dock only when lifted from docked
     if (!raf) raf = requestAnimationFrame(() => {
       raf = 0;
       pane.style.left = `${Math.round(drag.fx)}px`;
@@ -98,29 +100,34 @@ export function initNotesDock(deps) {
       stageEl.classList.toggle("notes-drop", over);
     });
   });
-  const endDrag = (ev) => {
+  const endDrag = (ev, cancelled) => {
     if (!drag) return;
     const d = drag;
     drag = null;
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
     pane.classList.remove("notes-dragging");
     stageEl.classList.remove("notes-drop");
-    const wantsDock = ev ? overDockZone(ev.clientY) : isNotesFloating();
-    if (wantsDock) {
+    // Drag-to-dock only applies to a pane LIFTED FROM DOCKED; an already-floating pane
+    // repositions freely (dock it via the Float/Dock button or double-clicking the header).
+    // A pointercancel is never a drop intent — restore the pre-lift state.
+    const dock = cancelled ? d.fromDocked : (d.fromDocked && overDockZone(ev.clientY));
+    if (dock) {
       dockNotes();
     } else {
       const sr = stageEl.getBoundingClientRect();
+      // Don't reuse the (full-width) docked footprint — cap to a sensible window size.
+      const w = Math.min(d.w, 420), h = Math.min(d.h, 360);
       floatNotes(
-        clamp(d.fx - sr.left, 4, sr.width - d.w - 4),
-        clamp(d.fy - sr.top, 4, sr.height - d.h - 4),
-        d.w, d.h,
+        clamp(d.fx - sr.left, 4, sr.width - w - 4),
+        clamp(d.fy - sr.top, 4, sr.height - h - 4),
+        w, h,
       );
     }
     relayoutSketches();
     savePrefs();
   };
-  grip.addEventListener("pointerup", endDrag);
-  grip.addEventListener("pointercancel", endDrag);
+  grip.addEventListener("pointerup", (ev) => endDrag(ev, false));
+  grip.addEventListener("pointercancel", () => endDrag(null, true));
 
   // ---- bottom-right resize handle (floating only) ----
   let rz = null, rraf = 0;

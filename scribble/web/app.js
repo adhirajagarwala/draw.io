@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "88";
+const APP_VERSION = "89";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,14 +13,14 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=88";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=88";
-import { initEmbed } from "./embed.js?v=88";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=88";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=88";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=88";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=88";
-import { initNotesDock, isNotesFloating, floatNotes } from "./notes-dock.js?v=88";
+} from "./utils.js?v=89";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=89";
+import { initEmbed } from "./embed.js?v=89";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=89";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=89";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=89";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=89";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=89";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -2440,10 +2440,13 @@ els.notesList.addEventListener("drop", (e) => {
 function toggleNotes(show) {
   const visible = show ?? els.notesPane.hidden;
   els.notesPane.hidden = !visible;
-  els.splitter.hidden = !visible;
+  els.splitter.hidden = !visible || isNotesFloating(); // the splitter stays hidden while the notes float
   els.btn.notes.classList.toggle("active", visible);
   syncAria();
-  if (visible) renderNotes();
+  if (visible) {
+    renderNotes();
+    if (isNotesFloating()) clampNotes(); // re-fit a restored floating window to the live stage
+  }
 }
 
 els.btn.notes.addEventListener("click", () => toggleNotes());
@@ -2675,10 +2678,18 @@ const PREFS_KEY = "scribble.prefs.v1";
 function savePrefs() {
   try {
     const cb = els.contextBar;
+    const embedded = document.body.classList.contains("embedded");
+    // Prefs share one key across embed + standalone. The embed-only layout fields
+    // (notesFloat, and a floating notesWidth) must NOT be overwritten from the other
+    // mode, or a standalone save wipes the embed float layout and a float width leaks
+    // onto the standalone column — so carry the prior value forward across modes.
+    let prev = {};
+    try { prev = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { /* ignore */ }
     localStorage.setItem(PREFS_KEY, JSON.stringify({
       palette: els.btn.palette.classList.contains("active") ? "safe" : "standard",
       big: document.body.classList.contains("big"),
-      notesWidth: els.notesPane.style.width || "",
+      // The STANDALONE right-column width only; never capture the embed grid / float width.
+      notesWidth: (embedded || isNotesFloating()) ? (prev.notesWidth || "") : (els.notesPane.style.width || ""),
       cbar: {
         docked: isCbarDocked(),
         dockLeft: isCbarDocked() ? cb.style.left : "",
@@ -2686,10 +2697,13 @@ function savePrefs() {
         top: !isCbarDocked() && cb.classList.contains("moved") ? cb.style.top : "",
         collapsed: cb.classList.contains("collapsed"),
       },
-      notesFloat: isNotesFloating()
-        ? { on: true, left: els.notesPane.style.left, top: els.notesPane.style.top,
-            width: els.notesPane.style.width, height: els.notesPane.style.height }
-        : { on: false },
+      // Embed-only; in standalone carry the saved value forward untouched.
+      notesFloat: embedded
+        ? (isNotesFloating()
+          ? { on: true, left: els.notesPane.style.left, top: els.notesPane.style.top,
+              width: els.notesPane.style.width, height: els.notesPane.style.height }
+          : { on: false })
+        : (prev.notesFloat || { on: false }),
     }));
   } catch { /* storage unavailable — non-fatal */ }
 }
@@ -2774,7 +2788,10 @@ init()
     updateContextBar(activeTool()); // hide the colour UI (and palette) until a doc opens
     initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml });
     // In embed mode, keep the colour bar docked in the toolbar — never floating over the question.
-    if (document.body.classList.contains("embedded")) dockCbar(12);
+    if (document.body.classList.contains("embedded")) {
+      dockCbar(12);
+      els.notesPane.style.width = ""; // the grid drives width in embed; drop any standalone width from prefs
+    }
     // Wire the floating notes window (embed-only — must run AFTER initEmbed sets body.embedded),
     // then restore any saved floating position.
     initNotesDock({ els, $, savePrefs, relayoutSketches });
