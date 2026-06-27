@@ -556,6 +556,56 @@ body.embedded #btn-load,
 body.embedded #btn-export,
 body.embedded .bar-divider { display: none; }
 
+/* ---- floating notes window (embed only): grip · lifted · resting · resize · drop hint ---- */
+/* The grip mirrors .cbar-grip; only shown when embedded (standalone keeps the side pane). */
+#notes-pane .notes-grip { display: none; }
+body.embedded #notes-pane .notes-grip {
+  display: inline-flex; align-items: center; cursor: grab; color: var(--muted);
+  padding: 0 4px; border-radius: 6px; user-select: none; touch-action: none; margin-right: 6px;
+}
+#notes-pane .notes-grip svg { width: 6px; height: 15px; fill: currentColor; }
+#notes-pane .notes-grip:hover { color: var(--ink); background: #eef0f3; }
+#notes-pane .notes-grip:active { cursor: grabbing; }
+#notes-pane header button { cursor: pointer; } /* buttons keep the pointer cursor, not the grip's grab */
+
+/* Picked up: fixed to the viewport, lifted (mirror #context-bar.cbar-dragging). */
+#notes-pane.notes-dragging {
+  position: fixed !important; z-index: 80; margin: 0;
+  border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 10px 30px rgba(20, 24, 28, .28); cursor: grabbing;
+}
+
+/* Resting floating window, absolutely placed inside #stage (which is position:relative). */
+body.notes-floating #notes-pane {
+  position: absolute; z-index: 7;
+  width: auto; height: auto; min-width: 220px; max-width: none;
+  border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 10px 30px rgba(20, 24, 28, .22);
+}
+/* The document reclaims the space: collapse the split + notes rows, hide the splitter. */
+body.embedded.notes-floating #main { grid-template-rows: minmax(60px, 1fr) 0 0; }
+body.embedded.notes-floating #splitter { display: none; }
+
+/* "Drop here to dock" hint band at the bottom of #stage while dragging. */
+#stage.notes-drop::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 72px;
+  background: var(--accent-soft); border-top: 2px dashed var(--accent);
+  pointer-events: none; z-index: 6;
+}
+
+/* Bottom-right resize grip (floating only), with a subtle diagonal texture. */
+#notes-pane .notes-resize { display: none; }
+body.notes-floating #notes-pane .notes-resize {
+  display: block; position: absolute; right: 0; bottom: 0;
+  width: 16px; height: 16px; cursor: nwse-resize; touch-action: none; z-index: 1;
+  background: linear-gradient(135deg, transparent 0 46%, var(--muted) 46% 54%,
+    transparent 54% 66%, var(--muted) 66% 74%, transparent 74%);
+}
+
+/* Dock/float toggle button: embed-only. */
+#btn-notes-dock { display: none; }
+body.embedded #btn-notes-dock { display: inline-flex; }
+
 #notes-pane header {
   display: flex;
   justify-content: space-between;

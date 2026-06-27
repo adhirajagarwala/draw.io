@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=87">
+  <link rel="stylesheet" href="style.css?v=88">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -249,13 +249,16 @@
     <div id="splitter" hidden title="Drag to resize notes (double-click to reset)"></div>
     <aside id="notes-pane" hidden>
       <header>
+        <span class="notes-grip" title="Drag to move the notes window" aria-hidden="true"><svg viewBox="0 0 6 16"><circle cx="1.5" cy="4" r="1"/><circle cx="4.5" cy="4" r="1"/><circle cx="1.5" cy="8" r="1"/><circle cx="4.5" cy="8" r="1"/><circle cx="1.5" cy="12" r="1"/><circle cx="4.5" cy="12" r="1"/></svg></span>
         <span>Notes</span>
         <span>
           <button id="btn-add-note" class="btn" title="Add a text block">＋ Text</button>
           <button id="btn-add-sketch" class="btn" title="Add a blank canvas you can draw on with the same tools">＋ Draw</button>
+          <button id="btn-notes-dock" class="btn" title="Float notes as a window">Float</button>
         </span>
       </header>
       <div id="notes-list"></div>
+      <div class="notes-resize" aria-hidden="true"></div>
     </aside>
   </div>
 
@@ -310,6 +313,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=87"></script>
+  <script type="module" src="app.js?v=88"></script>
 </body>
 </html>

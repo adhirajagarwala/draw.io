@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "87";
+const APP_VERSION = "88";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,13 +13,14 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=87";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=87";
-import { initEmbed } from "./embed.js?v=87";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=87";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=87";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=87";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=87";
+} from "./utils.js?v=88";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=88";
+import { initEmbed } from "./embed.js?v=88";
+import { idbGet, idbPut, idbDelete } from "./idb.js?v=88";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=88";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=88";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=88";
+import { initNotesDock, isNotesFloating, floatNotes } from "./notes-dock.js?v=88";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -2483,6 +2484,7 @@ window.addEventListener("resize", relayoutSketches);
 // horizontal and resizes its HEIGHT — drag up to grow the notes over the question.
 let splitDrag = null;
 els.splitter.addEventListener("pointerdown", (ev) => {
+  if (isNotesFloating()) return; // the splitter is inert while the notes float (it's display:none too)
   splitDrag = document.body.classList.contains("embedded")
     ? { vertical: true, startY: ev.clientY, startH: els.notesPane.offsetHeight }
     : { startX: ev.clientX, startW: els.notesPane.offsetWidth };
@@ -2684,6 +2686,10 @@ function savePrefs() {
         top: !isCbarDocked() && cb.classList.contains("moved") ? cb.style.top : "",
         collapsed: cb.classList.contains("collapsed"),
       },
+      notesFloat: isNotesFloating()
+        ? { on: true, left: els.notesPane.style.left, top: els.notesPane.style.top,
+            width: els.notesPane.style.width, height: els.notesPane.style.height }
+        : { on: false },
     }));
   } catch { /* storage unavailable — non-fatal */ }
 }
@@ -2703,6 +2709,7 @@ function applyPrefs() {
   }
   if (cb.collapsed) setCbarCollapsed(true);
   applyPalette(p.palette === "safe"); // also paints the swatches for the active palette
+  return p;
 }
 
 // "Dirty since the last save to a FILE." Autosave calls save_json(), which
@@ -2763,11 +2770,19 @@ if (new URLSearchParams(location.search).has("debug")) {
 init()
   .then(() => {
     app = new App();
-    applyPrefs();
+    const prefs = applyPrefs();
     updateContextBar(activeTool()); // hide the colour UI (and palette) until a doc opens
     initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml });
     // In embed mode, keep the colour bar docked in the toolbar — never floating over the question.
     if (document.body.classList.contains("embedded")) dockCbar(12);
+    // Wire the floating notes window (embed-only — must run AFTER initEmbed sets body.embedded),
+    // then restore any saved floating position.
+    initNotesDock({ els, $, savePrefs, relayoutSketches });
+    const nf = (prefs && prefs.notesFloat) || {};
+    if (nf.on && document.body.classList.contains("embedded")) {
+      floatNotes(parseFloat(nf.left) || 12, parseFloat(nf.top) || 48,
+                 parseFloat(nf.width) || 340, parseFloat(nf.height) || 320);
+    }
     autoOpenIfRequested(); // "Open in a new tab" → pop the file picker here
   })
   .catch((e) => {
