@@ -127,6 +127,14 @@ export class App {
         wasm.__wbg_app_free(ptr, 0);
     }
     /**
+     * Re-mark unsaved. The autosave path calls this when an IndexedDB write
+     * rejects (quota/eviction) so the snapshot it just took isn't lost — the
+     * next autosave tick sees the dirty flag and retries.
+     */
+    mark_dirty() {
+        wasm.app_mark_dirty(this.__wbg_ptr);
+    }
+    /**
      * @returns {number}
      */
     page_count() {

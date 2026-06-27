@@ -15,12 +15,19 @@ export function bytesToB64(bytes) {
   return btoa(bin);
 }
 
-// Decode a base64 PNG to an object URL (caller revokes when done).
+// Decode a base64 PNG to an object URL (caller revokes when done). Returns "" on a
+// malformed payload — atob throws on undecodable base64, and an uncaught throw here
+// (Rust validation bounds charset/length but not decodability) would abort a whole
+// renderNotes() pass. The empty src then just shows a broken-image placeholder.
 export function b64ToBlobUrl(b64) {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+  } catch {
+    return "";
+  }
 }
 
 // Grow a <textarea> to fit its content (no inner scrollbar).

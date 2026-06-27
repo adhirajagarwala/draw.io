@@ -307,14 +307,26 @@ pub fn sanitize_text_capped(s: &str, cap: usize) -> String {
         .collect()
 }
 
-/// Validate a base64 payload: charset only (standard alphabet + padding) and
-/// length cap. We never decode it in Rust — the host displays it — so a
-/// malformed payload can at worst fail to render as an image.
+/// Validate a base64 PNG payload. We never decode it in Rust — the host displays
+/// it — but a charset-valid yet *undecodable* string (bad length, '=' mid-string)
+/// throws `InvalidCharacterError` in the host's `atob`, which previously aborted
+/// the whole notes render. So enforce real base64 shape (length a multiple of 4,
+/// padding only trailing) AND the PNG signature so non-PNG data is rejected at
+/// load time. "iVBORw0KGgo" is the base64 of the 8-byte PNG header.
 pub fn valid_b64_png(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= MAX_CLIPPING_B64
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
+    if s.is_empty() || s.len() > MAX_CLIPPING_B64 || !s.len().is_multiple_of(4) {
+        return false;
+    }
+    if !s.starts_with("iVBORw0KGgo") {
+        return false;
+    }
+    let pad = s.bytes().rev().take_while(|&b| b == b'=').count();
+    if pad > 2 {
+        return false;
+    }
+    s.as_bytes()[..s.len() - pad]
+        .iter()
+        .all(|&b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
 }
 
 /// Strict validation of a deserialized document. Rejects on any violation;
@@ -326,6 +338,9 @@ pub fn validate(doc: &mut Document) -> Result<(), String> {
     if doc.pdf_sha256.len() > 64 || !doc.pdf_sha256.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("invalid pdf hash".into());
     }
+    // Normalize to lowercase so the JS-side identity check (which hashes to lowercase)
+    // never spuriously reports a file as belonging to a different PDF.
+    doc.pdf_sha256 = doc.pdf_sha256.to_ascii_lowercase();
     if doc.pages.len() > MAX_PAGES {
         return Err("too many pages".into());
     }
@@ -399,6 +414,12 @@ fn validate_page(
     for item in &mut page.items {
         if !seen_ids.insert(item.id()) {
             return Err("duplicate item id".into());
+        }
+        // Bound id magnitude to the JS-safe-integer range. An id >= 2^53 loses
+        // precision crossing into JS (unselectable/undeletable item), and a near-
+        // u64::MAX id would overflow next_id on load. Matches checked_id's range.
+        if item.id() >= (1u64 << 53) {
+            return Err("item id out of range".into());
         }
         match item {
             Item::Stroke(s) => {

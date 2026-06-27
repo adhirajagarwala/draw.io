@@ -92,12 +92,14 @@ export function initNotesDock(deps) {
     if (!drag) return;
     drag.fx = ev.clientX - drag.dx;
     drag.fy = ev.clientY - drag.dy;
-    const over = drag.fromDocked && overDockZone(ev.clientY); // drag-to-dock only when lifted from docked
+    drag.cy = ev.clientY;
     if (!raf) raf = requestAnimationFrame(() => {
       raf = 0;
       pane.style.left = `${Math.round(drag.fx)}px`;
       pane.style.top = `${Math.round(drag.fy)}px`;
-      stageEl.classList.toggle("notes-drop", over);
+      // Recompute from the LATEST cy inside the frame (coalesced moves would
+      // otherwise apply the newest position with the first frame's drop flag).
+      stageEl.classList.toggle("notes-drop", drag.fromDocked && overDockZone(drag.cy));
     });
   });
   const endDrag = (ev, cancelled) => {

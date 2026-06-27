@@ -109,7 +109,9 @@ export function showClippingLightbox(src, srcPage, docMode, goToPage) {
   ov.className = "modal-overlay lightbox";
   ov.tabIndex = -1;
   const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
-  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey, true); opener?.focus?.(); };
+  // `src` is a fresh blob URL owned by this lightbox — revoke it on close so it
+  // doesn't leak (and so it never aliases the notes-list image's URL).
+  const close = () => { URL.revokeObjectURL(big.src); ov.remove(); document.removeEventListener("keydown", onKey, true); opener?.focus?.(); };
   const big = document.createElement("img");
   big.src = src; big.className = "lightbox-img"; big.alt = "enlarged clipping";
   ov.appendChild(big);

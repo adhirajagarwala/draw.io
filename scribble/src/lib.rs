@@ -54,7 +54,7 @@ pub struct App {
     /// In-progress drag-placed shape: (surface, shape).
     current_shape: Option<(Surface, Shape)>,
     /// Items removed during an in-progress eraser drag: (surface, items).
-    erase_pending: Option<(Surface, Vec<Item>)>,
+    erase_pending: Option<(Surface, Vec<(usize, Item)>)>,
     /// Existing item being moved or resized with the select tool.
     item_drag: Option<DragState>,
     /// Active color palette (display preference; files store color names).
@@ -292,10 +292,10 @@ impl App {
     pub fn pointer_cancel(&mut self) {
         self.current = None;
         self.current_shape = None;
-        // A cancelled move reverts the item to where it started.
+        // A cancelled move reverts the item to where it started — in place, so it
+        // keeps its z-position rather than jumping to the top of the stack.
         if let Some(drag) = self.item_drag.take() {
-            self.remove_by_id(drag.surface, drag.id);
-            self.re_add(drag.surface, vec![drag.original]);
+            self.replace_by_id(drag.surface, drag.original);
         }
         // Committed erasures stay; record them so undo works.
         if let Some((surface, removed)) = self.erase_pending.take() {
@@ -549,7 +549,7 @@ impl App {
         let removed = p.items.remove(idx);
         self.history.push(Command::Remove {
             surface,
-            items: vec![removed],
+            items: vec![(idx, removed)],
         });
         self.dirty = true;
         true
@@ -603,7 +603,7 @@ impl App {
             p.items.remove(idx);
             self.history.push(Command::Remove {
                 surface,
-                items: vec![old],
+                items: vec![(idx, old)],
             });
         } else {
             if let Item::Text(t) = &mut p.items[idx] {
@@ -844,11 +844,8 @@ impl App {
         if let Some(cmd) = self.history.pop_undo() {
             match cmd {
                 Command::Add { surface, item } => self.remove_by_id(surface, item.id()),
-                Command::Remove { surface, items } => self.re_add(surface, items),
-                Command::Replace { surface, old, new } => {
-                    self.remove_by_id(surface, new.id());
-                    self.re_add(surface, vec![*old]);
-                }
+                Command::Remove { surface, items } => self.re_add_at(surface, items),
+                Command::Replace { surface, old, .. } => self.replace_by_id(surface, *old),
             }
             self.dirty = true;
         }
@@ -859,14 +856,11 @@ impl App {
             match cmd {
                 Command::Add { surface, item } => self.re_add(surface, vec![item]),
                 Command::Remove { surface, items } => {
-                    for it in &items {
+                    for (_, it) in &items {
                         self.remove_by_id(surface, it.id());
                     }
                 }
-                Command::Replace { surface, old, new } => {
-                    self.remove_by_id(surface, old.id());
-                    self.re_add(surface, vec![*new]);
-                }
+                Command::Replace { surface, new, .. } => self.replace_by_id(surface, *new),
             }
             self.dirty = true;
         }
@@ -898,7 +892,7 @@ impl App {
         let mut doc: Document =
             serde_json::from_str(json).map_err(|_| "not a valid annotation file".to_string())?;
         validate(&mut doc)?;
-        self.next_id = max_id(&doc) + 1;
+        self.next_id = max_id(&doc).saturating_add(1);
         self.doc = doc;
         self.history.clear();
         self.current = None;
@@ -911,6 +905,13 @@ impl App {
 
     pub fn is_dirty(&self) -> bool {
         self.dirty
+    }
+
+    /// Re-mark unsaved. The autosave path calls this when an IndexedDB write
+    /// rejects (quota/eviction) so the snapshot it just took isn't lost — the
+    /// next autosave tick sees the dirty flag and retries.
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
     }
 
     pub fn page_count(&self) -> usize {
@@ -1015,7 +1016,7 @@ impl App {
 
     /// Append a finished item to its surface and record it for undo.
     fn commit(&mut self, surface: Surface, item: Item) {
-        self.next_id = self.next_id.max(item.id() + 1);
+        self.next_id = self.next_id.max(item.id().saturating_add(1));
         if let Some(p) = self.page_mut(surface) {
             if p.items.len() < MAX_ITEMS_PER_PAGE {
                 p.items.push(item.clone());
@@ -1041,6 +1042,31 @@ impl App {
         }
     }
 
+    /// Restore removed items at their original indices (undo of erase/delete),
+    /// preserving z-order. Inserting in ascending index order is correct: by the
+    /// time we insert at index i, every original position < i is already filled.
+    fn re_add_at(&mut self, surface: Surface, mut items: Vec<(usize, Item)>) {
+        if let Some(p) = self.page_mut(surface) {
+            items.sort_by_key(|(i, _)| *i);
+            for (idx, item) in items {
+                if p.items.len() < MAX_ITEMS_PER_PAGE {
+                    let at = idx.min(p.items.len());
+                    p.items.insert(at, item);
+                }
+            }
+        }
+    }
+
+    /// Overwrite the item with `item.id()` in place (undo/redo of a move/resize/
+    /// edit, or a cancelled drag), keeping its z-position. No-op if it's gone.
+    fn replace_by_id(&mut self, surface: Surface, item: Item) {
+        if let Some(p) = self.page_mut(surface) {
+            if let Some(slot) = p.items.iter_mut().find(|it| it.id() == item.id()) {
+                *slot = item;
+            }
+        }
+    }
+
     fn erase_at(&mut self, surface: Surface, x: f32, y: f32, radius: f32) {
         let radius = if radius.is_finite() {
             radius.clamp(1.0, 100.0)
@@ -1051,6 +1077,7 @@ impl App {
             return;
         };
         let mut removed = Vec::new();
+        let mut idx = 0usize; // original index (retain visits items in order)
         p.items.retain(|item| {
             let hit = match item {
                 Item::Stroke(s) => stroke_hit(s, x, y, radius),
@@ -1058,8 +1085,9 @@ impl App {
                 Item::Shape(s) => shape_hit(s, x, y, radius),
             };
             if hit {
-                removed.push(item.clone());
+                removed.push((idx, item.clone()));
             }
+            idx += 1;
             !hit
         });
         if let Some((_, pending)) = &mut self.erase_pending {
@@ -1354,6 +1382,9 @@ fn draw_text(ctx: &CanvasRenderingContext2d, t: &Text, pal: Palette) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A real 1×1 PNG, base64-encoded (starts with the PNG signature "iVBORw0KGgo").
+    const PNG_1X1_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
     fn app_with_page() -> App {
         let mut a = App::new();
@@ -1660,11 +1691,74 @@ mod tests {
         assert!(!a.delete_item(0, 999.0));
     }
 
+    fn page_ids(a: &App) -> Vec<u64> {
+        a.doc.pages[0].items.iter().map(|it| it.id()).collect()
+    }
+
+    #[test]
+    fn delete_undo_restores_z_order() {
+        let mut a = app_with_page();
+        a.add_text(0, 10.0, 10.0, "a").unwrap();
+        a.add_text(0, 30.0, 30.0, "b").unwrap();
+        a.add_text(0, 50.0, 50.0, "c").unwrap();
+        let ids = page_ids(&a); // draw order == z-order
+        assert!(a.delete_item(0, ids[1] as f64)); // erase the MIDDLE item
+        a.undo();
+        assert_eq!(
+            page_ids(&a),
+            ids,
+            "undeleted item must return to the middle, not the top"
+        );
+    }
+
+    #[test]
+    fn edit_undo_preserves_z_order() {
+        let mut a = app_with_page();
+        a.add_text(0, 10.0, 10.0, "a").unwrap();
+        a.add_text(0, 30.0, 30.0, "b").unwrap();
+        a.add_text(0, 50.0, 50.0, "c").unwrap();
+        let ids = page_ids(&a);
+        a.update_text(0, ids[1] as f64, "B!").unwrap(); // Replace the middle item
+        assert_eq!(page_ids(&a), ids);
+        a.undo();
+        assert_eq!(
+            page_ids(&a),
+            ids,
+            "edited item must keep its z-position after undo"
+        );
+    }
+
+    #[test]
+    fn load_bounds_item_id_to_js_safe_range() {
+        let mut a = app_with_page();
+        a.add_text(0, 50.0, 50.0, "x").unwrap();
+        let json = a.save_json().unwrap();
+        let id_field = format!("\"id\":{}", a.doc.pages[0].items[0].id());
+        // 2^53 is out of range (loses precision in JS) → rejected.
+        let mut b = App::new();
+        assert!(b
+            .load_json(&json.replacen(&id_field, "\"id\":9007199254740992", 1))
+            .is_err());
+        // 2^53 - 1 is the largest in-range id → loads without panic.
+        let mut c = App::new();
+        assert!(c
+            .load_json(&json.replacen(&id_field, "\"id\":9007199254740991", 1))
+            .is_ok());
+    }
+
+    #[test]
+    fn valid_b64_png_requires_signature_and_shape() {
+        assert!(crate::model::valid_b64_png(PNG_1X1_B64));
+        assert!(!crate::model::valid_b64_png("aGVsbG8=")); // valid base64, not a PNG
+        assert!(!crate::model::valid_b64_png("iVBORw0KGgoAA")); // PNG prefix but len % 4 != 0
+        assert!(!crate::model::valid_b64_png("")); // empty
+    }
+
     #[test]
     fn notes_blocks_roundtrip_and_validate() {
         let mut a = app_with_page();
         let i = a.add_text_note("first thought\nsecond line").unwrap();
-        let j = a.add_clipping("aGVsbG8=", 0, "eq (3)").unwrap();
+        let j = a.add_clipping(PNG_1X1_B64, 0, "eq (3)").unwrap();
         assert_eq!(a.notes_len(), 2);
         assert_eq!(a.note_kind(i), "text");
         assert_eq!(a.note_kind(j), "clipping");

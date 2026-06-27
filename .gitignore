@@ -12,3 +12,5 @@ annotated-*.pdf
 .DS_Store
 Thumbs.db
 sample.html
+# Finder/iCloud "filename 2.ext" copy artifacts
+* 2.*

@@ -16,6 +16,7 @@ Deploy the COMPILED Scribble bundle to [course]/clientFilesCourse/scribble/ (see
 
 import html as _html
 import os
+import re
 
 
 def render(element_html, data):
@@ -43,7 +44,19 @@ def render(element_html, data):
         '<base href="%s">'
         "<script>window.__SCRIBBLE_EMBED = true;</script>"
     ) % _html.escape(base_url, quote=True)
-    doc = doc.replace("<head>", "<head>" + inject, 1)
+    # Insert right after the opening <head> tag, tolerating attributes/case (a literal
+    # "<head>" match silently no-ops on "<head ...>", 404-ing every asset). A lambda
+    # replacement sidesteps backslash/backreference escaping in the inject string.
+    new_doc, n = re.subn(
+        r"<head\b[^>]*>", lambda m: m.group(0) + inject, doc, count=1, flags=re.IGNORECASE
+    )
+    if n == 0:
+        return (
+            '<div style="padding:12px;border:1px solid #f0d9a8;background:#fff7e6;border-radius:8px;">'
+            "<strong>pl-scribble:</strong> could not inject the asset base — no "
+            "&lt;head&gt; found in the Scribble bundle. The bundle may be malformed.</div>"
+        )
+    doc = new_doc
 
     srcdoc = _html.escape(doc, quote=True)  # attribute-escape the whole document
     return (

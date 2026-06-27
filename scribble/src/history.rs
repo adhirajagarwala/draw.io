@@ -9,8 +9,12 @@ pub const MAX_HISTORY: usize = 200;
 pub enum Command {
     /// An item was added to `surface`.
     Add { surface: Surface, item: Item },
-    /// Items were removed from `surface` (eraser/delete).
-    Remove { surface: Surface, items: Vec<Item> },
+    /// Items were removed from `surface` (eraser/delete). Each item carries the
+    /// index it occupied so undo can restore it to its original z-position.
+    Remove {
+        surface: Surface,
+        items: Vec<(usize, Item)>,
+    },
     /// An item on `surface` was replaced in place (moved, resized or edited).
     Replace {
         surface: Surface,

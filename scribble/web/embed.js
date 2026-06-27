@@ -30,28 +30,43 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
   if (plMode) {
     try {
       const frame = window.frameElement;
-      const card = frame && (frame.closest(".question-body") || frame.closest(".question-block"));
-      const scope = card || host;
+      // Find the question container by walking UP from our own iframe to the nearest
+      // ancestor that actually contains the annotatable source (or a known PL question
+      // class) — never fall back to the whole document, which would clone the entire page.
+      let card = null;
+      for (let n = frame && frame.parentElement; n && n !== host.body && n !== host.documentElement; n = n.parentElement) {
+        if (n.querySelector(".pl-scribble-source")
+          || n.classList.contains("question-body")
+          || n.classList.contains("question-block")) {
+          card = n;
+          break;
+        }
+      }
+      if (!card) { status("Embedded — couldn't find the question content."); return; }
+      // Keep an element if it IS or CONTAINS an answer control, so PL can still grade it
+      // (covers a control that is a direct child, which a querySelector-only test misses).
+      const hasInput = (el) =>
+        el.matches("input,select,textarea,button") || !!el.querySelector("input,select,textarea,button");
+      const hideIfNoInputs = (el) => {
+        if (el.classList.contains("pl-scribble-wrap")) return; // keep Scribble itself
+        if (hasInput(el)) return;                              // keep answer inputs
+        el.style.display = "none";                             // hide duplicated prose
+      };
       // Preferred: the author wraps the annotatable content in
-      // <div class="pl-scribble-source">…</div>; answer inputs live OUTSIDE it, so PL still
-      // grades them. Fallback: the whole question card minus Scribble + any inputs.
-      const src = scope.querySelector(".pl-scribble-source");
+      // <div class="pl-scribble-source">…</div>. Fallback: the whole question card.
+      const src = card.querySelector(".pl-scribble-source");
       let inner;
       if (src) {
         const c = src.cloneNode(true);
         c.querySelectorAll("script").forEach((el) => el.remove());
         inner = c.innerHTML;
-        src.style.display = "none";                                   // shown inside Scribble instead
-      } else if (card) {
+        [...src.children].forEach(hideIfNoInputs); // hide source prose but keep any nested input
+      } else {
         const c = card.cloneNode(true);
         c.querySelectorAll(".pl-scribble-wrap, script, input, select, textarea, button").forEach((el) => el.remove());
         inner = c.innerHTML;
-        [...card.children].forEach((el) => {
-          if (el.classList.contains("pl-scribble-wrap")) return;      // keep Scribble
-          if (el.querySelector("input,select,textarea,button")) return; // keep answer inputs
-          el.style.display = "none";                                  // hide duplicated prose
-        });
-      } else { status("Embedded — couldn't find the question content."); return; }
+        [...card.children].forEach(hideIfNoInputs);
+      }
       const docHtml =
         '<!doctype html><html><head><meta charset="utf-8">' +
         '<style>body{font-family:-apple-system,system-ui,sans-serif;color:#1f2428;' +

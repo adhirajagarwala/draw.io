@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "89";
+const APP_VERSION = "90";
 
 import init, { App } from "./pkg/scribble.js?v=12";
 import {
@@ -13,14 +13,14 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=89";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=89";
-import { initEmbed } from "./embed.js?v=89";
-import { idbGet, idbPut, idbDelete } from "./idb.js?v=89";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=89";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=89";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=89";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=89";
+} from "./utils.js?v=90";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=90";
+import { initEmbed } from "./embed.js?v=90";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=90";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=90";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=90";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=90";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=90";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -439,12 +439,18 @@ async function contMount(i) {
   }
   try {
     const pg = await pdfDoc.getPage(i + 1);
+    if (token !== cont.token || !p.mounted) return; // scrolled away during getPage
     const v = pg.getViewport({ scale: k });
-    await withRenderLock(() =>
-      pg.render({ canvasContext: p.pdfCanvas.getContext("2d"), viewport: v, intent: "print" }).promise);
+    await withRenderLock(() => {
+      if (token !== cont.token || !p.mounted) return Promise.resolve(); // bail before starting
+      p.renderTask = pg.render({ canvasContext: p.pdfCanvas.getContext("2d"), viewport: v, intent: "print" });
+      return p.renderTask.promise;
+    });
   } catch (e) {
     if (e?.name !== "RenderingCancelledException") console.warn("cont render:", e);
     return;
+  } finally {
+    p.renderTask = null;
   }
   if (token !== cont.token || !p.mounted) return; // rebuilt or scrolled away
   contDrawAnnos(i);
@@ -455,6 +461,7 @@ function contUnmount(i) {
   const p = cont.pages[i];
   if (!p || !p.mounted) return;
   p.mounted = false;
+  if (p.renderTask) { p.renderTask.cancel(); p.renderTask = null; } // stop an in-flight render so the chain doesn't back up
   for (const c of [p.pdfCanvas, p.annoCanvas]) { c.width = 0; c.height = 0; }
 }
 
@@ -504,6 +511,11 @@ function renderDoc() {
 // Which page sheet sits at the middle of the viewport right now.
 function visiblePage() {
   if (!cont.pages.length) return 0;
+  // At the very bottom, a short final page's top can sit below the midpoint, so the
+  // top-vs-mid heuristic would report the second-to-last page. Snap to the last.
+  if (els.viewer.scrollTop + els.viewer.clientHeight >= els.viewer.scrollHeight - 2) {
+    return cont.pages.length - 1;
+  }
   const mid = els.viewer.getBoundingClientRect().top + els.viewer.clientHeight / 2;
   let vis = 0;
   for (let i = 0; i < cont.pages.length; i++) {
@@ -1219,6 +1231,9 @@ async function finishSnip(r) {
   // while it's open — the clipping must still be attributed to THIS page/mode.
   const snipPage = pageNum;
   const snipMode = docMode;
+  // Snapshot the base size too: basePage is reassigned on scroll, and the text
+  // extraction below must use the page the snip started on (snapshot invariant).
+  const snipBase = isContinuous() ? (cont.pages[snipPage]?.base || basePage) : basePage;
   const x0 = Math.min(r.x0, r.x1), y0 = Math.min(r.y0, r.y1);
   const w = Math.abs(r.x1 - r.x0), h = Math.abs(r.y1 - r.y0);
   if (w < 4 || h < 4) {
@@ -1250,7 +1265,7 @@ async function finishSnip(r) {
       for (const src of [srcPdf, srcAnno]) {
         if (src) octx.drawImage(src, x0 * k, y0 * k, w * k, h * k, 0, 0, out.width, out.height);
       }
-      text = await pdfTextInRegion(pdfDoc, pageNum, basePage, x0, y0, w, h);
+      text = await pdfTextInRegion(pdfDoc, snipPage, snipBase, x0, y0, w, h);
     }
 
     // Keep recovered equations and DOM text even when symbol-heavy: the dingbat
@@ -1308,10 +1323,14 @@ let itemDrag = null;    // {id, startX, startY, moved}
 
 function openTextEditor(pageX, pageY, initial, editId) {
   commitTextInput();
-  pendingText = { x: pageX, y: pageY, editId };
+  // Capture the page NOW: in continuous mode onAnnoPointerDown reassigns the live
+  // pageNum to the clicked page, so committing against pageNum later would land the
+  // note (or an edit) on the wrong page. The note belongs to the page it opened on.
+  const page = pageNum;
+  pendingText = { x: pageX, y: pageY, editId, page };
   // Position the input inside its page's element so it tracks that page. In
   // continuous mode that's the active .cpage; otherwise the single #page-wrap.
-  const host = isContinuous() ? cont.pages[pageNum]?.el || els.wrap : els.wrap;
+  const host = isContinuous() ? cont.pages[page]?.el || els.wrap : els.wrap;
   if (els.textInput.parentElement !== host) host.appendChild(els.textInput);
   els.textInput.style.left = `${pageX * scale()}px`;
   els.textInput.style.top = `${(pageY - 18) * scale()}px`;
@@ -1327,13 +1346,13 @@ function commitTextInput() {
     hideTextInput();
     return;
   }
-  const { x, y, editId } = pendingText;
+  const { x, y, editId, page } = pendingText;
   const value = els.textInput.value; // .value only — never innerHTML
   try {
     if (editId !== null && editId !== undefined) {
-      app.update_text(pageNum, editId, value); // empty value deletes the note
+      app.update_text(page, editId, value); // empty value deletes the note
     } else if (value.trim()) {
-      app.add_text(pageNum, x, y, value);
+      app.add_text(page, x, y, value);
     }
   } catch (e) {
     status(String(e));
@@ -1397,7 +1416,7 @@ async function loadJsonFile(file) {
     const filePages = Array.isArray(peek?.pages) ? peek.pages.length : 0;
     const currentSha = app.pdf_sha256();
     const warnings = [];
-    if (fileSha && currentSha && fileSha !== currentSha.trim()) {
+    if (fileSha && currentSha && fileSha.toLowerCase() !== currentSha.trim().toLowerCase()) {
       warnings.push("• It was saved for a DIFFERENT PDF — annotations may not line up.");
     }
     if (pdfDoc && filePages > pdfDoc.numPages) {
@@ -1693,10 +1712,13 @@ function fileStamp() { return new Date().toISOString().replace(/[:.]/g, "-").sli
 // Trigger a browser download of a blob under `filename`.
 function downloadBlob(blob, filename) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(blob);
+  a.href = url;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(a.href);
+  // Defer the revoke — revoking in the same task as click() can cancel/zero-byte
+  // the download in Firefox/Safari (a documented anti-pattern).
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 async function exportPdf() {
@@ -2366,7 +2388,9 @@ function buildClippingBlock(div, i) {
     ? `Enlarge clipping (snipped from page ${srcPage + 1})` : "Enlarge clipping";
   img.title = enlargeLabel;
   img.setAttribute("aria-label", enlargeLabel);
-  const openLightbox = () => showClippingLightbox(img.src, srcPage, docMode, goToPage);
+  // Give the lightbox its OWN blob URL (not the notes-list img.src) so a
+  // renderNotes() that revokes the list URLs can't blank the open lightbox.
+  const openLightbox = () => showClippingLightbox(b64ToBlobUrl(app.note_png(i)), srcPage, docMode, goToPage);
   img.addEventListener("click", openLightbox);
   img.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openLightbox(); }
@@ -2395,18 +2419,23 @@ function renderNotes() {
     URL.revokeObjectURL(img.src);
   }
   sketchViews = [];
+  activeSketch = null; // the views are about to be rebuilt — drop the stale reference
   els.notesList.textContent = "";
   const total = app.notes_len();
   for (let i = 0; i < total; i++) {
-    const kind = app.note_kind(i);
-    const div = newNoteBlock(i);
-    let sketchCanvas = null;
-    if (kind === "sketch") sketchCanvas = buildSketchBlock(div);
-    else if (kind === "text") buildTextBlock(div, i);
-    else if (kind === "clipping") buildClippingBlock(div, i);
-    div.appendChild(blockActions(i, total));
-    els.notesList.appendChild(div);
-    if (sketchCanvas) sketchViews.push(new SketchView(i, sketchCanvas));
+    try {
+      const kind = app.note_kind(i);
+      const div = newNoteBlock(i);
+      let sketchCanvas = null;
+      if (kind === "sketch") sketchCanvas = buildSketchBlock(div);
+      else if (kind === "text") buildTextBlock(div, i);
+      else if (kind === "clipping") buildClippingBlock(div, i);
+      div.appendChild(blockActions(i, total));
+      els.notesList.appendChild(div);
+      if (sketchCanvas) sketchViews.push(new SketchView(i, sketchCanvas));
+    } catch (e) {
+      console.warn("note block render failed:", i, e); // one bad block must not abort the list
+    }
   }
 }
 
@@ -2517,6 +2546,7 @@ const THUMB_SCALE_WIDTH = 220; // backing px; CSS shrinks for sharpness
 
 async function buildThumbnails() {
   els.thumbs.textContent = "";
+  thumbState.clear(); // drop any in-flight render state from the previous document
   if (!pdfDoc) return;
   for (let i = 0; i < pdfDoc.numPages; i++) {
     const btn = document.createElement("button");
@@ -2741,7 +2771,13 @@ async function autosaveTick() {
     if (!key) return; // no hash (e.g. insecure context) — can't key recovery
     const json = app.save_json(); // NB: clears the Rust dirty flag
     dirtySinceFileSave = true;
-    await idbPut(key, { json, savedAt: Date.now(), pages: pdfDoc?.numPages || 0 });
+    try {
+      await idbPut(key, { json, savedAt: Date.now(), pages: pdfDoc?.numPages || 0 });
+    } catch (e) {
+      app.mark_dirty(); // the write was lost (quota/eviction) — re-mark so the next tick retries
+      idbPrune(15); // best-effort: free space (old snapshots) so the retry can land
+      throw e;
+    }
   } catch (e) {
     console.warn("autosave failed:", e);
   }
@@ -2801,6 +2837,7 @@ init()
                  parseFloat(nf.width) || 340, parseFloat(nf.height) || 320);
     }
     autoOpenIfRequested(); // "Open in a new tab" → pop the file picker here
+    idbPrune(); // bound the autosave store (keep the most-recent snapshots)
   })
   .catch((e) => {
     console.error("WASM init failed:", e);

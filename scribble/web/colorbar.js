@@ -63,7 +63,9 @@ function floatCbar(left, top) {
 // Keep a dragged colour bar on-screen when the window/stage resizes.
 function clampContextBar() {
   const cb = els.contextBar;
-  if (cb.hidden) return;
+  // Skip while mid-lift: the bar is position:fixed then, so style.left/top are
+  // viewport coords — clamping them against stage bounds would jump it.
+  if (cb.hidden || cb.classList.contains("cbar-dragging")) return;
   if (isCbarDocked()) {
     // On resize: if the toolbar gap can no longer fit the bar, float it rather
     // than let it overlap the buttons; otherwise re-pin within the gap.
@@ -101,6 +103,7 @@ export function initColorBar(deps) {
   let drag = null;
   const overTopbar = (y) => y <= topbarEl.getBoundingClientRect().bottom + 6;
   grip.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return; // ignore right/middle — they'd open the context menu mid-lift
     const br = cb.getBoundingClientRect();
     // Lift in place: go fixed at the current on-screen spot, then follow the cursor.
     drag = { dx: ev.clientX - br.left, dy: ev.clientY - br.top, fx: br.left, fy: br.top };
@@ -138,7 +141,9 @@ export function initColorBar(deps) {
     savePrefs();
   };
   grip.addEventListener("pointerup", endDrag);
-  grip.addEventListener("pointercancel", endDrag);
+  // A pointercancel is not a drop — pass no event so endDrag restores the pre-lift
+  // docked/floating state (isCbarDocked) instead of committing at the cancel position.
+  grip.addEventListener("pointercancel", () => endDrag(null));
 
   window.addEventListener("resize", clampContextBar);
 }
