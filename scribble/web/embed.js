@@ -5,8 +5,11 @@
 // notes. Only reaches the host DOM when it's same-origin (cross-origin throws and
 // degrades gracefully). Dependencies are injected so the module holds no app
 // state. Bump embed.js's ?v= import in app.js together with APP_VERSION.
-export function initEmbed({ app, els, status, toggleNotes, renderNotes }) {
-  if (!new URLSearchParams(location.search).has("embed")) return;
+export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml }) {
+  // PrairieLearn frames Scribble via a srcdoc iframe (no ?embed query), flagged by
+  // window.__SCRIBBLE_EMBED; the host-demo uses ?embed. Either enters embed mode.
+  const plMode = !!window.__SCRIBBLE_EMBED;
+  if (!plMode && !new URLSearchParams(location.search).has("embed")) return;
   let host, sourceEl;
   try {
     host = window.parent.document;                      // throws if cross-origin
@@ -18,9 +21,39 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes }) {
     return;
   }
   document.body.classList.add("embedded");
+  toggleNotes(true);
+
+  // PrairieLearn (Option B): render the question content INSIDE Scribble so the
+  // student annotates it directly. Clone the question card from the parent (same-
+  // origin), strip Scribble itself, and load it as Scribble's HTML document; PL's
+  // duplicated question prose is then hidden (answer inputs are kept visible).
+  if (plMode) {
+    try {
+      const frame = window.frameElement;
+      const card = frame && (frame.closest(".question-body") || frame.closest(".question-block"));
+      if (!card) { status("Embedded — couldn't find the question to annotate."); return; }
+      const clone = card.cloneNode(true);
+      clone.querySelectorAll(".pl-scribble-wrap, script").forEach((el) => el.remove());
+      const docHtml =
+        '<!doctype html><html><head><meta charset="utf-8">' +
+        '<style>body{font-family:-apple-system,system-ui,sans-serif;color:#1f2428;' +
+        'line-height:1.6;padding:24px;max-width:780px;margin:0 auto;}' +
+        'img,svg{max-width:100%;height:auto;}</style></head><body>' +
+        clone.innerHTML + '</body></html>';
+      openHtml(new File([docHtml], "question.html", { type: "text/html" }));
+      [...card.children].forEach((el) => {
+        if (el.classList.contains("pl-scribble-wrap")) return;        // keep Scribble
+        if (el.querySelector("input,select,textarea,button")) return; // keep answer inputs
+        el.style.display = "none";                                    // hide duplicated prose
+      });
+    } catch (e) {
+      status("Embedded — couldn't load the question: " + (e.message || e));
+    }
+    return;
+  }
+
   els.placeholder.textContent =
     "Snip text, figures or equations from the problem on the left — they land in your notes. You can also draw your own scratch work (＋ Draw).";
-  toggleNotes(true);
 
   const dpr2 = () => Math.min(3, Math.max(1, window.devicePixelRatio || 1));
 
