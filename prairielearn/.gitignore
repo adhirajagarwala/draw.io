@@ -1,0 +1,2 @@
+# The deployed Scribble bundle is build output — regenerate with deploy.sh, don't commit.
+example-course/clientFilesCourse/scribble/

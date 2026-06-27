@@ -1,0 +1,7 @@
+{
+  "uuid": "08e7ebb1-4d64-4176-8e6d-46fdea371125",
+  "longName": "Spring 2026",
+  "allowAccess": [
+    { "startDate": "2026-01-01T00:00:00", "endDate": "2026-12-31T23:59:59" }
+  ]
+}

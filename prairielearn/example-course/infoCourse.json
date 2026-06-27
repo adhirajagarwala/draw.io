@@ -1,0 +1,8 @@
+{
+  "uuid": "282f72d1-fb5c-4035-ac62-c6f2e9f6efef",
+  "name": "SCRIBBLE 101",
+  "title": "Scribble Dev Course",
+  "topics": [
+    { "name": "Demo", "color": "blue1" }
+  ]
+}
