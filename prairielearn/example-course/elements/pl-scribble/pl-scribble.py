@@ -18,11 +18,21 @@ import html as _html
 import os
 import re
 
+import lxml.html
+import prairielearn as pl
+
 
 def render(element_html, data):
     if data["panel"] != "question":
         # Scratchpad has nothing to show in the submission/answer panels.
         return ""
+
+    # The annotatable content is THIS element's own children (encapsulation: Scribble
+    # never traverses PL's surrounding DOM to find the question). We emit it as a hidden
+    # sibling of the iframe inside our own .pl-scribble-wrap; PL/MathJax render it in the
+    # live DOM, and embed.js clones it from our wrapper — reading only output we control.
+    element = lxml.html.fragment_fromstring(element_html)
+    inner = pl.inner_html(element)
 
     base_url = data["options"]["client_files_course_url"].rstrip("/") + "/scribble/"
     index_path = os.path.join(data["options"]["client_files_course_path"], "scribble", "index.html")
@@ -61,8 +71,12 @@ def render(element_html, data):
     srcdoc = _html.escape(doc, quote=True)  # attribute-escape the whole document
     return (
         '<div class="pl-scribble-wrap" style="margin:14px 0;">'
+        # The question content, kept in the DOM (so PL/MathJax render it) but hidden —
+        # Scribble clones it into the scratchpad. This is our OWN output; embed.js reads
+        # frameElement.parentElement and never depends on PrairieLearn's DOM structure.
+        '<div class="pl-scribble-source" hidden>%s</div>'
         '<iframe class="pl-scribble-frame" title="Scribble scratchpad" '
         'style="width:100%%;height:660px;border:1px solid #d7dbe0;border-radius:10px;display:block;" '
         'srcdoc="%s"></iframe>'
         "</div>"
-    ) % srcdoc
+    ) % (inner, srcdoc)

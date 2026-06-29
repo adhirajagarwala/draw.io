@@ -1,21 +1,19 @@
-<pl-question-panel>
-  <div class="pl-scribble-source">
-    <h3>Block on a frictionless incline</h3>
-    <p>
-      A block of mass <b>m = {{params.m}} kg</b> is released from rest and slides down a
-      <b>frictionless</b> incline of height <b>h = {{params.h}} m</b>. Take <b>g = 9.8 m/s²</b>.
-    </p>
-    <p>
-      Find the block's speed at the bottom of the incline. Sketch the situation and work it
-      out on the scratchpad below, then enter your answer.
-    </p>
-  </div>
-</pl-question-panel>
+<!-- The annotatable content lives INSIDE <pl-scribble> — it is the element's own
+     children, so Scribble never reaches up into PrairieLearn's (evolving) DOM to find
+     it. pl-scribble.py renders this content inside Scribble for the student to mark up. -->
+<pl-scribble>
+  <h3>Block on a frictionless incline</h3>
+  <p>
+    A block of mass <b>m = {{params.m}} kg</b> is released from rest and slides down a
+    <b>frictionless</b> incline of height <b>h = {{params.h}} m</b>. Take <b>g = 9.8 m/s²</b>.
+  </p>
+  <p>
+    Find the block's speed at the bottom of the incline. Sketch the situation and work it
+    out on the scratchpad, then enter your answer below.
+  </p>
+</pl-scribble>
 
-<!-- The scratchpad: the question above renders INSIDE Scribble to annotate. -->
-<pl-scribble></pl-scribble>
-
-<!-- The graded answer: typed into PrairieLearn, checked right/wrong (NOT inside Scribble). -->
+<!-- The graded answer: a normal PrairieLearn input, checked right/wrong (NOT inside Scribble). -->
 <pl-question-panel>
   <pl-number-input answers-name="v" label="Speed at the bottom $v =$" suffix="m/s"
                    comparison="relabs" rtol="0.02" digits="3"></pl-number-input>

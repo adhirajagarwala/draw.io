@@ -10,6 +10,36 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
   // window.__SCRIBBLE_EMBED; the host-demo uses ?embed. Either enters embed mode.
   const plMode = !!window.__SCRIBBLE_EMBED;
   if (!plMode && !new URLSearchParams(location.search).has("embed")) return;
+  document.body.classList.add("embedded");
+  toggleNotes(true);
+
+  // PrairieLearn (Option B): render the question content INSIDE Scribble so the student
+  // annotates it directly. The content is OUR element's own output — pl-scribble.py emits
+  // it as <div class="pl-scribble-source" hidden> right beside this iframe inside the
+  // .pl-scribble-wrap. We read only our own wrapper (frameElement.parentElement); we never
+  // traverse PrairieLearn's surrounding DOM, so a future PL layout change can't break this.
+  if (plMode) {
+    try {
+      const wrap = window.frameElement && window.frameElement.parentElement;
+      const src = wrap && wrap.querySelector(":scope > .pl-scribble-source");
+      if (!src) { status("Embedded — no content was placed inside <pl-scribble>."); return; }
+      const c = src.cloneNode(true);
+      c.querySelectorAll("script").forEach((el) => el.remove());
+      const docHtml =
+        '<!doctype html><html><head><meta charset="utf-8">' +
+        '<style>body{font-family:-apple-system,system-ui,sans-serif;color:#1f2428;' +
+        'line-height:1.6;padding:24px;max-width:780px;margin:0 auto;}' +
+        'img,svg{max-width:100%;height:auto;}</style></head><body>' +
+        c.innerHTML + '</body></html>';
+      openHtml(new File([docHtml], "question.html", { type: "text/html" }));
+    } catch (e) {
+      status("Embedded — couldn't load the question: " + (e.message || e));
+    }
+    return;
+  }
+
+  // host-demo (?embed) ONLY past this point — it reaches into the host page DOM for the
+  // snip / grab-text affordances. PrairieLearn mode returned above and never gets here.
   let host, sourceEl;
   try {
     host = window.parent.document;                      // throws if cross-origin
@@ -18,65 +48,6 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
     sourceEl = host.querySelector(sel) || host.body;
   } catch {
     status("Embedded, but can't read the host page (cross-origin).");
-    return;
-  }
-  document.body.classList.add("embedded");
-  toggleNotes(true);
-
-  // PrairieLearn (Option B): render the question content INSIDE Scribble so the
-  // student annotates it directly. Clone the question card from the parent (same-
-  // origin), strip Scribble itself, and load it as Scribble's HTML document; PL's
-  // duplicated question prose is then hidden (answer inputs are kept visible).
-  if (plMode) {
-    try {
-      const frame = window.frameElement;
-      // Find the question container by walking UP from our own iframe to the nearest
-      // ancestor that actually contains the annotatable source (or a known PL question
-      // class) — never fall back to the whole document, which would clone the entire page.
-      let card = null;
-      for (let n = frame && frame.parentElement; n && n !== host.body && n !== host.documentElement; n = n.parentElement) {
-        if (n.querySelector(".pl-scribble-source")
-          || n.classList.contains("question-body")
-          || n.classList.contains("question-block")) {
-          card = n;
-          break;
-        }
-      }
-      if (!card) { status("Embedded — couldn't find the question content."); return; }
-      // Keep an element if it IS or CONTAINS an answer control, so PL can still grade it
-      // (covers a control that is a direct child, which a querySelector-only test misses).
-      const hasInput = (el) =>
-        el.matches("input,select,textarea,button") || !!el.querySelector("input,select,textarea,button");
-      const hideIfNoInputs = (el) => {
-        if (el.classList.contains("pl-scribble-wrap")) return; // keep Scribble itself
-        if (hasInput(el)) return;                              // keep answer inputs
-        el.style.display = "none";                             // hide duplicated prose
-      };
-      // Preferred: the author wraps the annotatable content in
-      // <div class="pl-scribble-source">…</div>. Fallback: the whole question card.
-      const src = card.querySelector(".pl-scribble-source");
-      let inner;
-      if (src) {
-        const c = src.cloneNode(true);
-        c.querySelectorAll("script").forEach((el) => el.remove());
-        inner = c.innerHTML;
-        [...src.children].forEach(hideIfNoInputs); // hide source prose but keep any nested input
-      } else {
-        const c = card.cloneNode(true);
-        c.querySelectorAll(".pl-scribble-wrap, script, input, select, textarea, button").forEach((el) => el.remove());
-        inner = c.innerHTML;
-        [...card.children].forEach(hideIfNoInputs);
-      }
-      const docHtml =
-        '<!doctype html><html><head><meta charset="utf-8">' +
-        '<style>body{font-family:-apple-system,system-ui,sans-serif;color:#1f2428;' +
-        'line-height:1.6;padding:24px;max-width:780px;margin:0 auto;}' +
-        'img,svg{max-width:100%;height:auto;}</style></head><body>' +
-        inner + '</body></html>';
-      openHtml(new File([docHtml], "question.html", { type: "text/html" }));
-    } catch (e) {
-      status("Embedded — couldn't load the question: " + (e.message || e));
-    }
     return;
   }
 

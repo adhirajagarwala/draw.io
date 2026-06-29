@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "91";
+const APP_VERSION = "92";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=91";
+import init, { App } from "./pkg/scribble.js?v=92";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,14 +17,14 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=91";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=91";
-import { initEmbed } from "./embed.js?v=91";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=91";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=91";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=91";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=91";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=91";
+} from "./utils.js?v=92";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=92";
+import { initEmbed } from "./embed.js?v=92";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=92";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=92";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=92";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=92";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=92";
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
