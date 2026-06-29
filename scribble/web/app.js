@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "92";
+const APP_VERSION = "97";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=92";
+import init, { App } from "./pkg/scribble.js?v=97";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,14 +17,23 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=92";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=92";
-import { initEmbed } from "./embed.js?v=92";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=92";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=92";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=92";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=92";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=92";
+} from "./utils.js?v=97";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=97";
+import { initEmbed } from "./embed.js?v=97";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=97";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=97";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=97";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=97";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=97";
+
+// PrairieLearn read-only mode: a past submission is displayed but not editable.
+// The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
+// head script, ahead of the CSP meta). All edit entry points short-circuit on it.
+const READONLY = !!window.__SCRIBBLE_READONLY;
+// Unsaved work relative to the LAST PrairieLearn commit (Save / Save & Grade). The
+// PL save loop calls save_json() which clears the Rust dirty flag, so is_dirty()
+// alone can't drive the unload warning in embed mode — OR this in too.
+let plUnsavedSinceCommit = false;
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -663,14 +672,14 @@ let htmlTruncated = false; // measured content exceeded HTML_MAX_PAGE_H
 async function openHtml(file) {
   if (file.size > MAX_HTML_BYTES) {
     status("HTML file too large (max 5 MB).");
-    return;
+    return false;
   }
   let text;
   try {
     text = await file.text();
   } catch {
     status("Couldn't read that file.");
-    return;
+    return false;
   }
   try {
     if (pdfDoc) { try { await pdfDoc.destroy(); } catch { /* ignore */ } pdfDoc = null; }
@@ -718,9 +727,11 @@ async function openHtml(file) {
     updateContextBar(activeTool());
     renderNotes();
     status("HTML loaded. Scribble away!");
+    return true;
   } catch (e) {
     console.error("openHtml failed:", e);
     status(`Could not open HTML: ${e?.message || e}`);
+    return false;
   }
 }
 
@@ -791,6 +802,7 @@ function renderHtmlPage() {
 // image loads; a hard timeout covers images that never resolve.
 let htmlRemeasureTimer;
 function watchHtmlImages() {
+  if (READONLY) return; // its deferred re-measure → ensure_page would clobber the hydrated saved height
   let d;
   try { d = els.htmlFrame.contentDocument; } catch { return; }
   if (!d) return;
@@ -841,7 +853,7 @@ function capturePointer(ev) {
 }
 
 function onAnnoPointerDown(ev) {
-  if (!docOpen() || ev.button !== 0) return;
+  if (!docOpen() || READONLY || ev.button !== 0) return;
   // In continuous mode the page you press on becomes the active page for
   // hit-testing / drawing (scrolling alone never changes it).
   if (isContinuous()) {
@@ -946,6 +958,7 @@ function moveItem(ev) {
 // an item, default otherwise (never changes the active page). Other tools clear
 // any leftover select-hover cursor and fall back to the CSS crosshair.
 function updateHoverCursor(ev) {
+  if (READONLY) { ev.currentTarget.style.cursor = ""; return; }
   if (docOpen() && activeTool() === "select") {
     let hp = pageNum, hx, hy;
     if (isContinuous()) {
@@ -1450,6 +1463,46 @@ async function loadJsonFile(file) {
   if (app.notes_len() > 0 && els.notesPane.hidden) toggleNotes(true);
   if (!els.thumbs.hidden) await buildThumbnails();
   await renderDoc(); // re-render the CURRENT mode (HTML / continuous / paged)
+}
+
+// ---------- PrairieLearn persistence (embed mode) ----------
+// The serialized annotation document is carried as UTF-8-safe base64 (btoa alone
+// throws on non-ASCII note text). Encode the UTF-8 bytes; decode them back.
+
+// Returns base64(save_json()) when there are unsaved edits, else null. MUST resolve the
+// CURRENT `app` — openHtml → newDocument reassigns it, so embed.js calls this instead of
+// holding its own (soon-stale) app reference. save_json clears the Rust dirty flag.
+function serializeAnnotations() {
+  if (!app || !app.is_dirty()) return null;
+  return bytesToB64(new TextEncoder().encode(app.save_json()));
+}
+
+// Restore a base64-encoded annotation document over the already-open question (the
+// PL question content was openHtml()'d first). Returns true on success. Mirrors the
+// proven loadJsonFile sequence, and re-syncs the HTML page box from the saved height.
+function hydrateAnnotations(b64) {
+  if (!b64 || !b64.trim()) return false; // blank scratchpad — load_json("") would throw
+  let json, savedH;
+  try {
+    json = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+    savedH = JSON.parse(json)?.pages?.[0]?.height;
+  } catch { status("Couldn't restore saved work."); return false; }
+  try {
+    app.load_json(json); // Rust validates + replaces the doc wholesale; throws on bad input (doc untouched)
+  } catch (e) {
+    status("Couldn't restore saved work: " + (e?.message || e));
+    return false;
+  }
+  app.set_pdf_sha256(""); // HTML mode has no PDF hash
+  if (docMode === "html" && savedH > 0) {
+    basePage = { w: HTML_BASE_W, h: savedH }; // width is fixed, so trusting the saved height keeps x/y exact
+    renderHtmlPage();
+  } else {
+    renderDoc();
+  }
+  renderNotes();
+  if (app.notes_len() > 0 && els.notesPane.hidden) toggleNotes(true);
+  return true;
 }
 
 // ---------- export annotated PDF ----------
@@ -1997,6 +2050,7 @@ document.addEventListener("keydown", (ev) => {
       ev.target.matches("input, textarea, select, [contenteditable]")) {
     return;
   }
+  if (READONLY) return; // no tool/edit/undo shortcuts when viewing a saved submission
   // When the shortcuts overlay is open, it captures Esc / ? and suppresses the
   // rest so nothing fires behind the modal.
   if (!helpOverlay.hidden) {
@@ -2064,9 +2118,11 @@ document.addEventListener("keydown", (ev) => {
 });
 
 window.addEventListener("beforeunload", (ev) => {
-  // Warn if there are changes not written to a FILE. Autosave clears the Rust
-  // dirty flag, so we OR it with our own file-save tracking (see autosaveTick).
-  if (dirtySinceFileSave || app?.is_dirty()) {
+  // Warn if there are changes not written to a FILE. Autosave (and the PL save
+  // loop) clear the Rust dirty flag, so we OR in our own trackers: dirtySinceFileSave
+  // (PDF file-save) and plUnsavedSinceCommit (annotations not yet committed to PL).
+  if (READONLY) return; // a read-only submission view has nothing to lose
+  if (dirtySinceFileSave || app?.is_dirty() || plUnsavedSinceCommit) {
     ev.preventDefault();
     ev.returnValue = "";
   }
@@ -2181,7 +2237,7 @@ class SketchView {
   }
 
   down(ev) {
-    if (ev.button !== 0) return;
+    if (ev.button !== 0 || READONLY) return; // read-only: sketch notes are not editable either
     activeSketch = this;       // Delete/Escape route here
     setSelection(-1);          // clear any PDF selection
     const tool = activeTool();
@@ -2254,6 +2310,7 @@ class SketchView {
   }
 
   openText(ev, x, y, initial, editId) {
+    if (READONLY) return; // no text editing on a saved submission (covers the dblclick-to-edit path)
     const input = document.createElement("textarea");
     input.rows = 1;
     input.maxLength = 500;
@@ -2814,9 +2871,10 @@ async function maybeRestoreAutosave(hash) {
 
 // ---------- boot ----------
 
-// Read-only debug handle, opt-in via ?debug (used by tests; harmless: the
-// page is fully client-side and the user already owns all state).
-if (new URLSearchParams(location.search).has("debug")) {
+// Read-only debug handle, opt-in via ?debug and always available in embed mode (the
+// srcdoc carries no query string). Harmless: the page is fully client-side, the user
+// already owns all annotation state, and PrairieLearn re-validates everything on save.
+if (new URLSearchParams(location.search).has("debug") || window.__SCRIBBLE_EMBED) {
   Object.defineProperty(window, "__app", { get: () => app });
   Object.defineProperty(window, "__pdf", { get: () => pdfDoc });
 }
@@ -2831,8 +2889,13 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
   .then(() => {
     app = new App();
     const prefs = applyPrefs();
+    if (READONLY) document.body.classList.add("readonly"); // hides edit chrome (CSS) — JS gates already block edits
     updateContextBar(activeTool()); // hide the colour UI (and palette) until a doc opens
-    initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml });
+    initEmbed({
+      app, els, status, toggleNotes, renderNotes, openHtml,
+      hydrateAnnotations, serializeAnnotations,
+      setPlUnsaved: (v) => { plUnsavedSinceCommit = v; },
+    });
     // In embed mode, keep the colour bar docked in the toolbar — never floating over the question.
     if (document.body.classList.contains("embedded")) {
       dockCbar(12);

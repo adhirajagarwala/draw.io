@@ -606,6 +606,22 @@ body.notes-floating #notes-pane .notes-resize {
 #btn-notes-dock { display: none; }
 body.embedded #btn-notes-dock { display: inline-flex; }
 
+/* Read-only (a saved PrairieLearn submission): annotations render but nothing edits.
+   The JS READONLY gates are the real lock — this just removes the now-dead chrome.
+   Export, zoom, page-nav and the notes toggle stay (they're read-safe). */
+body.readonly #rail,
+body.readonly #context-bar,
+body.readonly #btn-add-note,
+body.readonly #btn-add-sketch,
+body.readonly #btn-notes-dock,
+body.readonly #btn-open,
+body.readonly #btn-save,
+body.readonly #btn-load,
+body.readonly #btn-undo,
+body.readonly #btn-redo,
+body.readonly #btn-big { display: none !important; }
+body.readonly #anno-canvas { cursor: default; }
+
 #notes-pane header {
   display: flex;
   justify-content: space-between;

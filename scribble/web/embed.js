@@ -5,7 +5,8 @@
 // notes. Only reaches the host DOM when it's same-origin (cross-origin throws and
 // degrades gracefully). Dependencies are injected so the module holds no app
 // state. Bump embed.js's ?v= import in app.js together with APP_VERSION.
-export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml }) {
+export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml,
+  hydrateAnnotations, serializeAnnotations, setPlUnsaved }) {
   // PrairieLearn frames Scribble via a srcdoc iframe (no ?embed query), flagged by
   // window.__SCRIBBLE_EMBED; the host-demo uses ?embed. Either enters embed mode.
   const plMode = !!window.__SCRIBBLE_EMBED;
@@ -19,22 +20,54 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
   // .pl-scribble-wrap. We read only our own wrapper (frameElement.parentElement); we never
   // traverse PrairieLearn's surrounding DOM, so a future PL layout change can't break this.
   if (plMode) {
-    try {
-      const wrap = window.frameElement && window.frameElement.parentElement;
-      const src = wrap && wrap.querySelector(":scope > .pl-scribble-source");
-      if (!src) { status("Embedded — no content was placed inside <pl-scribble>."); return; }
-      const c = src.cloneNode(true);
-      c.querySelectorAll("script").forEach((el) => el.remove());
-      const docHtml =
-        '<!doctype html><html><head><meta charset="utf-8">' +
-        '<style>body{font-family:-apple-system,system-ui,sans-serif;color:#1f2428;' +
-        'line-height:1.6;padding:24px;max-width:780px;margin:0 auto;}' +
-        'img,svg{max-width:100%;height:auto;}</style></head><body>' +
-        c.innerHTML + '</body></html>';
-      openHtml(new File([docHtml], "question.html", { type: "text/html" }));
-    } catch (e) {
-      status("Embedded — couldn't load the question: " + (e.message || e));
-    }
+    const wrap = window.frameElement && window.frameElement.parentElement;
+    const src = wrap && wrap.querySelector(":scope > .pl-scribble-source");
+    if (!wrap || !src) { status("Embedded — no content was placed inside <pl-scribble>."); return; }
+    // Config the server injected (head <script>, ahead of the CSP meta): { readOnly, name?, data? }.
+    const pl = window.__SCRIBBLE_PL || {};
+    // The live form input (question panel only) — also our own output, in PL's form.
+    const input = pl.readOnly ? null : wrap.querySelector(":scope > .pl-scribble-input");
+
+    // The doc to annotate = our own (cloned) question source, scripts stripped.
+    const c = src.cloneNode(true);
+    c.querySelectorAll("script").forEach((el) => el.remove());
+    const docHtml =
+      '<!doctype html><html><head><meta charset="utf-8">' +
+      '<style>body{font-family:-apple-system,system-ui,sans-serif;color:#1f2428;' +
+      'line-height:1.6;padding:24px;max-width:780px;margin:0 auto;}' +
+      'img,svg{max-width:100%;height:auto;}</style></head><body>' +
+      c.innerHTML + '</body></html>';
+    const file = new File([docHtml], "question.html", { type: "text/html" });
+
+    (async () => {
+      const ok = await openHtml(file); // returns false on any failure
+      if (!ok) { status("Embedded — couldn't load the question."); return; }
+      // HYDRATE strictly AFTER the question rendered (page 0 exists). Read-only panels
+      // get the submission's saved blob (server-injected); the question panel gets the
+      // prior submission seeded into the hidden input's value.
+      const seed = pl.readOnly ? pl.data : (input && input.value);
+      if (seed) hydrateAnnotations(seed);
+      if (pl.readOnly || !input) return; // read-only view (or no input): no save loop
+
+      // SAVE LOOP: whenever there are unsaved edits, write base64(save_json()) into the
+      // hidden form input and fire input/change so PrairieLearn marks the form dirty and
+      // enables Save. The Rust dirty flag is the natural debounce (cleared by save_json).
+      const flush = () => {
+        try {
+          const v = serializeAnnotations(); // null when nothing changed; resolves the CURRENT app
+          if (v == null) return;
+          input.value = v;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          setPlUnsaved(true);
+        } catch { /* keep the dirty flag set; the next tick retries */ }
+      };
+      setInterval(flush, 1500);
+      window.addEventListener("beforeunload", flush);
+      window.addEventListener("pagehide", flush);
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+      window.addEventListener("blur", flush); // best-effort: focus leaving the iframe (e.g. clicking Save)
+    })();
     return;
   }
 
