@@ -12,7 +12,8 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
   const plMode = !!window.__SCRIBBLE_EMBED;
   if (!plMode && !new URLSearchParams(location.search).has("embed")) return;
   document.body.classList.add("embedded");
-  toggleNotes(true);
+  // Don't force the notes pane open — it steals height from the question on first load.
+  // It auto-opens when there's something to show (a snip, a grab, or hydrated notes).
 
   // PrairieLearn (Option B): render the question content INSIDE Scribble so the student
   // annotates it directly. The content is OUR element's own output — pl-scribble.py emits
@@ -49,6 +50,17 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
       if (seed) hydrateAnnotations(seed);
       if (pl.readOnly || !input) return; // read-only view (or no input): no save loop
 
+      // Orient the first-time student (one toast; auto-hides, aria-live, textContent-safe).
+      status("Scratchpad — draw on the question with the tools on the left. Rough work, saved with your answer.");
+
+      // Honest capture indicator. PrairieLearn only persists when the student clicks ITS Save
+      // button (this iframe can't observe that), so NEVER claim "Saved" — only "Captured".
+      const pill = document.createElement("span");
+      pill.className = "capture-pill";
+      pill.hidden = true;
+      (document.querySelector("#topbar .topbar-right") || document.getElementById("topbar"))?.prepend(pill);
+      const markCaptured = () => { pill.hidden = false; pill.textContent = "✓ Captured — saves with your answer"; };
+
       // SAVE LOOP: whenever there are unsaved edits, write base64(save_json()) into the
       // hidden form input and fire input/change so PrairieLearn marks the form dirty and
       // enables Save. The Rust dirty flag is the natural debounce (cleared by save_json).
@@ -60,6 +72,7 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
           input.dispatchEvent(new Event("input", { bubbles: true }));
           input.dispatchEvent(new Event("change", { bubbles: true }));
           setPlUnsaved(true);
+          markCaptured();
         } catch { /* keep the dirty flag set; the next tick retries */ }
       };
       setInterval(flush, 1500);

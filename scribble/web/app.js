@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "97";
+const APP_VERSION = "98";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=97";
+import init, { App } from "./pkg/scribble.js?v=98";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,14 +17,14 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=97";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=97";
-import { initEmbed } from "./embed.js?v=97";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=97";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=97";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=97";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=97";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=97";
+} from "./utils.js?v=98";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=98";
+import { initEmbed } from "./embed.js?v=98";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=98";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=98";
+import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=98";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=98";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=98";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -2074,7 +2074,13 @@ document.addEventListener("keydown", (ev) => {
     redrawAnnotations();
   } else if (mod && key === "s") {
     ev.preventDefault();
-    if (!els.btn.save.disabled) downloadJson();
+    // In embed mode the work saves with the PL submission, not to a downloaded file.
+    // Intercept the reflexive Cmd/Ctrl+S so it doesn't litter Downloads with a junk .json.
+    if (document.body.classList.contains("embedded")) {
+      status("Your scratch work saves automatically with your answer.");
+    } else if (!els.btn.save.disabled) {
+      downloadJson();
+    }
   } else if ((ev.key === "Delete" || ev.key === "Backspace")) {
     if (selectedId >= 0) {
       ev.preventDefault();

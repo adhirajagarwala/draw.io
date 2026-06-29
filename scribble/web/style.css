@@ -135,8 +135,9 @@ button { font: inherit; }
 #rail .tool.active {
   background: var(--accent-soft);
   color: var(--accent);
-  border-color: #c4d2f5;
+  border-color: var(--accent);
   font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent); /* clear "armed" left bar so the active tool reads at a glance */
 }
 
 .btn {
@@ -621,6 +622,41 @@ body.readonly #btn-undo,
 body.readonly #btn-redo,
 body.readonly #btn-big { display: none !important; }
 body.readonly #anno-canvas { cursor: default; }
+
+/* ---- UX: PrairieLearn scratchpad simplifications (embed only) ---- */
+/* Trim grader-only marks for the student scratchpad — Pen/Highlight/Text/Erase/Select/Snip
+   + Arrow/Box/Circle stay. Hidden, never deleted (standalone keeps them; saved submissions
+   still render every mark type). */
+body.embedded #rail [data-tool="tick"],
+body.embedded #rail [data-tool="cross"],
+body.embedded #rail [data-tool="fillrect"] { display: none; }
+
+/* Honest "your work is being captured" pill in the embed toolbar (set by embed.js). PL only
+   persists on its own Save click, so the copy says "Captured", never "Saved". */
+.capture-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #e7f5ec;
+  color: #1a7f43;
+  border: 1px solid #b9e3c8;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* The project's mistakes log claims this exists — it didn't. Respect reduced-motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 #notes-pane header {
   display: flex;

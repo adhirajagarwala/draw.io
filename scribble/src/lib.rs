@@ -69,7 +69,7 @@ impl App {
             doc: Document::new(),
             history: History::default(),
             tool: Tool::Pen,
-            color: Color::Black,
+            color: Color::Blue, // first stroke must stand out from near-black question text
             pen_width: 2.5,
             hl_width: 14.0,
             text_size: 16.0,
