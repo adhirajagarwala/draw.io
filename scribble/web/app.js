@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "102";
+const APP_VERSION = "103";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=102";
+import init, { App } from "./pkg/scribble.js?v=103";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,14 +17,14 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=102";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=102";
-import { initEmbed } from "./embed.js?v=102";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=102";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=102";
-import { confirmOpenDialog, showClippingLightbox } from "./modals.js?v=102";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=102";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=102";
+} from "./utils.js?v=103";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=103";
+import { initEmbed } from "./embed.js?v=103";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=103";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=103";
+import { confirmOpenDialog, showClippingLightbox } from "./modals.js?v=103";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=103";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=103";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -49,10 +49,12 @@ async function getPdfjs() {
 // Failures must never be silent: surface anything uncaught in the status
 // toast so "it just stopped working" always has a visible reason.
 window.addEventListener("error", (ev) => {
-  status(`Unexpected error: ${ev.message || "see console"}`);
+  console.error(ev.error || ev.message); // keep the raw detail for debugging
+  status("Something went wrong. Reload the page if this keeps happening.");
 });
 window.addEventListener("unhandledrejection", (ev) => {
-  status(`Unexpected error: ${ev.reason?.message || ev.reason || "see console"}`);
+  console.error(ev.reason);
+  status("Something went wrong. Reload the page if this keeps happening.");
 });
 
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
@@ -161,7 +163,7 @@ function withRenderLock(fn) {
       fn(),
       new Promise((_, rej) =>
         setTimeout(
-          () => rej(new Error("PDF rendering stalled — please reload the page (Cmd+Shift+R)")),
+          () => rej(new Error("PDF rendering stalled — please reload the page.")),
           RENDER_WATCHDOG_MS,
         ),
       ),
@@ -199,7 +201,9 @@ function status(msg) {
 
 let selectedId = -1;          // current selection (select tool)
 const HANDLE_PX = 7;          // on-screen handle half-size (CSS px)
-const ERASE_RADIUS_PX = 10;   // eraser hit radius (CSS px; ÷ scale for page units)
+// Bigger eraser hit on touch devices (fingertips are imprecise vs a mouse).
+const COARSE_POINTER = !!window.matchMedia?.("(any-pointer: coarse)").matches;
+const ERASE_RADIUS_PX = COARSE_POINTER ? 20 : 10; // eraser hit radius (CSS px; ÷ scale for page units)
 const MOVE_THRESHOLD_PX = 3;  // a drag must exceed this before it counts as a move
 
 function setSelection(id) {
