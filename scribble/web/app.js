@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "99";
+const APP_VERSION = "100";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=99";
+import init, { App } from "./pkg/scribble.js?v=100";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,14 +17,14 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=99";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=99";
-import { initEmbed } from "./embed.js?v=99";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=99";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=99";
-import { confirmOpenDialog, showClippingLightbox } from "./modals.js?v=99";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=99";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=99";
+} from "./utils.js?v=100";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=100";
+import { initEmbed } from "./embed.js?v=100";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=100";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=100";
+import { confirmOpenDialog, showClippingLightbox } from "./modals.js?v=100";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=100";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=100";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -110,6 +110,11 @@ let pdfDoc = null;  // PDF.js document
 let docMode = "pdf"; // "pdf" | "html" — what kind of document is open
 let pageNum = 0;    // 0-based current page
 let drawing = false;
+// Touch/stylus: concurrent contacts (palm rejection + two-finger gestures).
+const activePointers = new Map(); // pointerId -> pointerType
+let penActive = false;            // a stylus is the current input → ignore touch (palm)
+let drawingPointerId = null;      // which contact owns the in-progress stroke
+const PALM_MAX_PX = 40;           // a contact wider/taller than this is a resting palm, not a fingertip
 let renderTask = null;
 let scrollMode = "paged"; // "paged" (one page at a time) | "continuous" (PDF only)
 
@@ -855,6 +860,19 @@ function capturePointer(ev) {
 
 function onAnnoPointerDown(ev) {
   if (!docOpen() || READONLY || ev.button !== 0) return;
+  // Touch while a stylus is the active input = a resting palm; ignore it entirely.
+  if (ev.pointerType === "touch" && penActive) return;
+  activePointers.set(ev.pointerId, ev.pointerType);
+  if (ev.pointerType === "pen") penActive = true;
+  // A second concurrent contact is a pinch/pan, not a stroke: cancel anything in
+  // progress and don't draw (native gestures are off via touch-action:none, but at
+  // minimum a two-finger gesture must never leave a stray stroke).
+  if (activePointers.size >= 2) {
+    if (drawing) { drawing = false; app.pointer_cancel(); }
+    snip = resizeDrag = itemDrag = null;
+    redrawAnnotations();
+    return;
+  }
   // In continuous mode the page you press on becomes the active page for
   // hit-testing / drawing (scrolling alone never changes it).
   if (isContinuous()) {
@@ -901,10 +919,16 @@ function onAnnoPointerDown(ev) {
     openTextEditor(x, y, "", null);
     return;
   }
+  // A palm-sized lone touch on a drawing tool is a resting hand — don't draw.
+  if (ev.pointerType === "touch" && Math.max(ev.width || 0, ev.height || 0) > PALM_MAX_PX) {
+    activePointers.delete(ev.pointerId);
+    return;
+  }
   commitTextInput();
   hideRegionButton();
   capturePointer(ev);
   drawing = true;
+  drawingPointerId = ev.pointerId;
   // Track the drag rectangle for Box/Shade so we can offer "add to notes".
   regionDraw = REGION_TOOLS.has(tool) ? { x0: x, y0: y, x1: x, y1: y } : null;
   app.pointer_down(pageNum, x, y, eraseRadius());
@@ -1006,6 +1030,11 @@ function onAnnoPointerMove(ev) {
 els.annoCanvas.addEventListener("pointermove", onAnnoPointerMove);
 
 function endStroke(ev) {
+  activePointers.delete(ev.pointerId);
+  if (ev.pointerType === "pen") penActive = false;
+  // An up from a contact that wasn't the one drawing (e.g. a rejected palm, or the
+  // second finger of a pinch) must not end the active stroke.
+  if (drawing && ev.pointerId !== drawingPointerId) return;
   if (ev.pointerId !== undefined && ev.currentTarget.hasPointerCapture?.(ev.pointerId)) {
     ev.currentTarget.releasePointerCapture(ev.pointerId);
   }
@@ -1048,7 +1077,11 @@ function endStroke(ev) {
   }
 }
 
-function onAnnoPointerCancel() {
+function onAnnoPointerCancel(ev) {
+  if (ev) {
+    activePointers.delete(ev.pointerId);
+    if (ev.pointerType === "pen") penActive = false;
+  }
   drawing = false;
   itemDrag = null;
   resizeDrag = null;
@@ -1986,6 +2019,13 @@ els.zoomSelect.addEventListener("change", () => {
   renderDoc();
 });
 
+// Trackpad pinch / Ctrl+wheel zooms; a plain wheel stays fully native (never scroll-jack, §10).
+els.viewer.addEventListener("wheel", (ev) => {
+  if (!docOpen() || !(ev.ctrlKey || ev.metaKey)) return;
+  ev.preventDefault();
+  nudgeZoom(ev.deltaY < 0 ? 1.08 : 1 / 1.08);
+}, { passive: false });
+
 // Single-page <-> continuous scroll (PDF only) via a labelled segmented
 // control. Default is single-page. The active segment is highlighted.
 function syncScrollUI() {
@@ -2810,7 +2850,13 @@ function savePrefs() {
 function applyPrefs() {
   let p = {};
   try { p = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { /* ignore */ }
-  if (p.big) applyBig(true);
+  // Larger controls: honor an explicit choice; otherwise (pref unset) default ON for a
+  // touch-only device, where the tiny icon targets are hardest to hit.
+  if (p.big !== undefined) {
+    if (p.big) applyBig(true);
+  } else if (window.matchMedia?.("(any-pointer: coarse) and (not (any-pointer: fine))").matches) {
+    applyBig(true);
+  }
   if (p.notesWidth) els.notesPane.style.width = p.notesWidth;
   const cb = p.cbar || {};
   if (cb.docked) {
