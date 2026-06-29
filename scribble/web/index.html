@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=98">
+  <link rel="stylesheet" href="style.css?v=99">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -189,19 +189,22 @@
 
       <!-- Floating document controls: page nav + zoom (viewer convention) -->
       <div id="doc-controls" hidden>
-        <button id="btn-prev" class="btn" title="Previous page (PageUp / scroll up at the top)" disabled>
-          <svg viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6"/></svg>
-        </button>
-        <span class="readout">
-          <input id="page-input" type="number" min="1" value="1" disabled
-                 title="Type a page number and press Enter">
-          <span id="page-count">/ –</span>
+        <!-- Page nav + the Page/Scroll toggle are meaningless on a single HTML page; CSS
+             hides #page-nav (and #scroll-mode) under body.html-doc. -->
+        <span id="page-nav">
+          <button id="btn-prev" class="btn" title="Previous page (PageUp / scroll up at the top)" disabled>
+            <svg viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6"/></svg>
+          </button>
+          <span class="readout">
+            <input id="page-input" type="number" min="1" value="1" disabled
+                   title="Type a page number and press Enter">
+            <span id="page-count">/ –</span>
+          </span>
+          <button id="btn-next" class="btn" title="Next page (PageDown / scroll down at the bottom)" disabled>
+            <svg viewBox="0 0 24 24"><path d="M10 6l6 6-6 6"/></svg>
+          </button>
+          <span class="bar-divider"></span>
         </span>
-        <button id="btn-next" class="btn" title="Next page (PageDown / scroll down at the bottom)" disabled>
-          <svg viewBox="0 0 24 24"><path d="M10 6l6 6-6 6"/></svg>
-        </button>
-
-        <span class="bar-divider"></span>
 
         <button id="btn-undo" class="btn" title="Undo (Ctrl/Cmd+Z)" disabled>
           <svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 1 3 6.7"/></svg>
@@ -313,6 +316,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=98"></script>
+  <script type="module" src="app.js?v=99"></script>
 </body>
 </html>

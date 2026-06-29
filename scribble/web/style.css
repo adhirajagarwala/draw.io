@@ -2,7 +2,7 @@
 
 :root {
   --ink: #1f2428;
-  --muted: #6a737d;
+  --muted: #586069; /* darkened for contrast on the 10.5px rail labels + readouts */
   --line: #e1e4e8;
   --bg: #eef0f3;
   --panel: #ffffff;
@@ -648,6 +648,18 @@ body.embedded #rail [data-tool="fillrect"] { display: none; }
   white-space: nowrap;
 }
 
+/* Single HTML page: page prev/next, the page readout, and the Page/Scroll toggle are all
+   inert. Hide them (keep undo/redo + zoom). Keyed on document MODE, so it applies to a
+   standalone HTML file too, not just embed. */
+#page-nav { display: contents; }
+body.html-doc #page-nav,
+body.html-doc #scroll-mode { display: none; }
+
+/* Touch polish on the hottest controls: removes the grey tap-flash + the accidental
+   double-tap-zoom (matches the existing .btn behavior). */
+#rail .tool,
+.swatch { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+
 /* The project's mistakes log claims this exists — it didn't. Respect reduced-motion. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -1113,6 +1125,7 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
   bottom: 18px;
   left: 50%;
   transform: translateX(-50%);
+  z-index: 60; /* above #doc-controls — the toast was rendering behind the controls pill */
   background: var(--ink);
   color: #fff;
   font-size: 13px;

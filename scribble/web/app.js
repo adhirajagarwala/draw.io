@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "98";
+const APP_VERSION = "99";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=98";
+import init, { App } from "./pkg/scribble.js?v=99";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,14 +17,14 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=98";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=98";
-import { initEmbed } from "./embed.js?v=98";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=98";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=98";
-import { confirmSnipText, confirmOpenDialog, showClippingLightbox } from "./modals.js?v=98";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=98";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=98";
+} from "./utils.js?v=99";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=99";
+import { initEmbed } from "./embed.js?v=99";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=99";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=99";
+import { confirmOpenDialog, showClippingLightbox } from "./modals.js?v=99";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=99";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=99";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -585,6 +585,7 @@ function syncZoomSelect() {
 function newDocument(mode) {
   app = new App();
   docMode = mode;
+  document.body.classList.toggle("html-doc", mode === "html"); // hides inert page-nav controls
   dirtySinceFileSave = false;
   pageNum = 0;
   selectedId = -1;
@@ -1290,8 +1291,9 @@ async function finishSnip(r) {
     // a word boundary so a long caption never cuts mid-word.
     const usable = (hadMath || looksLikeText(text))
       ? clampCaption(text, snipMode === "html" ? 300 : 280) : "";
-    // Never add captured text without asking — the image still goes in regardless.
-    const finalText = (usable && await confirmSnipText(usable)) ? usable : "";
+    // Auto-include the recovered text as the clipping's caption — it lands in an editable,
+    // deletable textarea, which IS the take-back. One gesture instead of a blocking confirm.
+    const finalText = usable;
 
     // When the image can't be captured, keep the recovered text as a note rather
     // than lose the snip entirely (and if there's no text either, just report).
