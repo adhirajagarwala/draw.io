@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=100">
+  <link rel="stylesheet" href="style.css?v=102">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -73,6 +73,18 @@
          thickness are NOT here — they appear in the contextual bar over the
          page only when a marking tool is active. -->
     <nav id="rail" aria-label="Tools">
+      <!-- Undo/Redo live here (not just the floating pill) so they're reachable on a
+           touch device with no keyboard. Actions, not modes — they never go .active. -->
+      <div class="rail-group">
+        <button id="btn-undo" class="tool" title="Undo (Ctrl/Cmd+Z)" disabled>
+          <svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 1 3 6.7"/></svg>
+          <span>Undo</span>
+        </button>
+        <button id="btn-redo" class="tool" title="Redo (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)" disabled>
+          <svg viewBox="0 0 24 24"><path d="M21 7v6h-6"/><path d="M21 13a9 9 0 1 0-3 6.7"/></svg>
+          <span>Redo</span>
+        </button>
+      </div>
       <div class="rail-group">
         <button class="tool" data-tool="select" title="Select — move, resize or delete any annotation (shortcut: V)">
           <svg viewBox="0 0 24 24"><path d="M6 3l12 9-6 1 3 6-3 1-3-6-4 4V3z"/></svg>
@@ -206,15 +218,6 @@
           <span class="bar-divider"></span>
         </span>
 
-        <button id="btn-undo" class="btn" title="Undo (Ctrl/Cmd+Z)" disabled>
-          <svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 1 3 6.7"/></svg>
-        </button>
-        <button id="btn-redo" class="btn" title="Redo (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)" disabled>
-          <svg viewBox="0 0 24 24"><path d="M21 7v6h-6"/><path d="M21 13a9 9 0 1 0-3 6.7"/></svg>
-        </button>
-
-        <span class="bar-divider"></span>
-
         <button id="btn-zoom-out" class="btn" title="Zoom out" disabled>
           <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
         </button>
@@ -316,6 +319,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=100"></script>
+  <script type="module" src="app.js?v=102"></script>
 </body>
 </html>

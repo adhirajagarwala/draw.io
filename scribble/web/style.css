@@ -139,6 +139,7 @@ button { font: inherit; }
   font-weight: 600;
   box-shadow: inset 3px 0 0 var(--accent); /* clear "armed" left bar so the active tool reads at a glance */
 }
+#rail .tool:disabled { opacity: 0.35; cursor: default; } /* Undo/Redo rail actions when there's nothing to do */
 
 .btn {
   display: inline-flex;

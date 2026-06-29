@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "100";
+const APP_VERSION = "102";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=100";
+import init, { App } from "./pkg/scribble.js?v=102";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,14 +17,14 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=100";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=100";
-import { initEmbed } from "./embed.js?v=100";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=100";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=100";
-import { confirmOpenDialog, showClippingLightbox } from "./modals.js?v=100";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=100";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=100";
+} from "./utils.js?v=102";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=102";
+import { initEmbed } from "./embed.js?v=102";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=102";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=102";
+import { confirmOpenDialog, showClippingLightbox } from "./modals.js?v=102";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=102";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=102";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -1905,6 +1905,7 @@ function syncAria() {
 
 for (const b of document.querySelectorAll(".tool")) {
   b.addEventListener("click", () => {
+    if (!b.dataset.tool) return; // not a mode (e.g. the Undo/Redo rail actions reuse .tool styling)
     commitTextInput();
     const name = b.dataset.tool;
     if (JS_TOOLS.has(name)) {
