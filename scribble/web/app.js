@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "103";
+const APP_VERSION = "110";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=103";
+import init, { App } from "./pkg/scribble.js?v=110";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,14 +17,15 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=103";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=103";
-import { initEmbed } from "./embed.js?v=103";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=103";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=103";
-import { confirmOpenDialog, showClippingLightbox } from "./modals.js?v=103";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=103";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=103";
+} from "./utils.js?v=110";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=110";
+import { initEmbed } from "./embed.js?v=110";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=110";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=110";
+import { confirmOpenDialog, showClippingLightbox } from "./modals.js?v=110";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed, floatCbar } from "./colorbar.js?v=110";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=110";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=110";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -805,6 +806,43 @@ function renderHtmlPage() {
   if (htmlTruncated) {
     status(`This HTML page is very tall — content past ${HTML_MAX_PAGE_H}px isn't shown or annotatable.`);
   }
+}
+
+// Option C (transparent overlay): set up an EMPTY drawable page sized to the live PL
+// question that shows THROUGH the transparent layers behind #anno-canvas — no document is
+// loaded, no clone. Width is LOCKED to HTML_BASE_W (816) so the fixed-width replay in
+// hydrateAnnotations stays faithful; height comes from the host (measured in the parent).
+// Bypasses measureHtmlHeight (the frame is empty → it would floor to 200) and forces
+// zoomMode off "fit-width" (which would rescale the canvas on resize while the live
+// question behind it does not).
+function openOverlay(measuredH) {
+  if (pdfDoc) { try { pdfDoc.destroy(); } catch { /* ignore */ } pdfDoc = null; }
+  contTeardown();
+  newDocument("html");
+  scrollMode = "paged";
+  setScrollEnabled(false);
+  syncScrollUI();
+  zoomMode = "1"; // 1:1 — never rescale the canvas relative to the live question
+  currentScale = 1;
+  document.body.classList.add("overlay");
+  // The <html> element carries an opaque --bg too (a body class can't reach it); make it
+  // transparent so the live question behind the iframe isn't hidden behind grey.
+  document.documentElement.style.background = "transparent";
+  els.placeholder.hidden = true;
+  els.wrap.hidden = false;     // keep #page-wrap mounted+visible — docOpen() gates drawing on it
+  els.pdfCanvas.hidden = true;
+  els.htmlFrame.hidden = true; // no clone, no srcdoc — the live question shows through
+  const h = Math.min(Math.max(measuredH | 0, 200), HTML_MAX_PAGE_H);
+  basePage = { w: HTML_BASE_W, h };
+  app.ensure_page(0, HTML_BASE_W, h);
+  htmlSnipCanvas = null;
+  renderHtmlPage(); // sizes #anno-canvas + #page-wrap from basePage; #html-frame stays hidden
+  enableDocUI({ thumbs: false, pageNav: false });
+  els.thumbs.hidden = true;
+  els.btn.prev.disabled = true;
+  els.btn.next.disabled = true;
+  updateContextBar(activeTool());
+  return true;
 }
 
 // Some HTML embeds images that finish loading after onload, changing the page
@@ -1937,17 +1975,18 @@ const WIDTH_TOOLS = new Set(["pen", "highlighter", "tick", "cross", "circle", "a
 // Show the contextual colour/thickness bar only when a marking tool is active
 // and a document is open — so it never distracts during select/snip/etc.
 function updateContextBar(tool) {
-  // When docked in the toolbar the bar is persistent; floating it stays
-  // contextual to the marking tools.
-  const show = docOpen() && (isCbarDocked() || MARKING_TOOLS.has(tool));
+  // Overlay folds the colour strip into the one merged tool bar → keep it persistent (no reflow
+  // as tools change). Docked behaves the same; floating stays contextual to the marking tools.
+  const overlay = document.body.classList.contains("overlay");
+  const show = docOpen() && (overlay || isCbarDocked() || MARKING_TOOLS.has(tool));
   els.contextBar.hidden = !show;
   // The colorblind-safe palette toggle now lives inside this bar, so it shows
   // and hides with it automatically (only relevant while choosing colours).
   if (show) {
-    const w = WIDTH_TOOLS.has(tool);
+    const w = overlay || WIDTH_TOOLS.has(tool); // keep the width chips' slot fixed in overlay (no reflow)
     els.widths.style.display = w ? "flex" : "none";
     els.widthDivider.style.display = w ? "" : "none";
-    clampContextBar(); // ensure a dragged bar is on-screen now that it's visible
+    if (!overlay) clampContextBar(); // ensure a dragged bar is on-screen now that it's visible
   }
 }
 
@@ -2124,7 +2163,7 @@ document.addEventListener("keydown", (ev) => {
     // In embed mode the work saves with the PL submission, not to a downloaded file.
     // Intercept the reflexive Cmd/Ctrl+S so it doesn't litter Downloads with a junk .json.
     if (document.body.classList.contains("embedded")) {
-      status("Your scratch work saves automatically with your answer.");
+      status("Scratch work is included when you click Save.");
     } else if (!els.btn.save.disabled) {
       downloadJson();
     }
@@ -2823,6 +2862,7 @@ function savePrefs() {
   try {
     const cb = els.contextBar;
     const embedded = document.body.classList.contains("embedded");
+    const overlay = document.body.classList.contains("overlay"); // overlay ⊂ embedded — gate its layout fields
     // Prefs share one key across embed + standalone. The embed-only layout fields
     // (notesFloat, and a floating notesWidth) must NOT be overwritten from the other
     // mode, or a standalone save wipes the embed float layout and a float width leaks
@@ -2848,6 +2888,18 @@ function savePrefs() {
               width: els.notesPane.style.width, height: els.notesPane.style.height }
           : { on: false })
         : (prev.notesFloat || { on: false }),
+      // Overlay-only floating chrome layout; carry forward in every other mode (overlay ⊂ embedded,
+      // so gate on !overlay, not !embedded — else an Option-B save would wipe the overlay layout).
+      railFloat: overlay
+        ? { left: $("rail").classList.contains("fp-moved") ? $("rail").style.left : "",
+            top: $("rail").classList.contains("fp-moved") ? $("rail").style.top : "",
+            collapsed: $("rail").classList.contains("fp-collapsed") }
+        : (prev.railFloat || {}),
+      topbarFloat: overlay
+        ? { left: $("topbar").classList.contains("fp-moved") ? $("topbar").style.left : "",
+            top: $("topbar").classList.contains("fp-moved") ? $("topbar").style.top : "",
+            collapsed: $("topbar").classList.contains("fp-collapsed") }
+        : (prev.topbarFloat || {}),
     }));
   } catch { /* storage unavailable — non-fatal */ }
 }
@@ -2951,22 +3003,55 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
     if (READONLY) document.body.classList.add("readonly"); // hides edit chrome (CSS) — JS gates already block edits
     updateContextBar(activeTool()); // hide the colour UI (and palette) until a doc opens
     initEmbed({
-      app, els, status, toggleNotes, renderNotes, openHtml,
+      app, els, status, toggleNotes, renderNotes, openHtml, openOverlay,
       hydrateAnnotations, serializeAnnotations,
       setPlUnsaved: (v) => { plUnsavedSinceCommit = v; },
     });
-    // In embed mode, keep the colour bar docked in the toolbar — never floating over the question.
+    // Option B docks the colour bar in the toolbar. Overlay MERGES all three bars into ONE: the
+    // colour/width strip and the Notes/Larger/Help actions fold into the tool rail, so only
+    // [tool bar] + [notes] remain. The whole bar is one floating (grip) + hideable (collapse) unit.
     if (document.body.classList.contains("embedded")) {
-      dockCbar(12);
+      if (document.body.classList.contains("overlay")) {
+        const railEl = $("rail");
+        // Clear any restored colour-bar float/dock state, then fold it into the rail as a static child.
+        document.body.classList.remove("cbar-docked");
+        els.contextBar.classList.remove("moved", "collapsed");
+        els.contextBar.style.left = ""; els.contextBar.style.top = "";
+        railEl.appendChild(els.contextBar); // colour/width strip now flows inside the rail
+        const actions = document.createElement("div");
+        actions.className = "rail-actions"; // pushed to the right edge via CSS margin-left:auto
+        actions.append(els.btn.notes, els.btn.big, $("btn-help")); // handlers survive (bound by id)
+        railEl.appendChild(actions);
+        railEl.appendChild($("rail-collapse")); // keep the collapse chevron LAST, after the appended children
+        updateContextBar(activeTool()); // colours are persistent in the merged bar
+        // ONE grip + ONE collapse govern the whole merged bar.
+        const railFP = makeFloating(railEl, { grip: railEl.querySelector(".fp-grip"), collapse: $("rail-collapse"), onChange: savePrefs });
+        const rp = (prefs && prefs.railFloat) || {};
+        if (rp.left && rp.top) railFP.floatTo(parseFloat(rp.left), parseFloat(rp.top));
+        if (rp.collapsed) railFP.setCollapsed(true);
+        clampFixed(railEl);
+        window.addEventListener("resize", () => clampFixed(railEl));
+      } else {
+        dockCbar(12);
+      }
       els.notesPane.style.width = ""; // the grid drives width in embed; drop any standalone width from prefs
     }
     // Wire the floating notes window (embed-only — must run AFTER initEmbed sets body.embedded),
-    // then restore any saved floating position.
+    // then stage its geometry: overlay always offers notes as a floating panel (revealed by the
+    // Notes button); B/standalone restore the saved floating position from prefs.
     initNotesDock({ els, $, savePrefs, relayoutSketches });
-    const nf = (prefs && prefs.notesFloat) || {};
-    if (nf.on && document.body.classList.contains("embedded")) {
-      floatNotes(parseFloat(nf.left) || 12, parseFloat(nf.top) || 48,
-                 parseFloat(nf.width) || 340, parseFloat(nf.height) || 320);
+    if (document.body.classList.contains("overlay")) {
+      // Notes is a scratch area docked BELOW the question — full width, open by default.
+      const stage = $("stage");
+      const sw = stage.offsetWidth || 360, sh = stage.offsetHeight || 520;
+      floatNotes(8, Math.max(8, sh - 284), Math.max(280, sw - 16), 276); // taller now the toolbar is one row
+      toggleNotes(true);
+    } else {
+      const nf = (prefs && prefs.notesFloat) || {};
+      if (nf.on && document.body.classList.contains("embedded")) {
+        floatNotes(parseFloat(nf.left) || 12, parseFloat(nf.top) || 48,
+                   parseFloat(nf.width) || 340, parseFloat(nf.height) || 320);
+      }
     }
     autoOpenIfRequested(); // "Open in a new tab" → pop the file picker here
     idbPrune(); // bound the autosave store (keep the most-recent snapshots)

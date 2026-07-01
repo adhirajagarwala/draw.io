@@ -624,6 +624,141 @@ body.readonly #btn-redo,
 body.readonly #btn-big { display: none !important; }
 body.readonly #anno-canvas { cursor: default; }
 
+/* ---- Option C: transparent overlay — draw on the LIVE PL question showing through ----
+   Transparency is ALL-OR-NOTHING: every ancestor of #anno-canvas must be transparent, or
+   the live question (behind this iframe, in the PL page) is hidden. */
+body.overlay,
+body.overlay #main,
+body.overlay #stage,
+body.overlay #viewer,
+body.overlay #page-wrap { background: transparent; }
+/* The page is locked to 816px (replay fidelity) but the PL card may be narrower; clip the
+   horizontal overflow so the right edge of the canvas doesn't add a scrollbar. Vertical
+   matches the host, so this never clips drawable height. Fixed chrome escapes this clip. */
+body.overlay { overflow: hidden; }
+body.overlay #main { display: block; } /* not the embedded grid (which reserves notes rows) */
+body.overlay #stage,
+body.overlay #viewer { display: block; height: auto; overflow: visible; }
+/* #viewer is position:absolute in the flex layouts; in the overlay's block layout that would
+   collapse #stage to height 0, breaking floatCbar/floatNotes' vertical clamp. Put it in flow. */
+body.overlay #viewer { position: static; }
+body.overlay #viewer {
+  background-image: none; /* kill the dot grid */
+  padding: 0;             /* else every stroke lands 28px down / 20px right */
+  margin: 0;
+}
+body.overlay #page-wrap { box-shadow: none; } /* keep it VISIBLE — docOpen() needs it — just transparent */
+body.overlay #html-frame { display: none; }   /* no clone; the live question shows through */
+body.overlay #splitter { display: none; }      /* meaningless when notes float; the pane stays available */
+body.overlay #doc-controls { display: none; }  /* page-nav/zoom/scroll-mode are inert at the overlay's fixed 1:1 scale */
+
+/* Chrome floats OFF the question as a thin HORIZONTAL toolbar across the top (also delivers
+   Steve's "floating toolbar" idea) — so the question keeps its full width in the clear band
+   below (the pl-scribble host adds matching padding-top). A vertical rail would scroll-clip
+   its lower tools in a short overlay; horizontal keeps every tool reachable. */
+/* Backgrounds are OPAQUE and shadows are SMALL on purpose: a big blur shadow (or a translucent
+   fill) over a transparent iframe re-renders every frame the user draws or drags → the "lag". */
+body.overlay #rail {
+  position: fixed; top: 8px; left: 8px; z-index: 9;
+  flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 4px;
+  width: calc(100% - 16px);           /* the ONE merged bar spans the card so actions can sit at the far edge */
+  background: #fff;
+  border: 1px solid var(--line); border-radius: 12px; padding: 4px 6px;
+  box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14);
+  max-height: none; overflow: visible;
+}
+/* Merge: colour/width strip + actions fold into the rail as one row. Tools go icon-only so it all
+   fits (tooltips remain); the colour strip flows inline; actions push to the right edge. */
+body.overlay #rail .tool span { display: none; }
+body.overlay #rail .rail-actions .btn span { display: none; }
+body.overlay #context-bar {
+  position: static; top: auto; left: auto; margin: 0 4px;
+}
+body.overlay #context-bar.moved { left: auto; top: auto; } /* neutralize any stale inline float pin */
+body.overlay #context-bar .cbar-grip,
+body.overlay #context-bar #cbar-collapse { display: none; } /* the rail's own grip/collapse governs the bar */
+body.overlay #rail .rail-actions { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+body.overlay #topbar { display: none; } /* husk — Notes/Larger/Help moved into the rail */
+body.overlay #rail .rail-group { flex-direction: row; align-items: stretch; gap: 4px; border: 0; padding: 0; margin: 0; }
+body.overlay #rail .rail-group + .rail-group { border-left: 1px solid var(--line); padding-left: 6px; margin-left: 2px; }
+body.overlay #rail .rail-label { display: none; }    /* section labels break the horizontal flow */
+/* Trim to the scratchpad essentials so the toolbar stays a single compact row over the question
+   (shapes/snip stay available in standalone + non-overlay embed). */
+body.overlay #rail [data-tool="circle"],
+body.overlay #rail [data-tool="arrow"],
+body.overlay #rail [data-tool="rect"],
+body.overlay #rail [data-tool="snip"] { display: none; }
+/* width:auto so each tool sizes to its icon+label — the base width:100% made labels overflow
+   their buttons and collide ("Text on page" over "Erase"). */
+body.overlay #rail .tool { width: auto; min-width: 0; height: 32px; padding: 0 5px; gap: 6px; }
+/* Drop the mark/shape/capture groups whose tools are all hidden in overlay — they'd leave empty
+   separators and push the one row to overflow. */
+body.overlay #rail .rail-group:has([data-tool="tick"]),
+body.overlay #rail .rail-group:has([data-tool="snip"]),
+body.overlay #rail .rail-group:has([data-tool="circle"]),
+body.overlay #rail .rail-group:has([data-tool="arrow"]) { display: none; }
+/* Row 2 of the floating toolbar: the colour bar (left) + topbar actions (right), below the
+   tools. colorbar.js OWNS the colour bar's position — openOverlay seeds it via floatCbar(8,56)
+   and the drag writes inline left/top, so DO NOT pin it here (an !important would override the
+   drag's inline styles and freeze the bar). Just neutralize centring/blur + the heavy shadow. */
+body.overlay #context-bar {
+  z-index: 9; transform: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14); /* override the base 0 10px 28px blur (drag lag) */
+}
+body.overlay #context-bar.cbar-dragging { z-index: 80; }
+body.overlay #topbar {
+  position: fixed; top: 56px; right: 8px; left: auto; width: auto; z-index: 9;
+  background: #fff;
+  border: 1px solid var(--line); border-radius: 12px; padding: 2px 6px;
+  box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14);
+}
+/* Notes sits below the question; a light shadow (the base floating 0 10px 30px blur lags on drag). */
+body.overlay #notes-pane { box-shadow: 0 1px 6px rgba(20, 24, 28, 0.16); }
+
+/* ---- Floating + hideable panels: the tool rail and the actions bar (overlay only) ----
+   Each gets a drag grip (the ONLY drag target, so tool clicks survive) + a collapse chevron.
+   The colour bar (#context-bar) and notes already float/collapse via colorbar.js/notes-dock.js. */
+#rail .fp-grip, #rail .fp-collapse,
+#topbar .fp-grip, #topbar .fp-collapse { display: none; } /* standalone / Option-B never show these */
+
+body.overlay #rail .fp-grip, body.overlay #topbar .fp-grip {
+  display: flex; align-items: center; flex: none; cursor: grab;
+  color: var(--muted); padding: 0 4px; border-radius: 6px;
+  user-select: none; touch-action: none; /* raw pointer events; don't let touch pan/zoom steal the drag */
+}
+body.overlay #rail .fp-grip svg, body.overlay #topbar .fp-grip svg { width: 6px; height: 15px; fill: currentColor; }
+body.overlay #rail .fp-grip:hover, body.overlay #topbar .fp-grip:hover { color: var(--ink); background: #eef0f3; }
+body.overlay #rail .fp-grip:active, body.overlay #topbar .fp-grip:active { cursor: grabbing; }
+
+body.overlay #rail .fp-collapse, body.overlay #topbar .fp-collapse {
+  display: flex; align-items: center; justify-content: center; flex: none;
+  width: 30px; height: 30px; border: 1px solid var(--line); background: #fff;
+  border-radius: 8px; cursor: pointer; color: var(--ink); transition: transform .15s ease;
+}
+body.overlay #rail .fp-collapse svg, body.overlay #topbar .fp-collapse svg {
+  width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+body.overlay #rail .fp-collapse:hover, body.overlay #topbar .fp-collapse:hover {
+  background: var(--accent-soft); color: var(--accent); border-color: #c4d2f5;
+}
+/* collapsed: rotate the chevron to read "expand" (mirror #context-bar.collapsed .cbar-collapse) */
+body.overlay #rail.fp-collapsed .fp-collapse,
+body.overlay #topbar.fp-collapsed .fp-collapse { transform: rotate(-90deg); }
+
+/* fp-moved: inline left/top win over the base top:8/left:8 pin (already position:fixed) */
+body.overlay #rail.fp-moved, body.overlay #topbar.fp-moved { top: auto; left: auto; right: auto; }
+/* resting panels sit above the colour bar (z-index:9); a lifted panel rises further */
+body.overlay #rail, body.overlay #topbar { z-index: 10; }
+body.overlay #rail.fp-dragging, body.overlay #topbar.fp-dragging {
+  z-index: 80; cursor: grabbing; box-shadow: 0 6px 20px rgba(20, 24, 28, 0.22);
+}
+/* collapsed → minimise to just the grip + chevron (a small handle to restore from) */
+body.overlay #rail.fp-collapsed :is(.rail-group, #context-bar, .rail-actions) { display: none; }
+body.overlay #topbar.fp-collapsed :is(.brand, #btn-open, .topbar-right) { display: none; }
+
 /* ---- UX: PrairieLearn scratchpad simplifications (embed only) ---- */
 /* Trim grader-only marks for the student scratchpad — Pen/Highlight/Text/Erase/Select/Snip
    + Arrow/Box/Circle stay. Hidden, never deleted (standalone keeps them; saved submissions
@@ -631,23 +766,6 @@ body.readonly #anno-canvas { cursor: default; }
 body.embedded #rail [data-tool="tick"],
 body.embedded #rail [data-tool="cross"],
 body.embedded #rail [data-tool="fillrect"] { display: none; }
-
-/* Honest "your work is being captured" pill in the embed toolbar (set by embed.js). PL only
-   persists on its own Save click, so the copy says "Captured", never "Saved". */
-.capture-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-right: 8px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: #e7f5ec;
-  color: #1a7f43;
-  border: 1px solid #b9e3c8;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
 
 /* Single HTML page: page prev/next, the page readout, and the Page/Scroll toggle are all
    inert. Hide them (keep undo/redo + zoom). Keyed on document MODE, so it applies to a

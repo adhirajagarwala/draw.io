@@ -5,7 +5,7 @@
 // notes. Only reaches the host DOM when it's same-origin (cross-origin throws and
 // degrades gracefully). Dependencies are injected so the module holds no app
 // state. Bump embed.js's ?v= import in app.js together with APP_VERSION.
-export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml,
+export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml, openOverlay,
   hydrateAnnotations, serializeAnnotations, setPlUnsaved }) {
   // PrairieLearn frames Scribble via a srcdoc iframe (no ?embed query), flagged by
   // window.__SCRIBBLE_EMBED; the host-demo uses ?embed. Either enters embed mode.
@@ -14,6 +14,51 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
   document.body.classList.add("embedded");
   // Don't force the notes pane open — it steals height from the question on first load.
   // It auto-opens when there's something to show (a snip, a grab, or hydrated notes).
+  const pl = window.__SCRIBBLE_PL || {}; // server-injected config: { readOnly, name?, data?, hostH? }
+
+  // Whenever there are unsaved edits, write base64(save_json()) into the hidden form input
+  // and fire input/change so PrairieLearn marks the form dirty + persists on its Save. The
+  // Rust dirty flag is the debounce (cleared by save_json). Shared by Option B and C.
+  function wireSaveLoop(input) {
+    const flush = () => {
+      try {
+        const v = serializeAnnotations(); // null when nothing changed; resolves the CURRENT app
+        if (v == null) return;
+        input.value = v;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        setPlUnsaved(true); // PrairieLearn's own Save button is the honest "unsaved" signal
+      } catch { /* keep the dirty flag set; the next tick retries */ }
+    };
+    let timer = setInterval(flush, 1500);
+    window.addEventListener("beforeunload", flush);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") { flush(); clearInterval(timer); timer = null; }
+      else if (!timer) { timer = setInterval(flush, 1500); }
+    });
+    window.addEventListener("blur", flush); // best-effort: focus leaving the iframe (e.g. clicking Save)
+  }
+
+  // Option C (transparent overlay): the question is rendered LIVE in the PARENT page; we set
+  // up an empty drawable page over it (no clone) so the live question shows through. We read
+  // only our own wrapper (frameElement.parentElement) — never PrairieLearn's surrounding DOM.
+  if (plMode && window.__SCRIBBLE_OVERLAY) {
+    const wrap = window.frameElement && window.frameElement.parentElement; // .pl-scribble-overlay
+    if (!wrap) { status("Embedded — overlay host not found."); return; }
+    const input = pl.readOnly ? null : wrap.querySelector(":scope > .pl-scribble-input");
+    // Measure the live prose host in the PARENT (same-origin, already laid out) — race-free,
+    // unlike the iframe's own window.innerHeight which depends on the parent having sized us.
+    const host = wrap.querySelector(":scope > .pl-scribble-host");
+    const measuredH = (host && host.offsetHeight) || window.innerHeight || 600;
+    openOverlay(measuredH);
+    const seed = pl.readOnly ? pl.data : (input && input.value);
+    if (seed) hydrateAnnotations(seed);
+    if (pl.readOnly || !input) return;
+    status("Scratchpad — draw right on the question.");
+    wireSaveLoop(input);
+    return;
+  }
 
   // PrairieLearn (Option B): render the question content INSIDE Scribble so the student
   // annotates it directly. The content is OUR element's own output — pl-scribble.py emits
@@ -24,8 +69,6 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
     const wrap = window.frameElement && window.frameElement.parentElement;
     const src = wrap && wrap.querySelector(":scope > .pl-scribble-source");
     if (!wrap || !src) { status("Embedded — no content was placed inside <pl-scribble>."); return; }
-    // Config the server injected (head <script>, ahead of the CSP meta): { readOnly, name?, data? }.
-    const pl = window.__SCRIBBLE_PL || {};
     // The live form input (question panel only) — also our own output, in PL's form.
     const input = pl.readOnly ? null : wrap.querySelector(":scope > .pl-scribble-input");
 
@@ -51,35 +94,8 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
       if (pl.readOnly || !input) return; // read-only view (or no input): no save loop
 
       // Orient the first-time student (one toast; auto-hides, aria-live, textContent-safe).
-      status("Scratchpad — draw on the question with the tools on the left. Rough work, saved with your answer.");
-
-      // Honest capture indicator. PrairieLearn only persists when the student clicks ITS Save
-      // button (this iframe can't observe that), so NEVER claim "Saved" — only "Captured".
-      const pill = document.createElement("span");
-      pill.className = "capture-pill";
-      pill.hidden = true;
-      (document.querySelector("#topbar .topbar-right") || document.getElementById("topbar"))?.prepend(pill);
-      const markCaptured = () => { pill.hidden = false; pill.textContent = "✓ Captured — saves with your answer"; };
-
-      // SAVE LOOP: whenever there are unsaved edits, write base64(save_json()) into the
-      // hidden form input and fire input/change so PrairieLearn marks the form dirty and
-      // enables Save. The Rust dirty flag is the natural debounce (cleared by save_json).
-      const flush = () => {
-        try {
-          const v = serializeAnnotations(); // null when nothing changed; resolves the CURRENT app
-          if (v == null) return;
-          input.value = v;
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-          input.dispatchEvent(new Event("change", { bubbles: true }));
-          setPlUnsaved(true);
-          markCaptured();
-        } catch { /* keep the dirty flag set; the next tick retries */ }
-      };
-      setInterval(flush, 1500);
-      window.addEventListener("beforeunload", flush);
-      window.addEventListener("pagehide", flush);
-      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
-      window.addEventListener("blur", flush); // best-effort: focus leaving the iframe (e.g. clicking Save)
+      status("Scratchpad — draw on the question; tools are on the left.");
+      wireSaveLoop(input);
     })();
     return;
   }

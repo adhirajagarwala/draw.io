@@ -15,13 +15,15 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=103">
+  <link rel="stylesheet" href="style.css?v=110">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
   <!-- Document-level actions: open the paper, manage the file, toggle views.
        Deliberately NOT the drawing tools (those live in the left rail). -->
   <header id="topbar">
+    <!-- Overlay-only: drag grip + collapse toggle (hidden in standalone / Option-B via CSS). -->
+    <span class="fp-grip" title="Drag to move the actions" aria-hidden="true"><svg viewBox="0 0 6 16"><circle cx="1.5" cy="4" r="1"/><circle cx="4.5" cy="4" r="1"/><circle cx="1.5" cy="8" r="1"/><circle cx="4.5" cy="8" r="1"/><circle cx="1.5" cy="12" r="1"/><circle cx="4.5" cy="12" r="1"/></svg></span>
     <div class="brand">
       <svg viewBox="0 0 24 24"><path d="M3 17c3-6 5-8 6-7s-2 6-1 7 4-3 5-2-1 4 0 4 3-2 8-3"/></svg>
       Scribble
@@ -64,6 +66,7 @@
         Export PDF
       </button>
     </div>
+    <button id="topbar-collapse" class="fp-collapse" title="Hide" aria-label="Hide the actions" aria-expanded="true"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
   </header>
 
   <!-- ============================ MAIN ROW =========================== -->
@@ -73,6 +76,8 @@
          thickness are NOT here — they appear in the contextual bar over the
          page only when a marking tool is active. -->
     <nav id="rail" aria-label="Tools">
+      <!-- Overlay-only: drag grip + collapse toggle (hidden in standalone / Option-B via CSS). -->
+      <span class="fp-grip" title="Drag to move the tools" aria-hidden="true"><svg viewBox="0 0 6 16"><circle cx="1.5" cy="4" r="1"/><circle cx="4.5" cy="4" r="1"/><circle cx="1.5" cy="8" r="1"/><circle cx="4.5" cy="8" r="1"/><circle cx="1.5" cy="12" r="1"/><circle cx="4.5" cy="12" r="1"/></svg></span>
       <!-- Undo/Redo live here (not just the floating pill) so they're reachable on a
            touch device with no keyboard. Actions, not modes — they never go .active. -->
       <div class="rail-group">
@@ -147,6 +152,7 @@
           <span>Snip</span>
         </button>
       </div>
+      <button id="rail-collapse" class="fp-collapse" title="Hide" aria-label="Hide the tools" aria-expanded="true"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
     </nav>
 
     <!-- Page thumbnails (auto-shown for multi-page documents) -->
@@ -319,6 +325,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=103"></script>
+  <script type="module" src="app.js?v=110"></script>
 </body>
 </html>

@@ -48,6 +48,41 @@ _FRAME = (
     'style="width:100%%;height:660px;border:1px solid #d7dbe0;border-radius:10px;display:block;" '
     'srcdoc="%s"></iframe>'
 )
+# Option C (overlay): the question prose renders VISIBLY in .pl-scribble-host and a TRANSPARENT
+# Scribble iframe is laid over it so the student draws on the LIVE question rather than a clone.
+# width:100% fills the host; HEIGHT is set by _OVERLAY_SIZER (an iframe is a REPLACED element —
+# absolute inset:0 does NOT stretch it, so we size it to the prose in JS). The page coords are
+# locked to HTML_BASE_W=816 inside Scribble so the fixed-width replay in hydrateAnnotations stays
+# faithful; min-height (== Scribble's 200px page floor) stops a short prose from clipping the canvas.
+_OVERLAY_FRAME = (
+    '<iframe class="pl-scribble-overlay-frame" title="%s" '
+    'style="position:absolute;top:0;left:0;width:100%%;height:200px;border:0;background:transparent;" '
+    'srcdoc="%s"></iframe>'
+)
+# Size the overlay iframe to the live prose host (and keep it in sync on load / MathJax / resize).
+# A custom element may emit a parent-page inline <script>; PrairieLearn's page CSP has no script-src.
+_OVERLAY_SIZER = (
+    "<script>(function(){var w=document.currentScript.parentElement,"
+    "h=w.querySelector('.pl-scribble-host'),f=w.querySelector('.pl-scribble-overlay-frame');"
+    "function s(){f.style.height=Math.max(h.offsetHeight,200)+'px';}s();"
+    "window.addEventListener('load',s);window.addEventListener('resize',s);"
+    "if(window.MathJax&&MathJax.startup&&MathJax.startup.promise){MathJax.startup.promise.then(s);}"
+    "})();</script>"
+)
+_OVERLAY_WRAP = (
+    '<div class="pl-scribble-wrap pl-scribble-overlay" '
+    'style="position:relative;margin:14px 0;width:816px;max-width:100%%;">'
+    "%s"  # hidden form input (question panel) or "" (read-only submission)
+    # padding-top clears the floating toolbar band; min-height gives room to sketch below the
+    # prose. box-sizing:border-box so the height math matches Scribble's measured offsetHeight.
+    '<div class="pl-scribble-host" '
+    # padding-top clears the SINGLE-row merged toolbar; the tall min-height reserves room BELOW the
+    # prose for the docked notes panel (opened by default in overlay mode).
+    'style="box-sizing:border-box;min-height:520px;padding:60px 10px 14px;">%s</div>'  # VISIBLE live prose
+    "%s"  # the transparent overlay iframe
+    + _OVERLAY_SIZER
+    + "</div>"
+)
 
 
 def _bundle_index(data):
@@ -60,14 +95,17 @@ def _bundle_index(data):
         return None
 
 
-def _build_srcdoc(doc, base_url, extra_head):
+def _build_srcdoc(doc, base_url, extra_head, overlay=False):
     """Inject <base> + the embed flag + caller head HTML right after <head> (BEFORE the
     CSP meta — load-bearing: inline scripts only run ahead of it; do NOT widen script-src),
     then attribute-escape the whole document for srcdoc=. Returns the escaped srcdoc, or
     None if no <head> was found (tolerates attributes/case on the tag)."""
+    flag = "window.__SCRIBBLE_EMBED = true;"
+    if overlay:
+        flag += "window.__SCRIBBLE_OVERLAY = true;"  # Option C: transparent draw-over-live-question
     inject = (
-        '<base href="%s"><script>window.__SCRIBBLE_EMBED = true;</script>'
-        % _html.escape(base_url, quote=True)
+        '<base href="%s"><script>%s</script>'
+        % (_html.escape(base_url, quote=True), flag)
     ) + extra_head
     new_doc, n = re.subn(
         r"<head\b[^>]*>", lambda m: m.group(0) + inject, doc, count=1, flags=re.IGNORECASE
@@ -79,12 +117,16 @@ def _build_srcdoc(doc, base_url, extra_head):
 
 def prepare(element_html, data):
     element = lxml.html.fragment_fromstring(element_html)
-    pl.check_attribs(element, required_attribs=[], optional_attribs=["answers-name"])
+    pl.check_attribs(element, required_attribs=[], optional_attribs=["answers-name", "mode"])
 
 
 def render(element_html, data):
     element = lxml.html.fragment_fromstring(element_html)
     name = pl.get_string_attrib(element, "answers-name", ANSWERS_NAME_DEFAULT)
+    mode = pl.get_string_attrib(element, "mode", "inside")
+    if mode not in ("inside", "overlay"):
+        mode = "inside"  # unknown mode → safe default (Option B)
+    overlay = mode == "overlay"
     panel = data["panel"]
     if panel == "answer":
         return ""  # a scratchpad has no canonical answer to show
@@ -104,9 +146,12 @@ def render(element_html, data):
         cfg = "<script>window.__SCRIBBLE_PL=%s;window.__SCRIBBLE_READONLY=true;</script>" % json.dumps(
             {"readOnly": True, "data": blob}
         )
-        srcdoc = _build_srcdoc(doc, base_url, cfg)
+        srcdoc = _build_srcdoc(doc, base_url, cfg, overlay=overlay)
         if srcdoc is None:
             return _INJECT_FAIL
+        if overlay:
+            # Re-render the live question; the saved strokes replay over it, read-only.
+            return _OVERLAY_WRAP % ("", inner, _OVERLAY_FRAME % ("Saved annotations", srcdoc))
         return (
             '<div class="pl-scribble-wrap" style="margin:14px 0;">'
             '<div class="pl-scribble-source" hidden>%s</div>%s</div>'
@@ -114,22 +159,24 @@ def render(element_html, data):
 
     # panel == "question": editable, with a hidden form input PrairieLearn persists.
     cfg = "<script>window.__SCRIBBLE_PL=%s;</script>" % json.dumps({"readOnly": False, "name": name})
-    srcdoc = _build_srcdoc(doc, base_url, cfg)
+    srcdoc = _build_srcdoc(doc, base_url, cfg, overlay=overlay)
     if srcdoc is None:
         return _INJECT_FAIL
     prior = data["submitted_answers"].get(name)  # seed the prior submission so the student continues
     seed = prior if isinstance(prior, str) else ""
+    input_html = '<input type="hidden" class="pl-scribble-input" name="%s" value="%s">' % (
+        _html.escape(name, quote=True),
+        _html.escape(seed, quote=True),
+    )
+    if overlay:
+        # Live question visible; transparent Scribble iframe over it. Answer widgets live
+        # OUTSIDE <pl-scribble> so the pointer-capturing overlay never covers an input.
+        return _OVERLAY_WRAP % (input_html, inner, _OVERLAY_FRAME % ("Scribble scratchpad", srcdoc))
     return (
         '<div class="pl-scribble-wrap" style="margin:14px 0;">'
         '<div class="pl-scribble-source" hidden>%s</div>'
-        '<input type="hidden" class="pl-scribble-input" name="%s" value="%s">'
-        "%s</div>"
-    ) % (
-        inner,
-        _html.escape(name, quote=True),
-        _html.escape(seed, quote=True),
-        _FRAME % ("Scribble scratchpad", srcdoc),
-    )
+        "%s%s</div>"
+    ) % (inner, input_html, _FRAME % ("Scribble scratchpad", srcdoc))
 
 
 def parse(element_html, data):

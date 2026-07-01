@@ -1,0 +1,19 @@
+<!-- Option C (transparent overlay): the question prose renders NORMALLY in the PrairieLearn
+     page; Scribble lays a TRANSPARENT drawing layer over it, so the student draws on the LIVE
+     question rather than a clone. mode="overlay" selects this; the default (no mode) is Option B
+     (annotate a copy inside Scribble) — see the scratch-demo question. -->
+<pl-scribble mode="overlay">
+  <h3>Block on a frictionless incline</h3>
+  <p>
+    A block of mass <b>m = {{params.m}} kg</b> is released from rest and slides down a
+    <b>frictionless</b> incline of height <b>h = {{params.h}} m</b>. Take <b>g = 9.8 m/s²</b>.
+  </p>
+  <p>Sketch the situation and work it out directly on the question, then enter your answer below.</p>
+</pl-scribble>
+
+<!-- The graded answer lives OUTSIDE <pl-scribble> so the pointer-capturing overlay never sits
+     over an input. ($v$ exercises MathJax in the parent page, beside the overlay.) -->
+<pl-question-panel>
+  <pl-number-input answers-name="v" label="Speed at the bottom $v =$" suffix="m/s"
+                   comparison="relabs" rtol="0.02" digits="3"></pl-number-input>
+</pl-question-panel>

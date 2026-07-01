@@ -62,6 +62,9 @@ function floatCbar(left, top) {
 
 // Keep a dragged colour bar on-screen when the window/stage resizes.
 function clampContextBar() {
+  // Overlay mode floats the bar viewport-fixed; the stage-relative clamp below would mis-measure
+  // and fling it on resize, so leave it where the user dropped it.
+  if (document.body.classList.contains("overlay")) return;
   const cb = els.contextBar;
   // Skip while mid-lift: the bar is position:fixed then, so style.left/top are
   // viewport coords — clamping them against stage bounds would jump it.
@@ -148,4 +151,4 @@ export function initColorBar(deps) {
   window.addEventListener("resize", clampContextBar);
 }
 
-export { setCbarCollapsed, isCbarDocked, dockCbar, clampContextBar };
+export { setCbarCollapsed, isCbarDocked, dockCbar, clampContextBar, floatCbar };
