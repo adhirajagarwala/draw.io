@@ -1077,7 +1077,7 @@ impl App {
             return;
         };
         let mut removed = Vec::new();
-        let mut idx = 0usize; // original index (retain visits items in order)
+        let mut idx = 0usize; // index in the CURRENT (already-shrunk) vector for THIS erase_at pass
         p.items.retain(|item| {
             let hit = match item {
                 Item::Stroke(s) => stroke_hit(s, x, y, radius),
@@ -1091,7 +1091,20 @@ impl App {
             !hit
         });
         if let Some((_, pending)) = &mut self.erase_pending {
-            pending.extend(removed);
+            // Convert each newly-removed index from CURRENT-vector space to ORIGINAL space by re-adding the
+            // gaps left by items removed EARLIER in this drag — so undo (re_add_at, which inserts at original
+            // indices) restores exact z-order even when ≥2 items are erased across separate moves.
+            let mut prior: Vec<usize> = pending.iter().map(|(i, _)| *i).collect();
+            prior.sort_unstable();
+            for (idx, item) in removed {
+                let mut orig = idx;
+                for &r in &prior {
+                    if r <= orig {
+                        orig += 1;
+                    }
+                }
+                pending.push((orig, item));
+            }
         }
     }
 }
@@ -1420,6 +1433,31 @@ mod tests {
     }
 
     #[test]
+    fn multi_item_erase_undo_preserves_z_order() {
+        // E1: erasing >=2 items across separate moves of ONE drag must undo to the exact original z-order.
+        let mut a = app_with_page();
+        // Five well-separated strokes → ids 1..5 in z-order.
+        for y in [10.0, 110.0, 210.0, 310.0, 410.0] {
+            a.pointer_down(0, 10.0, y, 8.0);
+            a.pointer_move(14.0, y + 4.0, 8.0);
+            a.pointer_up();
+        }
+        let ids_before: Vec<u64> = a.doc.pages[0].items.iter().map(|it| it.id()).collect();
+        // One eraser drag: erase the 2nd stroke on press, then the 4th on a move.
+        a.set_tool("eraser");
+        a.pointer_down(0, 10.0, 110.0, 8.0);
+        a.pointer_move(10.0, 310.0, 8.0);
+        a.pointer_up();
+        assert_eq!(a.doc.pages[0].items.len(), 3); // 1st, 3rd, 5th remain
+        a.undo();
+        let ids_after: Vec<u64> = a.doc.pages[0].items.iter().map(|it| it.id()).collect();
+        assert_eq!(
+            ids_after, ids_before,
+            "undo must restore exact z-order after a multi-item erase"
+        );
+    }
+
+    #[test]
     fn text_sanitized_and_capped() {
         let mut a = app_with_page();
         a.add_text(0, 5.0, 5.0, "hi\u{0007}there\nline2").unwrap();
@@ -1734,16 +1772,26 @@ mod tests {
         a.add_text(0, 50.0, 50.0, "x").unwrap();
         let json = a.save_json().unwrap();
         let id_field = format!("\"id\":{}", a.doc.pages[0].items[0].id());
-        // 2^53 is out of range (loses precision in JS) → rejected.
+        // 2^53 loses precision crossing into JS → rejected.
         let mut b = App::new();
         assert!(b
             .load_json(&json.replacen(&id_field, "\"id\":9007199254740992", 1))
             .is_err());
-        // 2^53 - 1 is the largest in-range id → loads without panic.
+        // An id without headroom below 2^53 is rejected too (E2): loading it would push next_id so high that
+        // a freshly-drawn item gets an id >= 2^53 that checked_id rejects (silently un-selectable/deletable).
         let mut c = App::new();
         assert!(c
             .load_json(&json.replacen(&id_field, "\"id\":9007199254740991", 1))
-            .is_ok());
+            .is_err());
+        // A headroom-respecting id loads, and a NEW item drawn afterwards is present + JS-safe (< 2^53).
+        let mut d = App::new();
+        d.load_json(&json.replacen(&id_field, "\"id\":1000", 1))
+            .unwrap();
+        d.pointer_down(0, 60.0, 60.0, 8.0);
+        d.pointer_move(64.0, 64.0, 8.0);
+        d.pointer_up();
+        let new_id = d.find_item(0, 61.0, 61.0);
+        assert!((0.0..9007199254740992.0).contains(&new_id));
     }
 
     #[test]

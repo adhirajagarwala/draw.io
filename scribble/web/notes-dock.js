@@ -13,6 +13,12 @@ let els, $, savePrefs, relayoutSketches, stageEl;
 const MIN_W = 220, MIN_H = 140, DOCK_BAND = 72;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
 const embedded = () => document.body.classList.contains("embedded");
+const overlay = () => document.body.classList.contains("overlay");
+// Overlay has no grid to dock into — "Dock" snaps notes back to the default spot below the question.
+export function overlayDefaultNotes() {
+  const sr = stageEl.getBoundingClientRect();
+  return [8, Math.max(8, sr.height - 284), Math.max(280, sr.width - 16), 276];
+}
 
 export function isNotesFloating() { return document.body.classList.contains("notes-floating"); }
 
@@ -164,7 +170,9 @@ export function initNotesDock(deps) {
 
   // ---- dock/float toggle button + double-click the header to dock ----
   dockBtn.addEventListener("click", () => {
-    if (isNotesFloating()) {
+    if (overlay()) {
+      floatNotes(...overlayDefaultNotes()); // snap back to the default spot below the question
+    } else if (isNotesFloating()) {
       dockNotes();
     } else {
       const sr = stageEl.getBoundingClientRect();
@@ -176,7 +184,8 @@ export function initNotesDock(deps) {
   });
   pane.querySelector("header").addEventListener("dblclick", (ev) => {
     if (ev.target.closest("button") || !isNotesFloating()) return;
-    dockNotes();
+    if (overlay()) floatNotes(...overlayDefaultNotes());
+    else dockNotes();
     relayoutSketches();
     savePrefs();
   });

@@ -11,8 +11,10 @@ let els, $, status, savePrefs, topbarEl;
 function setCbarCollapsed(on) {
   els.contextBar.classList.toggle("collapsed", on);
   const btn = $("cbar-collapse");
+  const t = on ? "Show the colour bar" : "Hide the colour bar";
   btn.setAttribute("aria-expanded", String(!on));
-  btn.title = on ? "Show the colour bar" : "Hide the colour bar";
+  btn.title = t;
+  btn.setAttribute("aria-label", t); // keep the accessible name in sync (aria-label wins over title)
 }
 
 function isCbarDocked() { return document.body.classList.contains("cbar-docked"); }

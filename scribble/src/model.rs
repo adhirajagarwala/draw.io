@@ -329,6 +329,12 @@ pub fn valid_b64_png(s: &str) -> bool {
         .all(|&b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
 }
 
+// Reserve id headroom below the JS-safe-integer ceiling (2^53). On load, next_id becomes max-loaded-id+1,
+// and every item a session then creates increments it; if a loaded id sits just under 2^53, a freshly-drawn
+// item gets id >= 2^53, which checked_id rejects → the item is silently un-selectable/un-deletable (E2).
+// 2^40 (~1 trillion) is astronomically more headroom than any session's id allocations.
+const ID_CEILING: u64 = (1u64 << 53) - (1u64 << 40);
+
 /// Strict validation of a deserialized document. Rejects on any violation;
 /// never partially applies. Coordinates are clamped to page bounds.
 pub fn validate(doc: &mut Document) -> Result<(), String> {
@@ -415,10 +421,9 @@ fn validate_page(
         if !seen_ids.insert(item.id()) {
             return Err("duplicate item id".into());
         }
-        // Bound id magnitude to the JS-safe-integer range. An id >= 2^53 loses
-        // precision crossing into JS (unselectable/undeletable item), and a near-
-        // u64::MAX id would overflow next_id on load. Matches checked_id's range.
-        if item.id() >= (1u64 << 53) {
+        // Bound id magnitude to the JS-safe-integer range, WITH headroom (ID_CEILING) so next_id + a
+        // session's later allocations stay < 2^53 and freshly-drawn items keep checked_id-valid ids (E2).
+        if item.id() >= ID_CEILING {
             return Err("item id out of range".into());
         }
         match item {

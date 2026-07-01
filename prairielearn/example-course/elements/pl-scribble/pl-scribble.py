@@ -29,8 +29,51 @@ import lxml.html
 import prairielearn as pl
 
 ANSWERS_NAME_DEFAULT = "scribble"
-MAX_JSON_BYTES = 30 * 1024 * 1024  # mirror scribble/src/model.rs MAX_JSON_BYTES (cap on DECODED bytes)
-MAX_B64 = (MAX_JSON_BYTES + 2) // 3 * 4 + 16  # base64-inflated pre-filter on the raw input
+# The Rust core caps decoded JSON at 30MB, but json.loads() materializes the whole tree in the SHARED
+# PrairieLearn worker before we can inspect it. Cap the decoded blob below the Rust ceiling (Rust allows up to
+# ~500 clippings × 2MB base64 each) so several full-size clippings fit, while the structural walk below bounds
+# a pathological flat array's peak memory independently.
+MAX_ANNOTATION_BYTES = 16 * 1024 * 1024  # effective decoded cap for a stored annotation blob
+MAX_B64 = (MAX_ANNOTATION_BYTES + 2) // 3 * 4 + 16  # base64-inflated pre-filter on the raw input
+MAX_JSON_NODES = 500_000  # structural bound (deep/wide objects); scalar coord tuples are cheap (see below)
+MAX_JSON_DEPTH = 64
+
+
+def _reject_constant(_tok):
+    # json's Infinity/-Infinity/NaN literals are not valid Scribble data and round-trip into the stored
+    # blob, where the client JSON.parse then throws → the whole submission renders empty. Reject them.
+    raise ValueError("non-finite literal")
+
+
+def _within_structural_bounds(obj):
+    """Iterative (non-recursive) node-count + depth walk; raises ValueError if the tree is too big/deep.
+
+    A small scalar list (a [x,y] point, a [x,y,x,y] rect) counts as ONE node — descending into it and counting
+    each coordinate would exhaust the cap on normal dense handwriting (a stroke's points array). Nested stroke
+    data (an array OF pairs) still descends normally, and a huge FLAT scalar array is still fully counted so it
+    can't amplify memory.
+    """
+    stack = [(obj, 0)]
+    n = 0
+    while stack:
+        cur, depth = stack.pop()
+        n += 1
+        if n > MAX_JSON_NODES or depth > MAX_JSON_DEPTH:
+            raise ValueError("too complex")
+        if isinstance(cur, dict):
+            for v in cur.values():
+                stack.append((v, depth + 1))
+        elif isinstance(cur, list):
+            has_container = False
+            for v in cur:
+                if isinstance(v, (dict, list)):
+                    has_container = True
+                    stack.append((v, depth + 1))
+            if not has_container and len(cur) > 8:
+                n += len(cur)  # a large flat scalar array is bounded; a coord tuple (<=8) is free
+                if n > MAX_JSON_NODES:
+                    raise ValueError("too complex")
+    return obj
 
 _MISSING_BUNDLE = (
     '<div style="padding:12px;border:1px solid #f0d9a8;background:#fff7e6;border-radius:8px;">'
@@ -70,15 +113,16 @@ _OVERLAY_SIZER = (
     "})();</script>"
 )
 _OVERLAY_WRAP = (
+    # Full-bleed: negative side margins eat PrairieLearn's 16px card-body padding so Scribble uses the
+    # card edge-to-edge (the drawing canvas stays locked at 816px inside, so replay is unaffected). No
+    # top margin, so the toolbar sits right under the question header.
     '<div class="pl-scribble-wrap pl-scribble-overlay" '
-    'style="position:relative;margin:14px 0;width:816px;max-width:100%%;">'
+    'style="position:relative;margin:0 -16px;width:calc(100%% + 32px);max-width:none;">'
     "%s"  # hidden form input (question panel) or "" (read-only submission)
-    # padding-top clears the floating toolbar band; min-height gives room to sketch below the
-    # prose. box-sizing:border-box so the height math matches Scribble's measured offsetHeight.
+    # padding-top clears the single-row merged toolbar; min-height reserves room BELOW the prose for
+    # the notes panel. box-sizing:border-box so the height math matches Scribble's measured offsetHeight.
     '<div class="pl-scribble-host" '
-    # padding-top clears the SINGLE-row merged toolbar; the tall min-height reserves room BELOW the
-    # prose for the docked notes panel (opened by default in overlay mode).
-    'style="box-sizing:border-box;min-height:520px;padding:60px 10px 14px;">%s</div>'  # VISIBLE live prose
+    'style="box-sizing:border-box;min-height:520px;padding:52px 10px 14px;">%s</div>'  # VISIBLE live prose
     "%s"  # the transparent overlay iframe
     + _OVERLAY_SIZER
     + "</div>"
@@ -120,6 +164,34 @@ def prepare(element_html, data):
     pl.check_attribs(element, required_attribs=[], optional_attribs=["answers-name", "mode"])
 
 
+# The transparent overlay iframe captures every pointer/selection over the prose, so interactive/form
+# content nested inside <pl-scribble mode="overlay"> is silently dead. Warn the author at render time.
+# Genuinely-interactive HTML tags (a bare decorative <label> is fine — only a control matters, and that's
+# caught on its own), plus the interactive PL widget families (display-only pl-figure/pl-code/etc. are fine).
+_INTERACTIVE_TAGS = frozenset({"input", "button", "select", "textarea", "object"})
+_INTERACTIVE_PL = frozenset({
+    "pl-checkbox", "pl-multiple-choice", "pl-matching", "pl-order-blocks", "pl-file-upload",
+    "pl-drawing", "pl-dropdown", "pl-rich-text-editor", "pl-hidden-hints",
+})
+_OVERLAY_INTERACTIVE_WARNING = (
+    '<div style="padding:10px 12px;border:1px solid #f0d9a8;background:#fff7e6;border-radius:8px;margin:8px 0;">'
+    "<strong>pl-scribble (overlay):</strong> interactive content nested inside "
+    "<code>&lt;pl-scribble mode=&quot;overlay&quot;&gt;</code> is covered by the transparent drawing layer and "
+    "cannot be clicked or selected. Keep prose only inside; put answer widgets / links OUTSIDE the element.</div>"
+)
+
+
+def _overlay_has_interactive(element):
+    for el in element.iterdescendants():
+        tag = el.tag.lower() if isinstance(el.tag, str) else ""
+        # Interactive HTML, an interactive PL widget, any pl-*-input family member, or a real link.
+        if tag in _INTERACTIVE_TAGS or tag in _INTERACTIVE_PL or (tag.startswith("pl-") and tag.endswith("-input")):
+            return True
+        if tag == "a" and el.get("href"):
+            return True
+    return False
+
+
 def render(element_html, data):
     element = lxml.html.fragment_fromstring(element_html)
     name = pl.get_string_attrib(element, "answers-name", ANSWERS_NAME_DEFAULT)
@@ -127,6 +199,7 @@ def render(element_html, data):
     if mode not in ("inside", "overlay"):
         mode = "inside"  # unknown mode → safe default (Option B)
     overlay = mode == "overlay"
+    warn = _OVERLAY_INTERACTIVE_WARNING if (overlay and _overlay_has_interactive(element)) else ""
     panel = data["panel"]
     if panel == "answer":
         return ""  # a scratchpad has no canonical answer to show
@@ -144,14 +217,14 @@ def render(element_html, data):
             return '<div class="pl-scribble-wrap" style="margin:14px 0;"><em>No saved annotations.</em></div>'
         # blob is base64 (alphabet has no <, >, ") → safe inside a JS string and an HTML attr.
         cfg = "<script>window.__SCRIBBLE_PL=%s;window.__SCRIBBLE_READONLY=true;</script>" % json.dumps(
-            {"readOnly": True, "data": blob}
+            {"readOnly": True, "data": blob, "name": name}  # name → same namespaced PREFS_KEY as the editable view
         )
         srcdoc = _build_srcdoc(doc, base_url, cfg, overlay=overlay)
         if srcdoc is None:
             return _INJECT_FAIL
         if overlay:
             # Re-render the live question; the saved strokes replay over it, read-only.
-            return _OVERLAY_WRAP % ("", inner, _OVERLAY_FRAME % ("Saved annotations", srcdoc))
+            return warn + _OVERLAY_WRAP % ("", inner, _OVERLAY_FRAME % ("Saved annotations", srcdoc))
         return (
             '<div class="pl-scribble-wrap" style="margin:14px 0;">'
             '<div class="pl-scribble-source" hidden>%s</div>%s</div>'
@@ -171,7 +244,7 @@ def render(element_html, data):
     if overlay:
         # Live question visible; transparent Scribble iframe over it. Answer widgets live
         # OUTSIDE <pl-scribble> so the pointer-capturing overlay never covers an input.
-        return _OVERLAY_WRAP % (input_html, inner, _OVERLAY_FRAME % ("Scribble scratchpad", srcdoc))
+        return warn + _OVERLAY_WRAP % (input_html, inner, _OVERLAY_FRAME % ("Scribble scratchpad", srcdoc))
     return (
         '<div class="pl-scribble-wrap" style="margin:14px 0;">'
         '<div class="pl-scribble-source" hidden>%s</div>'
@@ -180,8 +253,14 @@ def render(element_html, data):
 
 
 def parse(element_html, data):
-    """Validate + canonicalize the submitted annotations server-side before grading/re-render
-    (the authoritative Rust validation otherwise only runs client-side in the iframe)."""
+    """Size-cap, reject non-finite/oversize/malformed payloads, and canonicalize the submitted annotations.
+
+    This is NOT full schema validation — the authoritative Scribble document validator is the Rust
+    load_json(), which runs client-side in the iframe on every render (and rejects unknown fields, bad
+    enums, caps, non-finite coords, etc.). parse() only bounds size/shape and strips non-finite literals
+    so PrairieLearn never stores a blob that (a) breaks the client JSON.parse or (b) exhausts the worker.
+    Any FUTURE server-side consumer (grading, export) MUST re-run the Rust validator before trusting it.
+    """
     element = lxml.html.fragment_fromstring(element_html)
     name = pl.get_string_attrib(element, "answers-name", ANSWERS_NAME_DEFAULT)
     raw = data["submitted_answers"].get(name)
@@ -194,12 +273,15 @@ def parse(element_html, data):
         return
     try:
         decoded = base64.b64decode(raw, validate=True)
-        if len(decoded) > MAX_JSON_BYTES:
+        if len(decoded) > MAX_ANNOTATION_BYTES:
             raise ValueError("too large")
-        obj = json.loads(decoded.decode("utf-8"))
+        # parse_constant rejects Infinity/-Infinity/NaN before they can be re-emitted (S1).
+        obj = json.loads(decoded.decode("utf-8"), parse_constant=_reject_constant)
         if not isinstance(obj, dict):  # weak shape gate; Rust load_json is authoritative client-side
             raise ValueError("bad shape")
-        canon = json.dumps(obj, separators=(",", ":")).encode("utf-8")
+        _within_structural_bounds(obj)  # bound node count + depth (B2)
+        # allow_nan=False is belt-and-suspenders: any residual non-finite float would raise here too.
+        canon = json.dumps(obj, separators=(",", ":"), allow_nan=False).encode("utf-8")
         data["submitted_answers"][name] = base64.b64encode(canon).decode("ascii")
     except Exception:
         data["submitted_answers"][name] = None

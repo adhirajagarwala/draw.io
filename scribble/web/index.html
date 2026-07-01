@@ -15,15 +15,13 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=110">
+  <link rel="stylesheet" href="style.css?v=116">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
   <!-- Document-level actions: open the paper, manage the file, toggle views.
        Deliberately NOT the drawing tools (those live in the left rail). -->
   <header id="topbar">
-    <!-- Overlay-only: drag grip + collapse toggle (hidden in standalone / Option-B via CSS). -->
-    <span class="fp-grip" title="Drag to move the actions" aria-hidden="true"><svg viewBox="0 0 6 16"><circle cx="1.5" cy="4" r="1"/><circle cx="4.5" cy="4" r="1"/><circle cx="1.5" cy="8" r="1"/><circle cx="4.5" cy="8" r="1"/><circle cx="1.5" cy="12" r="1"/><circle cx="4.5" cy="12" r="1"/></svg></span>
     <div class="brand">
       <svg viewBox="0 0 24 24"><path d="M3 17c3-6 5-8 6-7s-2 6-1 7 4-3 5-2-1 4 0 4 3-2 8-3"/></svg>
       Scribble
@@ -66,7 +64,6 @@
         Export PDF
       </button>
     </div>
-    <button id="topbar-collapse" class="fp-collapse" title="Hide" aria-label="Hide the actions" aria-expanded="true"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
   </header>
 
   <!-- ============================ MAIN ROW =========================== -->
@@ -295,7 +292,7 @@
             <dt>H</dt><dd>Highlighter</dd>
             <dt>T</dt><dd>Text note</dd>
             <dt>E</dt><dd>Eraser</dd>
-            <dt>S</dt><dd>Snip a region</dd>
+            <dt class="ov-hide">S</dt><dd class="ov-hide">Snip a region</dd>
           </dl>
         </section>
         <section>
@@ -311,8 +308,8 @@
         <section>
           <h3>Navigate &amp; text</h3>
           <dl>
-            <dt>PgUp / PgDn</dt><dd>Previous / next page</dd>
-            <dt>Home / End</dt><dd>First / last page</dd>
+            <dt class="ov-hide">PgUp / PgDn</dt><dd class="ov-hide">Previous / next page</dd>
+            <dt class="ov-hide">Home / End</dt><dd class="ov-hide">First / last page</dd>
             <dt>Enter</dt><dd>Place a text note</dd>
             <dt>Shift Enter</dt><dd>New line in a note</dd>
             <dt>?</dt><dd>Show this help</dd>
@@ -325,6 +322,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=110"></script>
+  <script type="module" src="app.js?v=116"></script>
 </body>
 </html>

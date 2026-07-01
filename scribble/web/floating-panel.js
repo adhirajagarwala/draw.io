@@ -70,17 +70,25 @@ export function makeFloating(el, { grip, collapse, onChange }) {
   grip.addEventListener("pointerup", end);
   grip.addEventListener("pointercancel", end);
 
+  // Keep title AND aria-label in sync (aria-label wins as the accessible name — a stale one makes a screen
+  // reader announce "Hide" on a button that now Shows).
+  const labelCollapse = (on) => {
+    if (!collapse) return;
+    const t = on ? "Show the toolbar" : "Hide the toolbar";
+    collapse.title = t;
+    collapse.setAttribute("aria-label", t);
+    collapse.setAttribute("aria-expanded", String(!on));
+  };
   if (collapse) collapse.addEventListener("click", () => {
     const on = !el.classList.contains("fp-collapsed");
     el.classList.toggle("fp-collapsed", on);
-    collapse.setAttribute("aria-expanded", String(!on));
-    collapse.title = on ? "Show" : "Hide";
+    labelCollapse(on);
     onChange?.();
   });
 
   return {
     floatTo(left, top) { el.classList.add("fp-moved"); el.style.left = `${Math.round(left)}px`; el.style.top = `${Math.round(top)}px`; },
-    setCollapsed(o) { el.classList.toggle("fp-collapsed", o); if (collapse) collapse.setAttribute("aria-expanded", String(!o)); },
+    setCollapsed(o) { el.classList.toggle("fp-collapsed", o); labelCollapse(o); },
     isCollapsed: () => el.classList.contains("fp-collapsed"),
     isMoved: () => el.classList.contains("fp-moved"),
   };

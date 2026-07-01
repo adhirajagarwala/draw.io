@@ -5,8 +5,8 @@
 // notes. Only reaches the host DOM when it's same-origin (cross-origin throws and
 // degrades gracefully). Dependencies are injected so the module holds no app
 // state. Bump embed.js's ?v= import in app.js together with APP_VERSION.
-export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml, openOverlay,
-  hydrateAnnotations, serializeAnnotations, setPlUnsaved }) {
+export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml, openOverlay, resizeOverlay,
+  hydrateAnnotations, serializeAnnotations }) {
   // PrairieLearn frames Scribble via a srcdoc iframe (no ?embed query), flagged by
   // window.__SCRIBBLE_EMBED; the host-demo uses ?embed. Either enters embed mode.
   const plMode = !!window.__SCRIBBLE_EMBED;
@@ -25,9 +25,10 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
         const v = serializeAnnotations(); // null when nothing changed; resolves the CURRENT app
         if (v == null) return;
         input.value = v;
+        // Firing input+change makes PrairieLearn mark its form dirty → PL's own unsaved-changes
+        // warning covers navigation; we don't add a second iframe-level one.
         input.dispatchEvent(new Event("input", { bubbles: true }));
         input.dispatchEvent(new Event("change", { bubbles: true }));
-        setPlUnsaved(true); // PrairieLearn's own Save button is the honest "unsaved" signal
       } catch { /* keep the dirty flag set; the next tick retries */ }
     };
     let timer = setInterval(flush, 1500);
@@ -54,9 +55,30 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
     openOverlay(measuredH);
     const seed = pl.readOnly ? pl.data : (input && input.value);
     if (seed) hydrateAnnotations(seed);
-    if (pl.readOnly || !input) return;
+    if (pl.readOnly || !input) { if (pl.readOnly) status("Read-only — viewing a submitted answer."); return; }
     status("Scratchpad — draw right on the question.");
     wireSaveLoop(input);
+    // F3: the live question can grow after boot (MathJax typeset, late images) — grow the drawable page to
+    // match so the lower half stays annotatable. Same-origin: observe the parent host + its MathJax promise.
+    try {
+      const pw = window.parent;
+      if (host && pw.MathJax?.startup?.promise) pw.MathJax.startup.promise.then(() => resizeOverlay(host.offsetHeight)).catch(() => {});
+      if (host && pw.ResizeObserver) {
+        // Coalesce + defer to the next frame so growing the page (which re-renders) can't re-enter the
+        // observer synchronously (the "ResizeObserver loop" warning).
+        let rafId = 0;
+        const ro = new pw.ResizeObserver(() => {
+          if (rafId) return;
+          rafId = pw.requestAnimationFrame(() => { rafId = 0; resizeOverlay(host.offsetHeight); });
+        });
+        ro.observe(host);
+        // Tear down on unload so a PL in-place panel swap can't leave a PARENT observer firing into this
+        // torn-down iframe realm (GC leak / errors against a dead document).
+        window.addEventListener("pagehide", () => {
+          try { ro.disconnect(); if (rafId) pw.cancelAnimationFrame(rafId); } catch { /* ignore */ }
+        }, { once: true });
+      }
+    } catch { /* cross-frame access guard — non-fatal */ }
     return;
   }
 
@@ -91,7 +113,8 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
       // prior submission seeded into the hidden input's value.
       const seed = pl.readOnly ? pl.data : (input && input.value);
       if (seed) hydrateAnnotations(seed);
-      if (pl.readOnly || !input) return; // read-only view (or no input): no save loop
+      // read-only view (or no input): announce it (aria-live) and skip the save loop.
+      if (pl.readOnly || !input) { if (pl.readOnly) status("Read-only — viewing a submitted answer."); return; }
 
       // Orient the first-time student (one toast; auto-hides, aria-live, textContent-safe).
       status("Scratchpad — draw on the question; tools are on the left.");

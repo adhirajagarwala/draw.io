@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "110";
+const APP_VERSION = "116";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=110";
+import init, { App } from "./pkg/scribble.js?v=116";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,24 +17,21 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=110";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=110";
-import { initEmbed } from "./embed.js?v=110";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=110";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=110";
-import { confirmOpenDialog, showClippingLightbox } from "./modals.js?v=110";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed, floatCbar } from "./colorbar.js?v=110";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=110";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=110";
+} from "./utils.js?v=116";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=116";
+import { initEmbed } from "./embed.js?v=116";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=116";
+import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=116";
+import { confirmOpenDialog, showClippingLightbox } from "./modals.js?v=116";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed, floatCbar } from "./colorbar.js?v=116";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=116";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=116";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
 // head script, ahead of the CSP meta). All edit entry points short-circuit on it.
 const READONLY = !!window.__SCRIBBLE_READONLY;
 // Unsaved work relative to the LAST PrairieLearn commit (Save / Save & Grade). The
-// PL save loop calls save_json() which clears the Rust dirty flag, so is_dirty()
-// alone can't drive the unload warning in embed mode — OR this in too.
-let plUnsavedSinceCommit = false;
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -50,6 +47,9 @@ async function getPdfjs() {
 // Failures must never be silent: surface anything uncaught in the status
 // toast so "it just stopped working" always has a visible reason.
 window.addEventListener("error", (ev) => {
+  // "ResizeObserver loop … undelivered notifications" is a benign browser diagnostic (the layout just took
+  // an extra frame to settle), not an app error — don't scare the user with it.
+  if (typeof ev.message === "string" && ev.message.includes("ResizeObserver loop")) return;
   console.error(ev.error || ev.message); // keep the raw detail for debugging
   status("Something went wrong. Reload the page if this keeps happening.");
 });
@@ -117,6 +117,16 @@ let drawing = false;
 const activePointers = new Map(); // pointerId -> pointerType
 let penActive = false;            // a stylus is the current input → ignore touch (palm)
 let drawingPointerId = null;      // which contact owns the in-progress stroke
+// Backstop: the canvas-bound pointerup/cancel handlers only fire when a pointer ends ON the canvas. A
+// rejected 2nd touch (or a stroke ending over a floating panel) would otherwise leave its id in
+// activePointers forever — and once >=2 stale ids accumulate, EVERY later stroke is rejected and the
+// student can't draw until reload. Capture-phase window listeners guarantee cleanup wherever it ends.
+function releaseTrackedPointer(ev) {
+  activePointers.delete(ev.pointerId);
+  if (ev.pointerType === "pen") penActive = [...activePointers.values()].includes("pen");
+}
+["pointerup", "pointercancel", "lostpointercapture"].forEach((t) =>
+  window.addEventListener(t, releaseTrackedPointer, true));
 const PALM_MAX_PX = 40;           // a contact wider/taller than this is a resting palm, not a fingertip
 let renderTask = null;
 let scrollMode = "paged"; // "paged" (one page at a time) | "continuous" (PDF only)
@@ -596,6 +606,8 @@ function newDocument(mode) {
   app = new App();
   docMode = mode;
   document.body.classList.toggle("html-doc", mode === "html"); // hides inert page-nav controls
+  htmlSavedHeightHydrated = false; // a fresh document re-enables image-load re-measure (F2)
+  clearTimeout(htmlRemeasureTimer);
   dirtySinceFileSave = false;
   pageNum = 0;
   selectedId = -1;
@@ -845,10 +857,27 @@ function openOverlay(measuredH) {
   return true;
 }
 
+// The live question can grow AFTER openOverlay (MathJax typeset, late images, feedback). The drawable page
+// was sized once at boot, so the grown lower half would be un-annotatable. Grow the page to match — GROW-ONLY
+// (never shrink below current, so existing strokes stay pinned) and never in read-only (saved height is
+// authoritative). embed.js drives this from a ResizeObserver on the parent host + MathJax.startup.promise.
+function resizeOverlay(measuredH) {
+  if (READONLY || docMode !== "html" || !document.body.classList.contains("overlay")) return;
+  const h = Math.min(measuredH | 0, HTML_MAX_PAGE_H);
+  if (h <= basePage.h) return; // grow-only; same/smaller is a no-op (no spurious re-render → no observer loop)
+  basePage = { w: HTML_BASE_W, h };
+  app.ensure_page(0, HTML_BASE_W, h);
+  renderHtmlPage();
+}
+
 // Some HTML embeds images that finish loading after onload, changing the page
 // height. Re-measure once they settle. A short debounce coalesces a burst of
 // image loads; a hard timeout covers images that never resolve.
 let htmlRemeasureTimer;
+// Option-B writable: a prior submission's page height was restored (hydrateAnnotations) — a later image
+// load must NOT re-measure over it, or restored strokes drift and, once the student edits, the clobbered
+// height gets saved and read-only replay is permanently wrong. Set on hydrate, cleared on a new document.
+let htmlSavedHeightHydrated = false;
 function watchHtmlImages() {
   if (READONLY) return; // its deferred re-measure → ensure_page would clobber the hydrated saved height
   let d;
@@ -859,7 +888,7 @@ function watchHtmlImages() {
   const remeasure = () => {
     clearTimeout(htmlRemeasureTimer);
     htmlRemeasureTimer = setTimeout(() => {
-      if (docMode !== "html") return;
+      if (docMode !== "html" || htmlSavedHeightHydrated) return; // hydrated height is authoritative
       measureHtmlHeight();
       renderHtmlPage();
     }, 120);
@@ -1573,6 +1602,8 @@ function hydrateAnnotations(b64) {
   app.set_pdf_sha256(""); // HTML mode has no PDF hash
   if (docMode === "html" && savedH > 0) {
     basePage = { w: HTML_BASE_W, h: savedH }; // width is fixed, so trusting the saved height keeps x/y exact
+    htmlSavedHeightHydrated = true;           // lock it: a later image re-measure must not clobber savedH (F2)
+    clearTimeout(htmlRemeasureTimer);
     renderHtmlPage();
   } else {
     renderDoc();
@@ -2187,7 +2218,8 @@ document.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     toggleHelp(true);
   } else if (!mod && TOOL_KEYS[key]) {
-    document.querySelector(`[data-tool="${TOOL_KEYS[key]}"]`)?.click();
+    const btn = document.querySelector(`[data-tool="${TOOL_KEYS[key]}"]`);
+    if (btn && btn.offsetParent !== null) btn.click(); // skip tools hidden in this mode (e.g. Snip in overlay)
   } else if (ev.key === "PageDown" || ev.key === "PageUp") {
     if (!pdfDoc || isContinuous()) return; // continuous: let the browser scroll
     const v = els.viewer;
@@ -2210,11 +2242,12 @@ document.addEventListener("keydown", (ev) => {
 });
 
 window.addEventListener("beforeunload", (ev) => {
-  // Warn if there are changes not written to a FILE. Autosave (and the PL save
-  // loop) clear the Rust dirty flag, so we OR in our own trackers: dirtySinceFileSave
-  // (PDF file-save) and plUnsavedSinceCommit (annotations not yet committed to PL).
+  // Warn only about un-serialized changes. Standalone: unsaved drawing (is_dirty) or unsaved-to-file
+  // (dirtySinceFileSave). Embed: the 1.5s save loop writes strokes into the hidden form input and
+  // clears is_dirty, after which PrairieLearn's OWN unsaved-form warning takes over — so we do NOT
+  // add a second, iframe-level warning that could never be cleared from inside the iframe.
   if (READONLY) return; // a read-only submission view has nothing to lose
-  if (dirtySinceFileSave || app?.is_dirty() || plUnsavedSinceCommit) {
+  if (dirtySinceFileSave || app?.is_dirty()) {
     ev.preventDefault();
     ev.returnValue = "";
   }
@@ -2504,6 +2537,7 @@ function buildSketchBlock(div) {
 function buildTextBlock(div, i) {
   const ta = document.createElement("textarea");
   ta.value = app.note_text(i);
+  ta.readOnly = READONLY; // a saved submission's notes are not locally editable
   ta.placeholder = "Write a note…";
   ta.addEventListener("input", () => {
     app.update_note_text(i, ta.value);
@@ -2551,6 +2585,7 @@ function buildClippingBlock(div, i) {
   // Caption wraps to fit the width (auto-growing) rather than truncating.
   const cap = document.createElement("textarea");
   cap.className = "caption";
+  cap.readOnly = READONLY; // a saved submission's captions are not locally editable
   cap.maxLength = 300;
   cap.rows = 1;
   cap.placeholder = "Caption…";
@@ -2856,7 +2891,12 @@ helpOverlay.addEventListener("click", (ev) => {
 //     open PDF's hash, so a crash/accidental close can be recovered when the same
 //     PDF is reopened. Nothing leaves the machine; it's the same local-only data.
 
-const PREFS_KEY = "scribble.prefs.v1";
+// Namespace LAYOUT prefs per PL element so two overlay questions on one page don't clobber each other.
+const PREFS_KEY = "scribble.prefs.v1" + (window.__SCRIBBLE_PL?.name ? "." + window.__SCRIBBLE_PL.name : "");
+// USER-level accessibility prefs (Larger controls, colourblind-safe palette) are NOT per-question — a shared,
+// un-namespaced key so enabling them on one question applies to every question (they serve the users who
+// most need consistency).
+const A11Y_KEY = "scribble.a11y.v1";
 
 function savePrefs() {
   try {
@@ -2869,9 +2909,12 @@ function savePrefs() {
     // onto the standalone column — so carry the prior value forward across modes.
     let prev = {};
     try { prev = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { /* ignore */ }
-    localStorage.setItem(PREFS_KEY, JSON.stringify({
+    // Accessibility prefs go in the shared, un-namespaced key (not per-question).
+    localStorage.setItem(A11Y_KEY, JSON.stringify({
       palette: els.btn.palette.classList.contains("active") ? "safe" : "standard",
       big: document.body.classList.contains("big"),
+    }));
+    localStorage.setItem(PREFS_KEY, JSON.stringify({
       // The STANDALONE right-column width only; never capture the embed grid / float width.
       notesWidth: (embedded || isNotesFloating()) ? (prev.notesWidth || "") : (els.notesPane.style.width || ""),
       cbar: {
@@ -2888,29 +2931,26 @@ function savePrefs() {
               width: els.notesPane.style.width, height: els.notesPane.style.height }
           : { on: false })
         : (prev.notesFloat || { on: false }),
-      // Overlay-only floating chrome layout; carry forward in every other mode (overlay ⊂ embedded,
+      // Overlay-only merged-toolbar layout; carry forward in every other mode (overlay ⊂ embedded,
       // so gate on !overlay, not !embedded — else an Option-B save would wipe the overlay layout).
+      // (No topbarFloat: in overlay the topbar is merged into #rail, not a separate floating bar.)
       railFloat: overlay
         ? { left: $("rail").classList.contains("fp-moved") ? $("rail").style.left : "",
             top: $("rail").classList.contains("fp-moved") ? $("rail").style.top : "",
             collapsed: $("rail").classList.contains("fp-collapsed") }
         : (prev.railFloat || {}),
-      topbarFloat: overlay
-        ? { left: $("topbar").classList.contains("fp-moved") ? $("topbar").style.left : "",
-            top: $("topbar").classList.contains("fp-moved") ? $("topbar").style.top : "",
-            collapsed: $("topbar").classList.contains("fp-collapsed") }
-        : (prev.topbarFloat || {}),
     }));
   } catch { /* storage unavailable — non-fatal */ }
 }
 
 function applyPrefs() {
-  let p = {};
+  let p = {}, a11y = {};
   try { p = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { /* ignore */ }
+  try { a11y = JSON.parse(localStorage.getItem(A11Y_KEY) || "{}") || {}; } catch { /* ignore */ }
   // Larger controls: honor an explicit choice; otherwise (pref unset) default ON for a
   // touch-only device, where the tiny icon targets are hardest to hit.
-  if (p.big !== undefined) {
-    if (p.big) applyBig(true);
+  if (a11y.big !== undefined) {
+    if (a11y.big) applyBig(true);
   } else if (window.matchMedia?.("(any-pointer: coarse) and (not (any-pointer: fine))").matches) {
     applyBig(true);
   }
@@ -2924,7 +2964,7 @@ function applyPrefs() {
     els.contextBar.style.top = cb.top;
   }
   if (cb.collapsed) setCbarCollapsed(true);
-  applyPalette(p.palette === "safe"); // also paints the swatches for the active palette
+  applyPalette(a11y.palette === "safe"); // also paints the swatches for the active palette
   return p;
 }
 
@@ -3003,9 +3043,8 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
     if (READONLY) document.body.classList.add("readonly"); // hides edit chrome (CSS) — JS gates already block edits
     updateContextBar(activeTool()); // hide the colour UI (and palette) until a doc opens
     initEmbed({
-      app, els, status, toggleNotes, renderNotes, openHtml, openOverlay,
+      app, els, status, toggleNotes, renderNotes, openHtml, openOverlay, resizeOverlay,
       hydrateAnnotations, serializeAnnotations,
-      setPlUnsaved: (v) => { plUnsavedSinceCommit = v; },
     });
     // Option B docks the colour bar in the toolbar. Overlay MERGES all three bars into ONE: the
     // colour/width strip and the Notes/Larger/Help actions fold into the tool rail, so only
@@ -3023,14 +3062,25 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         actions.append(els.btn.notes, els.btn.big, $("btn-help")); // handlers survive (bound by id)
         railEl.appendChild(actions);
         railEl.appendChild($("rail-collapse")); // keep the collapse chevron LAST, after the appended children
+        // U1: wrap tools+colours in a horizontally-scrollable middle so a narrow card can't clip the
+        // grip/actions/collapse off-screen — those stay pinned; only the middle scrolls.
+        const railScroll = document.createElement("div");
+        railScroll.className = "rail-scroll";
+        [...railEl.children].forEach((c) => {
+          if (c.classList.contains("rail-group") || c.id === "context-bar") railScroll.appendChild(c);
+        });
+        railEl.insertBefore(railScroll, actions);
         updateContextBar(activeTool()); // colours are persistent in the merged bar
-        // ONE grip + ONE collapse govern the whole merged bar.
-        const railFP = makeFloating(railEl, { grip: railEl.querySelector(".fp-grip"), collapse: $("rail-collapse"), onChange: savePrefs });
-        const rp = (prefs && prefs.railFloat) || {};
-        if (rp.left && rp.top) railFP.floatTo(parseFloat(rp.left), parseFloat(rp.top));
-        if (rp.collapsed) railFP.setCollapsed(true);
-        clampFixed(railEl);
-        window.addEventListener("resize", () => clampFixed(railEl));
+        // ONE grip + ONE collapse govern the whole merged bar — editable view only: a read-only submission's
+        // toolbar is inert, and making it draggable would let a read-only view write layout prefs (R7).
+        if (!READONLY) {
+          const railFP = makeFloating(railEl, { grip: railEl.querySelector(".fp-grip"), collapse: $("rail-collapse"), onChange: savePrefs });
+          const rp = (prefs && prefs.railFloat) || {};
+          if (rp.left && rp.top) railFP.floatTo(parseFloat(rp.left), parseFloat(rp.top));
+          if (rp.collapsed) railFP.setCollapsed(true);
+          clampFixed(railEl);
+          window.addEventListener("resize", () => clampFixed(railEl));
+        }
       } else {
         dockCbar(12);
       }
@@ -3041,10 +3091,17 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
     // Notes button); B/standalone restore the saved floating position from prefs.
     initNotesDock({ els, $, savePrefs, relayoutSketches });
     if (document.body.classList.contains("overlay")) {
-      // Notes is a scratch area docked BELOW the question — full width, open by default.
+      // Notes: a scratch area below the question, open by default. Restore the size/position the
+      // student last left it at (persisted via savePrefs on drag/resize); else the full-width default.
       const stage = $("stage");
       const sw = stage.offsetWidth || 360, sh = stage.offsetHeight || 520;
-      floatNotes(8, Math.max(8, sh - 284), Math.max(280, sw - 16), 276); // taller now the toolbar is one row
+      const nf = (prefs && prefs.notesFloat) || {};
+      if (nf.on && nf.left && nf.top) {
+        floatNotes(parseFloat(nf.left), parseFloat(nf.top),
+                   parseFloat(nf.width) || (sw - 16), parseFloat(nf.height) || 276);
+      } else {
+        floatNotes(8, Math.max(8, sh - 284), Math.max(280, sw - 16), 276);
+      }
       toggleNotes(true);
     } else {
       const nf = (prefs && prefs.notesFloat) || {};

@@ -659,9 +659,9 @@ body.overlay #doc-controls { display: none; }  /* page-nav/zoom/scroll-mode are 
 /* Backgrounds are OPAQUE and shadows are SMALL on purpose: a big blur shadow (or a translucent
    fill) over a transparent iframe re-renders every frame the user draws or drags → the "lag". */
 body.overlay #rail {
-  position: fixed; top: 8px; left: 8px; z-index: 9;
+  position: fixed; top: 4px; left: 4px; z-index: 9;
   flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 4px;
-  width: calc(100% - 16px);           /* the ONE merged bar spans the card so actions can sit at the far edge */
+  width: calc(100% - 8px);            /* the ONE merged bar spans the card so actions can sit at the far edge */
   background: #fff;
   border: 1px solid var(--line); border-radius: 12px; padding: 4px 6px;
   box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14);
@@ -708,12 +708,6 @@ body.overlay #context-bar {
   box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14); /* override the base 0 10px 28px blur (drag lag) */
 }
 body.overlay #context-bar.cbar-dragging { z-index: 80; }
-body.overlay #topbar {
-  position: fixed; top: 56px; right: 8px; left: auto; width: auto; z-index: 9;
-  background: #fff;
-  border: 1px solid var(--line); border-radius: 12px; padding: 2px 6px;
-  box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14);
-}
 /* Notes sits below the question; a light shadow (the base floating 0 10px 30px blur lags on drag). */
 body.overlay #notes-pane { box-shadow: 0 1px 6px rgba(20, 24, 28, 0.16); }
 
@@ -748,8 +742,23 @@ body.overlay #rail .fp-collapse:hover, body.overlay #topbar .fp-collapse:hover {
 body.overlay #rail.fp-collapsed .fp-collapse,
 body.overlay #topbar.fp-collapsed .fp-collapse { transform: rotate(-90deg); }
 
-/* fp-moved: inline left/top win over the base top:8/left:8 pin (already position:fixed) */
+/* fp-moved: inline left/top win over the base top:8/left:8 pin (already position:fixed). Also shrink to the
+   content width so a dragged bar can actually move horizontally (else the full-bleed width == viewport and
+   clampFixed snaps left back to 4). */
 body.overlay #rail.fp-moved, body.overlay #topbar.fp-moved { top: auto; left: auto; right: auto; }
+body.overlay #rail.fp-moved { width: max-content; max-width: calc(100vw - 8px); }
+/* U1: on a narrow card the merged bar would overflow and clip the collapse/actions off-screen. Keep the
+   grip + actions + collapse pinned (flex:none) and let the tools+colours middle scroll horizontally. */
+body.overlay #rail .rail-scroll {
+  display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+  padding: 4px 0; margin: -4px 0; /* room for a focus ring (overflow-y:hidden would clip it) without adding height */
+}
+body.overlay #rail .fp-grip,
+body.overlay #rail .rail-actions,
+body.overlay #rail #rail-collapse { flex: none; }
+/* U4: hide overlay-irrelevant shortcut rows (Snip / page-nav) from the Help dialog. */
+body.overlay #help-overlay .ov-hide { display: none; }
 /* resting panels sit above the colour bar (z-index:9); a lifted panel rises further */
 body.overlay #rail, body.overlay #topbar { z-index: 10; }
 body.overlay #rail.fp-dragging, body.overlay #topbar.fp-dragging {
@@ -757,6 +766,7 @@ body.overlay #rail.fp-dragging, body.overlay #topbar.fp-dragging {
 }
 /* collapsed → minimise to just the grip + chevron (a small handle to restore from) */
 body.overlay #rail.fp-collapsed :is(.rail-group, #context-bar, .rail-actions) { display: none; }
+body.overlay #rail.fp-collapsed { width: auto; } /* shrink to the handle — don't leave a full-width empty bar */
 body.overlay #topbar.fp-collapsed :is(.brand, #btn-open, .topbar-right) { display: none; }
 
 /* ---- UX: PrairieLearn scratchpad simplifications (embed only) ---- */
