@@ -142,7 +142,10 @@ function syncNow() {
 
 function sync() {
   if (raf) return;
-  raf = pw.requestAnimationFrame(() => { raf = 0; syncNow(); });
+  // OUR OWN realm's rAF, deliberately: scheduling on the PARENT's rAF with an iframe-realm
+  // callback silently never fired on hosted PL — the stuck non-zero `raf` id then swallowed
+  // every later trigger here. The iframe renders in the same frame tick, so timing is equal.
+  raf = requestAnimationFrame(() => { raf = 0; syncNow(); });
 }
 
 // deps: frame (window.frameElement), pw (window.parent), onHoleChange (called with the
@@ -156,8 +159,10 @@ export function initCalcDodge(deps) {
 
     // Open/close is a class flip on the drawer; PL page swaps can add/remove/replace the node.
     // syncNow() re-attaches these observers whenever the live drawer node changes, so a drawer
-    // that arrives late or gets node-replaced keeps its class flips heard.
-    mo = new pw.MutationObserver(sync);
+    // that arrives late or gets node-replaced keeps its class flips heard. Constructed in OUR
+    // realm (observing parent nodes is fine; parent-realm constructors with iframe-realm
+    // callbacks proved unreliable on hosted PL — see sync()).
+    mo = new MutationObserver(sync);
     const drawer = pdoc.getElementById("calculatorDrawer") || pdoc.querySelector("section.calculator-drawer");
     if (!drawer) {
       // No drawer yet (older PL / different page): watch the body subtree for one arriving;
@@ -176,8 +181,8 @@ export function initCalcDodge(deps) {
     cleanupFns.push(() => pw.removeEventListener("resize", sync));
 
     // Panel or frame resizing (resizeOverlay grows the frame with the prose) moves the hole.
-    if (pw.ResizeObserver) {
-      ro = new pw.ResizeObserver(sync);
+    if (window.ResizeObserver) {
+      ro = new ResizeObserver(sync); // our realm, same reasoning as the MutationObserver above
       ro.observe(frame);
       cleanupFns.push(() => { ro.disconnect(); ro = null; });
     }
@@ -196,7 +201,7 @@ export function initCalcDodge(deps) {
 
 export function teardown() {
   for (const fn of cleanupFns.splice(0)) { try { fn(); } catch { /* already gone */ } }
-  if (raf) { try { pw.cancelAnimationFrame(raf); } catch { /* parent gone */ } raf = 0; }
+  if (raf) { try { cancelAnimationFrame(raf); } catch { /* parent gone */ } raf = 0; }
   holes = [];
   try {
     frame.style.clipPath = "";
