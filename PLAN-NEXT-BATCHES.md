@@ -371,3 +371,18 @@ grep -n 'classList.contains("overlay")' scribble/web/app.js scribble/web/colorba
 ```
 
 **Explicitly OPEN items (not papered over):** the calculator panel's exact selector/position/lifecycle (Batch A probe); the mt.pdf student-visible route shape (Batch C0); evenodd support in exam Chrome (probe); Batch B glyph choices (a)/(b); Batch C FOUC treatment + Save/Resume/Export split + Lumetta link coordination; Batch D confirm-dialog/auto-focus/caption/label calls; Batch E reset-timing + key-shape; Batch F item-12 parent-realm geometry and the flip go/no-go itself.
+---
+
+# ADDENDUM (2026-07-17, post-Batch-A review) — C15 ledger entries
+
+- **C5/Batch-A deviation:** `dodgeEl` in app.js hardcodes the iframe realm (holes are frame-relative,
+  compared against iframe-viewport rects, clamped by the iframe `window.innerWidth`) — the plan's
+  `(el, win)` signature was deliberately NOT shipped because with `PHASE1_CHROME_REPARENT=false` the
+  parameterized path would be untestable dead code. **Batch F must add the realm translation**
+  (offset holes by `frameElement.getBoundingClientRect()`, clamp against `railWin`) when the rail
+  reparents — the dodge becomes the parent-realm rail's ONLY calculator mitigation there (the clip
+  no longer covers it).
+- Batch A review outcome: C1 (evenodd ring closures — HIGH, fixed), C2 (late/replaced drawer
+  re-observation — fixed via syncNow re-attach), C3 (clip-support read-back + annotate-aware
+  pointer-events restore — fixed), C4 (`frame.isConnected` teardown — fixed), C6 (multi-hole
+  candidate filter — fixed). Full report: session 26903fa6 task wluabw83r.
