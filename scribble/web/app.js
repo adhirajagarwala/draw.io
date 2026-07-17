@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "154";
+const APP_VERSION = "155";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=154";
+import init, { App } from "./pkg/scribble.js?v=155";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,15 +17,16 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=154";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=154";
-import { initEmbed } from "./embed.js?v=154";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=154";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=154";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip } from "./modals.js?v=154";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=154";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=154";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=154";
+} from "./utils.js?v=155";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=155";
+import { initEmbed } from "./embed.js?v=155";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=155";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=155";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip } from "./modals.js?v=155";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=155";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=155";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=155";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=155";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -131,6 +132,7 @@ let penActive = false;            // a stylus is the current input → ignore to
 let drawingPointerId = null;      // which contact owns the in-progress stroke
 let gesturePointerId = null;      // the ONE contact that owns ANY armed canvas gesture (draw/snip/marquee/drag)
 let gestureCaptureEl = null;      // the canvas that captured it — a blur with capture still held is benign
+let calcDodgeNudge = () => {};    // overlay boot swaps in the calc-hole dodge; no-op everywhere else
 // Backstop: the canvas-bound pointerup/cancel handlers only fire when a pointer ends ON the canvas. A
 // rejected 2nd touch (or a stroke ending over a floating panel) would otherwise leave its id in
 // activePointers forever — and once >=2 stale ids accumulate, EVERY later stroke is rejected and the
@@ -3582,7 +3584,9 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           } catch { /* cross-origin / no parent — keep the rail in the iframe */ }
           // NB: query the grip/collapse THROUGH railEl, not $() — $() is getElementById on the IFRAME document,
           // and the rail may have just been reparented into the parent (so $("rail-collapse") would be null).
-          const railFP = makeFloating(railEl, { grip: railEl.querySelector(".fp-grip"), collapse: railEl.querySelector("#rail-collapse"), onChange: savePrefs, win: railWin });
+          // onChange also nudges the bar out of an active calculator hole (a drag can park it under
+          // the drawer, where it would render half-clipped — the irrecoverable-panel class of bug).
+          const railFP = makeFloating(railEl, { grip: railEl.querySelector(".fp-grip"), collapse: railEl.querySelector("#rail-collapse"), onChange: () => { savePrefs(); calcDodgeNudge(); }, win: railWin });
           const rp = (prefs && prefs.railFloat) || {};
           if (rp.left && rp.top) railFP.floatTo(parseFloat(rp.left), parseFloat(rp.top));
           if (rp.collapsed) railFP.setCollapsed(true);
@@ -3643,6 +3647,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               railHostDoc.querySelector(`.tool[data-tool="${lastDrawTool}"]`)?.click();
               clampRailOnShow();
               clampNotes(); // the pane re-appears with the chrome — never at an off-frame position
+              calcDodgeNudge(); // the chrome may be re-appearing straight under an open calculator
             }
             syncRailVis(); // show/hide the reparented rail with annotate-active
             wasAnnotating = now;
@@ -3650,7 +3655,58 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // If Annotate was pressed BEFORE wasm init finished, the ON transition already happened and
           // the observer will never see it — run the show-clamps once for that first showing. (No
           // Select trap in this path: pen is both the markup default and lastDrawTool's default.)
-          if (wasAnnotating) { clampRailOnShow(); clampNotes(); }
+          if (wasAnnotating) { clampRailOnShow(); clampNotes(); calcDodgeNudge(); }
+
+          // ---- #13: PL's Calculator drawer must win its own clicks. calc-dodge punches a clip-path
+          // hole in the overlay frame wherever the OPEN drawer overlaps it (clicks fall through, ink
+          // stops painting over it); here we also one-shot-nudge our floating chrome out of the hole
+          // so a half-clipped rail/notes never strands. Triggers: hole changes, annotate-ON, and
+          // chrome drag-ends — never scroll-coupled.
+          const holeOverlap = (L, T, W, H, h) => {
+            const w = Math.min(L + W, h.left + h.width) - Math.max(L, h.left);
+            const v = Math.min(T + H, h.top + h.height) - Math.max(T, h.top);
+            return w > 0 && v > 0 ? w * v : 0;
+          };
+          // Move el to the nearest clear spot beside the hole (inside the visible band); >50%
+          // covered triggers, nowhere-to-go leaves it (the clip wins and the panel stays reachable).
+          const dodgeEl = (el, apply) => {
+            const r = el.getBoundingClientRect();
+            if (!(r.width > 0)) return;
+            for (const h of calcHoles()) {
+              if (holeOverlap(r.left, r.top, r.width, r.height, h) <= r.width * r.height * 0.5) continue;
+              const band = visibleBand();
+              const cx = (x) => Math.max(4, Math.min(window.innerWidth - r.width - 4, x));
+              const cy = (y) => Math.max(band.top + 4, Math.min(Math.max(band.top + 4, band.bottom - r.height - 4), y));
+              const cands = [
+                [cx(r.left), cy(h.top - r.height - 8)],
+                [cx(r.left), cy(h.top + h.height + 8)],
+                [cx(h.left - r.width - 8), cy(r.top)],
+                [cx(h.left + h.width + 8), cy(r.top)],
+              ].filter(([x, y]) => calcHoles().every((hh) => holeOverlap(x, y, r.width, r.height, hh) <= r.width * r.height * 0.5));
+              if (!cands.length) return;
+              const [bx, by] = cands.reduce((a, c) =>
+                Math.hypot(c[0] - r.left, c[1] - r.top) < Math.hypot(a[0] - r.left, a[1] - r.top) ? c : a);
+              apply(Math.round(bx), Math.round(by));
+              return;
+            }
+          };
+          const dodgeChromeFromCalc = () => {
+            if (!calcHoles().length || !document.body.classList.contains("annotate-active")) return;
+            if (railEl.classList.contains("fp-moved")) { // the full-width pinned bar is layout, not a position
+              dodgeEl(railEl, (x, y) => { railEl.style.left = `${x}px`; railEl.style.top = `${y}px`; });
+            }
+            if (!els.notesPane.hidden && isNotesFloating()) {
+              const sr = $("stage").getBoundingClientRect(); // pane coords are stage-relative
+              dodgeEl(els.notesPane, (x, y) => {
+                els.notesPane.style.left = `${Math.round(x - sr.left)}px`;
+                els.notesPane.style.top = `${Math.round(y - sr.top)}px`;
+              });
+            }
+          };
+          let dodgeTimer = 0; // debounce: hole updates stream during drawer animation/scroll
+          const scheduleDodge = () => { clearTimeout(dodgeTimer); dodgeTimer = setTimeout(dodgeChromeFromCalc, 200); };
+          calcDodgeNudge = scheduleDodge;
+          initCalcDodge({ frame: window.frameElement, pw: window.parent, onHoleChange: scheduleDodge });
         }
       } else {
         dockCbar(12);
@@ -3660,7 +3716,9 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
     // Wire the floating notes window (embed-only — must run AFTER initEmbed sets body.embedded),
     // then stage its geometry: overlay always offers notes as a floating panel (revealed by the
     // Notes button); B/standalone restore the saved floating position from prefs.
-    initNotesDock({ els, $, savePrefs, relayoutSketches });
+    // savePrefs is wrapped so every committed notes move/resize also nudges the pane out of an
+    // active calculator hole (calcDodgeNudge is a no-op outside the armed overlay).
+    initNotesDock({ els, $, savePrefs: () => { savePrefs(); calcDodgeNudge(); }, relayoutSketches });
     if (document.body.classList.contains("overlay")) {
       // Notes: a scratch area below the question, open by default. Restore the size/position the
       // student last left it at (persisted via savePrefs on drag/resize); else the full-width default.

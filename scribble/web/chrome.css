@@ -1,0 +1,375 @@
+/* chrome.css — the OVERLAY toolbar's styling, scoped under .scribble-chrome for injection into the PL page
+   (Phase 1: the toolbar is reparented out of the iframe to follow the viewport). Faithful copy of style.css's
+   toolbar rules: body.overlay -> .scribble-chrome, body.big -> .scribble-chrome.big (Larger toggle, gated),
+   :root vars -> the wrapper, bare component rules prefixed. Loaded ONLY in the parent. Keep in sync w/ style.css. */
+
+.scribble-chrome {
+  --ink: #1f2428;
+  --muted: #586069; /* darkened for contrast on the 10.5px rail labels + readouts */
+  --line: #e1e4e8;
+  --bg: #eef0f3;
+  --panel: #ffffff;
+  --accent: #2f5fde;
+  --accent-soft: #e8eefc;
+  --sheet-shadow: 0 1px 2px rgba(20, 24, 28, 0.10), 0 6px 24px rgba(20, 24, 28, 0.12);
+}
+.scribble-chrome .bar-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 4px;
+  background: var(--line);
+}
+.scribble-chrome #rail {
+  flex: none;
+  width: 116px;
+  overflow-y: auto;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 8px 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.scribble-chrome .rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.scribble-chrome .rail-group:last-child { border-bottom: none; margin-bottom: 0; }
+.scribble-chrome .rail-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 4px 6px 2px;
+}
+.scribble-chrome #rail .tool {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  justify-content: flex-start;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.scribble-chrome #rail .tool svg {
+  width: 17px; height: 17px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.scribble-chrome #rail .tool:hover { background: #f2f4f7; border-color: var(--line); }
+.scribble-chrome #rail .tool.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent); /* clear "armed" left bar so the active tool reads at a glance */
+}
+.scribble-chrome #rail .tool:disabled { opacity: 0.35; cursor: default; }
+.scribble-chrome .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  min-width: 34px;
+  padding: 0 8px;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  white-space: nowrap;
+  transition: background .12s, border-color .12s;
+}
+.scribble-chrome .btn svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+.scribble-chrome .btn:hover:not(:disabled) { background: #f2f4f7; border-color: var(--line); }
+.scribble-chrome .btn:active:not(:disabled) { background: #e9ecf1; }
+.scribble-chrome .btn:disabled { opacity: 0.35; cursor: default; }
+.scribble-chrome .btn[hidden] { display: none; }
+.scribble-chrome .swatch:focus-visible { outline-offset: 3px; }
+.scribble-chrome #btn-thumbs.active, .scribble-chrome #btn-notes.active, .scribble-chrome #btn-big.active, .scribble-chrome #btn-palette.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: #c4d2f5;
+}
+.scribble-chrome .btn.primary {
+  background: var(--ink);
+  color: #fff;
+}
+.scribble-chrome .btn.primary:hover:not(:disabled) { background: #343b41; }
+.scribble-chrome .btn.primary:active:not(:disabled) { background: #14181b; }
+.scribble-chrome .btn.width { min-width: 30px; padding: 0 6px; border-color: var(--line); }
+.scribble-chrome .btn.width .dot { border-radius: 50%; background: var(--ink); display: block; }
+.scribble-chrome .btn.width .d1 { width: 4px; height: 4px; }
+.scribble-chrome .btn.width .d2 { width: 7px; height: 7px; }
+.scribble-chrome .btn.width .d3 { width: 11px; height: 11px; }
+.scribble-chrome .btn.width.active { background: var(--accent-soft); border-color: #c4d2f5; }
+.scribble-chrome .btn.width.active .dot { background: var(--accent); }
+.scribble-chrome .swatch {
+  width: 23px;
+  height: 23px;
+  margin: 0 1px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(20, 24, 28, 0.16);  /* subtle definition (esp. yellow on white) */
+  cursor: pointer;
+  flex: none;
+  transition: transform .1s ease, box-shadow .1s ease;
+}
+.scribble-chrome .swatch:hover { transform: scale(1.12); }
+.scribble-chrome .swatch[data-color="black"] { background: #1a1a1a; }
+.scribble-chrome .swatch[data-color="red"] { background: #d32f2f; }
+.scribble-chrome .swatch[data-color="blue"] { background: #1565c0; }
+.scribble-chrome .swatch[data-color="green"] { background: #2e7d32; }
+.scribble-chrome .swatch[data-color="yellow"] { background: #f9d000; }
+.scribble-chrome .swatch.active {
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
+}
+.scribble-chrome #context-bar {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  transform: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  padding: 5px 7px;
+  background: rgba(255, 255, 255, 0.9);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+  backdrop-filter: blur(12px) saturate(1.1);
+  border: 1px solid rgba(225, 228, 232, 0.9);
+  border-radius: 13px;
+  box-shadow: 0 1px 2px rgba(20, 24, 28, 0.08), 0 10px 28px rgba(20, 24, 28, 0.13);
+  z-index: 6;
+  touch-action: none;
+  transition: box-shadow .14s ease;
+}
+.scribble-chrome #context-bar .btn { height: 30px; min-width: 30px; }
+.scribble-chrome #context-bar .bar-divider { align-self: center; height: 20px; margin: 0 3px; }
+.scribble-chrome #context-bar.moved { transform: none; }
+.scribble-chrome #context-bar.cbar-dragging {
+  position: fixed !important;
+  transform: none !important;
+  z-index: 80;
+  box-shadow: 0 10px 30px rgba(20, 24, 28, 0.28);
+  cursor: grabbing;
+}
+.scribble-chrome .cbar-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scroll-behavior: smooth;
+}
+.scribble-chrome .cbar-content::-webkit-scrollbar { height: 5px; }
+.scribble-chrome .cbar-content::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.scribble-chrome #context-bar #colors, .scribble-chrome #context-bar #widths { display: flex; align-items: center; gap: 2px; flex: none; }
+.scribble-chrome #context-bar.collapsed .cbar-content { display: none; }
+.scribble-chrome .cbar-grip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  cursor: grab;
+  color: var(--muted);
+  padding: 0 3px;
+  border-radius: 6px;
+  user-select: none;
+  touch-action: none;
+}
+.scribble-chrome .cbar-grip svg { width: 6px; height: 15px; fill: currentColor; }
+.scribble-chrome .cbar-grip:hover { color: var(--ink); background: #eef0f3; }
+.scribble-chrome .cbar-grip:active { cursor: grabbing; }
+.scribble-chrome .cbar-collapse {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .12s, border-color .12s, color .12s, transform .15s ease;
+}
+.scribble-chrome .cbar-collapse svg {
+  width: 16px; height: 16px;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.scribble-chrome .cbar-collapse:hover { background: var(--accent-soft); color: var(--accent); border-color: #c4d2f5; }
+.scribble-chrome #context-bar.collapsed .cbar-collapse { transform: rotate(-90deg); }
+.scribble-chrome #btn-palette { border-color: var(--line); background: #fff; color: var(--ink); }
+.scribble-chrome #btn-palette:not(.active):hover { background: var(--accent-soft); border-color: #c4d2f5; color: var(--accent); }
+.scribble-chrome #btn-palette.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.scribble-chrome #btn-palette.active:hover { background: #2550c8; border-color: #2550c8; }
+.scribble-chrome #rail {
+  position: fixed; top: 4px; left: 4px; z-index: 9;
+  flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 4px;
+  width: calc(100% - 8px);            /* the ONE merged bar spans the card so actions can sit at the far edge */
+  background: #fff;
+  border: 1px solid var(--line); border-radius: 12px; padding: 4px 6px;
+  box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14);
+  max-height: none; overflow: visible;
+}
+.scribble-chrome #context-bar {
+  position: static; top: auto; left: auto; margin: 0 4px;
+}
+.scribble-chrome #rail .rail-group + .rail-group { border-left: 1px solid var(--line); padding-left: 6px; margin-left: 2px; }
+.scribble-chrome #rail [data-tool="circle"], .scribble-chrome #rail [data-tool="arrow"], .scribble-chrome #rail [data-tool="rect"] { display: none; }
+.scribble-chrome #rail .tool { width: auto; min-width: 0; }
+.scribble-chrome #rail .rail-group:has([data-tool="tick"]), .scribble-chrome #rail .rail-group:has([data-tool="circle"]), .scribble-chrome #rail .rail-group:has([data-tool="arrow"]) { display: none; }
+.scribble-chrome #context-bar {
+  z-index: 9; transform: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14); /* override the base 0 10px 28px blur (drag lag) */
+}
+.scribble-chrome #context-bar.cbar-dragging { z-index: 80; }
+.scribble-chrome #rail.fp-moved { width: max-content; max-width: calc(100vw - 8px); }
+.scribble-chrome #rail.fp-collapsed :is(.rail-group, .scribble-chrome #context-bar, .scribble-chrome .rail-actions) { display: none; }
+.scribble-chrome #rail.fp-collapsed { width: auto; }
+.scribble-chrome #rail {
+  gap: 6px; padding: 5px 7px; height: 52px;
+  border-radius: 12px; border: 1px solid var(--line); background: #fff;
+  box-shadow: 0 1px 3px rgba(20, 24, 28, 0.10); align-items: center;
+}
+.scribble-chrome #rail .rail-group { flex-direction: row; align-items: center; gap: 2px; border: 0; padding: 0; margin: 0; }
+.scribble-chrome #rail .rail-scroll > .rail-group + .rail-group, .scribble-chrome #rail .rail-scroll > #context-bar {
+  border-left: 1px solid var(--line); margin-left: 8px; padding-left: 8px;
+}
+.scribble-chrome #rail .rail-label { display: none; }
+.scribble-chrome #rail .tool, .scribble-chrome #rail .rail-actions .btn {
+  flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  width: auto; min-width: 0; height: 40px; padding: 0 7px;
+  border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--ink);
+}
+.scribble-chrome #rail .tool svg, .scribble-chrome #rail .rail-actions .btn svg { width: 18px; height: 18px; flex: none; stroke-width: 1.85; }
+.scribble-chrome #rail .tool span, .scribble-chrome #rail .rail-actions .btn span, .scribble-chrome #rail .rail-actions .btn.labeled {
+  display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .1px;
+  line-height: 1; white-space: nowrap; color: var(--muted);
+}
+.scribble-chrome #rail .tool[data-tool="text"] span { font-size: 0; letter-spacing: normal; }
+.scribble-chrome #rail .tool[data-tool="text"] span::after {
+  content: "Text"; font-size: 10.5px; font-weight: 600; letter-spacing: .1px; color: inherit;
+}
+.scribble-chrome #rail .tool:hover:not(.active):not(:disabled), .scribble-chrome #rail .rail-actions .btn:hover:not(:disabled) { background: #f5f6f8; border-color: transparent; }
+.scribble-chrome #rail .tool:hover:not(.active):not(:disabled) span { color: var(--ink); }
+.scribble-chrome #rail .tool.active {
+  background: var(--accent-soft); border-color: #c9d6f7; color: var(--accent); box-shadow: none;
+}
+.scribble-chrome #rail .tool.active svg { stroke: var(--accent); }
+.scribble-chrome #rail .tool.active span, .scribble-chrome #rail .tool.active span::after { color: var(--accent); font-weight: 600; }
+.scribble-chrome #rail .tool:disabled { opacity: .34; }
+.scribble-chrome #rail .tool:disabled span { color: var(--muted); }
+.scribble-chrome #rail .fp-grip { padding: 0 3px; color: #aab0b7; }
+.scribble-chrome #rail .fp-grip:hover { color: var(--muted); background: transparent; }
+.scribble-chrome #context-bar {
+  position: static; margin: 0; padding: 0; gap: 6px; background: transparent;
+  border: 0; border-radius: 0; box-shadow: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none; transform: none;
+}
+.scribble-chrome #context-bar.moved { left: auto; top: auto; }
+.scribble-chrome #context-bar .cbar-grip, .scribble-chrome #context-bar #cbar-collapse { display: none; }
+.scribble-chrome #context-bar .cbar-content { gap: 6px; overflow: visible; }
+.scribble-chrome #context-bar #colors { gap: 6px; }
+.scribble-chrome #context-bar .bar-divider, .scribble-chrome #context-bar #width-divider { width: 1px; height: 20px; margin: 0 1px; background: var(--line); align-self: center; }
+.scribble-chrome #context-bar .swatch {
+  position: relative; width: 22px; height: 22px; margin: 0;
+  border: 1px solid transparent; box-shadow: none; transition: box-shadow .1s ease;
+}
+.scribble-chrome #context-bar .swatch::before {
+  content: ""; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 44px; height: 44px;
+}
+.scribble-chrome #context-bar .swatch:hover { box-shadow: 0 0 0 1px rgba(20,24,28,0.20); }
+.scribble-chrome #context-bar .swatch[data-color="yellow"] { border-color: rgba(20,24,28,0.20); }
+.scribble-chrome #context-bar .swatch.active { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--accent); }
+.scribble-chrome #context-bar #widths { gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+.scribble-chrome #context-bar .btn.width {
+  min-width: 30px; height: 28px; padding: 0 6px; border: 0; border-radius: 0;
+  border-left: 1px solid var(--line); background: transparent;
+}
+.scribble-chrome #context-bar .btn.width:first-child { border-left: 0; }
+.scribble-chrome #context-bar .btn.width:hover { background: #f5f6f8; }
+.scribble-chrome #context-bar .btn.width.active { background: var(--accent-soft); }
+.scribble-chrome #context-bar .btn.width.active .dot { background: var(--accent); }
+.scribble-chrome #context-bar #btn-palette {
+  height: 30px; min-width: 34px; padding: 0 7px; border: 1px solid transparent; border-radius: 8px; background: transparent;
+}
+.scribble-chrome #context-bar #btn-palette svg { width: 18px; height: 18px; }
+.scribble-chrome #context-bar #btn-palette:hover { background: #f5f6f8; }
+.scribble-chrome #context-bar #btn-palette[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: #c9d6f7; }
+.scribble-chrome #rail .rail-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; padding-left: 7px; border-left: 1px solid var(--line); }
+.scribble-chrome #rail .rail-actions #btn-big, .scribble-chrome #rail .rail-actions #btn-help { gap: 0; padding: 0; min-width: 34px; height: 40px; }
+.scribble-chrome #rail .rail-actions .btn.active, .scribble-chrome #rail .rail-actions .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: #c9d6f7; color: var(--accent); }
+.scribble-chrome #rail .rail-actions .btn.active span, .scribble-chrome #rail .rail-actions .btn[aria-pressed="true"] span { color: var(--accent); }
+.scribble-chrome #rail #btn-more[aria-expanded="true"] { background: var(--accent-soft); border-color: #c9d6f7; color: var(--accent); }
+.scribble-chrome #rail #more-popover {
+  position: absolute; top: calc(100% + 6px); right: 6px; z-index: 90;
+  display: flex; flex-direction: column; gap: 2px; min-width: 190px;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(20, 24, 28, 0.18); padding: 5px;
+}
+.scribble-chrome #rail #more-popover[hidden] { display: none; }
+.scribble-chrome #rail #more-popover .btn {
+  flex-direction: row; justify-content: flex-start; align-items: center; gap: 10px;
+  width: 100%; min-width: 0; height: auto; padding: 8px 10px;
+  border: 1px solid transparent; border-radius: 7px; background: transparent;
+}
+.scribble-chrome #rail #more-popover .btn svg { width: 18px; height: 18px; flex: none; }
+.scribble-chrome #rail #more-popover .btn span { display: inline; font-size: 12.5px; font-weight: 500; color: var(--ink); letter-spacing: 0; line-height: 1.2; white-space: nowrap; }
+.scribble-chrome #rail #more-popover .btn:hover { background: #f5f6f8; }
+.scribble-chrome #rail #more-popover .btn.active, .scribble-chrome #rail #more-popover .btn[aria-pressed="true"] { background: var(--accent-soft); }
+.scribble-chrome #rail #more-popover .btn.active span, .scribble-chrome #rail #more-popover .btn[aria-pressed="true"] span { color: var(--accent); }
+.scribble-chrome #rail .fp-collapse { width: 30px; height: 30px; border: 1px solid var(--line); background: #fff; border-radius: 8px; color: var(--muted); }
+.scribble-chrome #rail .fp-collapse:hover { background: #f5f6f8; color: var(--ink); border-color: var(--line); }
+.scribble-chrome #rail .rail-scroll { display: flex; align-items: center; gap: 0; min-width: 0; flex: 1 1 auto; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; padding: 2px 0; margin: -2px 0; }
+.scribble-chrome #rail .fp-grip, .scribble-chrome #rail .rail-actions, .scribble-chrome #rail #rail-collapse { flex: none; }
+.scribble-chrome #rail .tool, .scribble-chrome .swatch { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.scribble-chrome .embed-actions .btn { border: 1px solid var(--line); background: #fff; }
+.scribble-chrome .embed-actions .btn.active { background: var(--accent-soft); border-color: #b9cbf5; color: var(--accent); }
+.scribble-chrome.big .btn { height: 42px; min-width: 42px; font-size: 16px; }
+.scribble-chrome.big .btn svg { width: 22px; height: 22px; }
+.scribble-chrome.big #rail { width: 140px; }
+.scribble-chrome.big #rail .tool { height: 42px; font-size: 15px; }
+.scribble-chrome.big #rail .tool svg { width: 21px; height: 21px; }
+.scribble-chrome.big .swatch { width: 28px; height: 28px; }
+.scribble-chrome .modal-actions .btn {
+  justify-content: center;
+  border: 1px solid var(--line);
+  height: 38px;
+}
+.scribble-chrome .modal-actions .btn.primary { border-color: var(--ink); }
+.scribble-chrome .btn:focus-visible, .scribble-chrome #rail .tool:focus-visible, .scribble-chrome .swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
