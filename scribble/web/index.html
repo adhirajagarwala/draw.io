@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=153">
+  <link rel="stylesheet" href="style.css?v=154">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -335,12 +335,13 @@
     </div>
   </div>
 
-  <!-- Always-visible attribution in the overlay (styled/gated in CSS; inert everywhere else). -->
+  <!-- Attribution chip: in overlay, app.js moves this into #rail and CSS pins it under the toolbar's
+       corner (part of the tool's chrome, NOT the question). Inert in every other mode. -->
   <div id="about-line" aria-hidden="true"><strong>Scribble</strong> — by Adhiraj Agarwala · MIT License</div>
 
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=153"></script>
+  <script type="module" src="app.js?v=154"></script>
 </body>
 </html>

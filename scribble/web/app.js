@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "153";
+const APP_VERSION = "154";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=153";
+import init, { App } from "./pkg/scribble.js?v=154";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,15 +17,15 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=153";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=153";
-import { initEmbed } from "./embed.js?v=153";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=153";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=153";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip } from "./modals.js?v=153";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=153";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=153";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=153";
+} from "./utils.js?v=154";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=154";
+import { initEmbed } from "./embed.js?v=154";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=154";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=154";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip } from "./modals.js?v=154";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=154";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=154";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=154";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -3510,6 +3510,8 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         railEl.appendChild(actions);
         railEl.appendChild(morePop); // sibling of actions; CSS positions it under the More button
         railEl.appendChild($("rail-collapse")); // keep the collapse chevron LAST, after the appended children
+        const aboutLine = $("about-line"); // attribution chip rides the toolbar (CSS pins it under the bar's corner)
+        if (aboutLine) railEl.appendChild(aboutLine);
         const closeMore = () => {
           if (morePop.hidden) return;
           const hadFocus = morePop.contains(document.activeElement);

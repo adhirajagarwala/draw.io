@@ -1513,16 +1513,18 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
 }
 #about-popover[hidden] { display: none; }
 
-/* Attribution line, always on in the EDITABLE overlay: a new id on purpose — the annotate gate
-   (body.overlay:not(.annotate-active) …) hides only #rail/#notes-pane, so this line survives it and
-   shows before the student ever clicks Annotate. :not(.readonly): the graded submission panels are
-   also overlay builds, and each would paint its own copy. pointer-events:none — it can never eat a
-   stroke or a click meant for the live question. Fixed inside the question-tall iframe = pinned to
-   the question's bottom-left corner. z-index below #status (60) and the chrome (9+). */
+/* Attribution rides the TOOLBAR, not the question: at the question's bottom edge it read as part of
+   the exam text (user-reported), so it's pinned under the floating rail's corner instead — visually
+   glued to the tool's own chrome and it follows the bar when dragged. app.js moves the element into
+   #rail in overlay, so the annotate gate and readonly hiding come free (both hide the whole rail).
+   pointer-events:none — it hangs over the live question and must never eat a click. Hidden while the
+   rail is collapsed to a handle. */
 #about-line { display: none; }
-body.overlay:not(.readonly) #about-line {
-  display: block; position: fixed; left: 8px; bottom: 6px; z-index: 8;
-  pointer-events: none; user-select: none;
-  font-size: 11px; color: var(--muted);
-  background: rgba(255, 255, 255, 0.85); border-radius: 6px; padding: 2px 8px;
+body.overlay #rail #about-line {
+  display: block; position: absolute; top: calc(100% + 3px); right: 6px;
+  pointer-events: none; user-select: none; white-space: nowrap;
+  font-size: 10.5px; color: var(--muted);
+  background: rgba(255, 255, 255, 0.9); border-radius: 6px; padding: 1px 7px;
+  box-shadow: 0 1px 3px rgba(20, 24, 28, 0.10);
 }
+body.overlay #rail.fp-collapsed #about-line { display: none; }
