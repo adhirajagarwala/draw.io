@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "158";
+const APP_VERSION = "159";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=158";
+import init, { App } from "./pkg/scribble.js?v=159";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,16 +17,16 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=158";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=158";
-import { initEmbed } from "./embed.js?v=158";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=158";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=158";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip } from "./modals.js?v=158";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=158";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=158";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=158";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=158";
+} from "./utils.js?v=159";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=159";
+import { initEmbed } from "./embed.js?v=159";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=159";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=159";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip } from "./modals.js?v=159";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=159";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=159";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=159";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=159";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -2238,6 +2238,7 @@ async function exportPdf() {
 // ---------- toolbar wiring ----------
 
 els.btn.open.addEventListener("click", async () => {
+  if (document.body.classList.contains("locked")) return; // #15: no file actions in the locked reference tool
   // Opening replaces the current document — guard unsaved work with a choice.
   if (docOpen() && (dirtySinceFileSave || app?.is_dirty())) {
     const choice = await confirmOpenDialog();
@@ -2266,10 +2267,74 @@ els.filePdf.addEventListener("change", () => {
   if (f) routeOpen(f);
 });
 
+// ---- #15: reference-tool auto-open + lock (?file=) ----
+// The exam page links this tool with ?file=<same-origin PL path> (e.g. /pl/course_instance/…/
+// assessment/…/clientFilesAssessment/mt.pdf — route shape confirmed live). The path is passed
+// WHOLE so PrairieLearn stays the single access-control authority over the exam file (nothing is
+// copied to a course-wide-readable location). The lock is AFFORDANCE-ONLY by accepted design:
+// typing the bare index.html URL yields the normal tool; PL still gates the file itself. The
+// locked tool is a pure reference sheet (user decision): every drawing tool + snip-to-clipboard
+// work, but Open/Resume/Save/Export are all hidden — pasting a snip into the PL question's notes
+// is the one export path.
+function refFileRequest() {
+  const raw = new URLSearchParams(location.search).get("file");
+  if (!raw) return null;
+  const LEAF = /^[A-Za-z0-9_.\-]+\.(pdf|html?)$/i;
+  // Tier 2: bare filename → a standing reference shipped in the bundle's refs/ folder.
+  if (!raw.includes("/") && !raw.includes("%") && LEAF.test(raw)) {
+    return { url: new URL(`refs/${raw}`, location.href).href, name: raw };
+  }
+  // Tier 1: a full same-origin PL path. Every step is mandatory; any failure → null (the caller
+  // shows a kind message and leaves the normal, unlocked tool).
+  try {
+    if (!raw.startsWith("/") || raw.startsWith("//")) return null; // kills schemes + protocol-relative
+    const u = new URL(raw, location.origin);
+    if (u.origin !== location.origin) return null;
+    // Traversal checks run on the RAW pathname AND its decoded form: %252e%252e survives one
+    // decode as a literal %2e%2e (no ".." to find) while the server decodes again. decodeURIComponent
+    // throwing (malformed escapes) is itself a rejection.
+    for (const p of [u.pathname, decodeURIComponent(u.pathname)]) {
+      if (!p.startsWith("/pl/") || p.includes("\\")) return null;
+      // Segments after the leading slash: no "..", no ".", no empties ("//" or a trailing slash).
+      if (p.split("/").slice(1).some((seg) => seg === ".." || seg === "." || seg === "")) return null;
+    }
+    if (!/\/clientFiles(Course|Assessment|Question)\//.test(u.pathname)) return null;
+    const leaf = decodeURIComponent(u.pathname.split("/").pop());
+    if (!LEAF.test(leaf)) return null;
+    return { url: u.href, name: leaf };
+  } catch {
+    return null;
+  }
+}
+
+async function openReferenceFile() {
+  const req = refFileRequest();
+  if (!req) {
+    status("That reference link isn't valid — you can open a file yourself with the Open button.");
+    return;
+  }
+  document.body.classList.add("locked"); // before any await: no flash of the soon-hidden file actions
+  try {
+    status(`Loading ${req.name}…`);
+    const r = await fetch(req.url); // same-origin credentialed — PL enforces its own access windows
+    if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { httpStatus: r.status });
+    const blob = await r.blob();
+    const fallbackType = /\.html?$/i.test(req.name) ? "text/html" : "application/pdf";
+    routeOpen(new File([blob], req.name, { type: blob.type || fallbackType }));
+  } catch (e) {
+    // A dead locked tool would strand the student mid-exam — unlock and fall back to the normal UI.
+    document.body.classList.remove("locked");
+    status(e?.httpStatus === 403
+      ? "That reference isn't available yet — it may unlock when the assessment opens."
+      : "The reference file couldn't be loaded — you can open a file yourself with the Open button.");
+  }
+}
+
 // "Open in a new tab" lands here on ?open: pop the file picker immediately. A fresh
 // tab may need a click before the browser will show a file dialog — if so, the Open
 // button is focused and pulsing as an obvious one-click fallback.
 function autoOpenIfRequested() {
+  if (document.body.classList.contains("locked")) return; // the locked reference tool has no picker
   if (!new URLSearchParams(location.search).has("open")) return;
   history.replaceState({}, "", location.pathname); // don't re-trigger on reload
   els.btn.open.focus();
@@ -2281,6 +2346,7 @@ function autoOpenIfRequested() {
 els.fileJson.addEventListener("change", () => {
   const f = els.fileJson.files[0];
   els.fileJson.value = "";
+  if (document.body.classList.contains("locked")) return; // #15: the JSON picker is hidden; belt for stragglers
   if (f) loadJsonFile(f);
 });
 
@@ -2561,6 +2627,12 @@ document.addEventListener("keydown", (ev) => {
     // Intercept the reflexive Cmd/Ctrl+S so it doesn't litter Downloads with a junk .json.
     if (document.body.classList.contains("embedded")) {
       status("Scratch work is included when you click Save.");
+    } else if (document.body.classList.contains("locked")) {
+      // Only PDF references autosave (by sha, restored on reopen); HTML has no stable identity, so
+      // don't promise persistence there — point the student at snipping into their answer instead.
+      status(docMode === "pdf"
+        ? "This reference sheet keeps your scribbles automatically — nothing to save."
+        : "Scribble here as scratch — snip a region into your answer's notes to keep it.");
     } else if (!els.btn.save.disabled) {
       downloadJson();
     }
@@ -2948,6 +3020,108 @@ async function copyImageToClipboard(src, btn) {
   }
 }
 
+// ---- #12: paste an image INTO the notes — the landing side of the reference-tab snip flow ----
+// Security (§7): blob-only, decoded to pixels and re-encoded by OUR canvas (strips EXIF/polyglots);
+// clipboard text/html flavors are never parsed; Rust re-validates the PNG on insert and on load.
+const PASTE_B64_MAX = 2 * 1024 * 1024;   // mirror of Rust's MAX_CLIPPING_B64 — friendly-message the cap here
+const PASTE_BLOB_MAX = 32 * 1024 * 1024; // absurd-input early guard before any decode work
+const PASTE_EDGE_START = 2000;           // long-edge target for the first encode attempt
+
+async function pasteBlobToNotes(blob) {
+  if (!docOpen() || READONLY) return;
+  if (!blob || !/^image\//.test(blob.type)) {
+    status("No image on the clipboard — snip something in the reference tab first.");
+    return;
+  }
+  if (blob.size > PASTE_BLOB_MAX) {
+    status("That image is too large to paste — crop it smaller and try again.");
+    return;
+  }
+  let bitmap = null, imgUrl = null;
+  try {
+    try {
+      bitmap = await createImageBitmap(blob);
+    } catch {
+      // <img>-decode fallback (also rasterizes SVG): scriptless, blob-URL only, revoked in finally.
+      imgUrl = URL.createObjectURL(blob);
+      bitmap = await new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => res(im);
+        im.onerror = () => rej(new Error("decode"));
+        im.src = imgUrl;
+      });
+    }
+    const w0 = bitmap.naturalWidth || bitmap.width, h0 = bitmap.naturalHeight || bitmap.height;
+    if (!(w0 > 0 && h0 > 0)) throw new Error("decode");
+    // Downscale ladder: long edge 2000px, then ×0.7 steps until the PNG fits the per-clipping cap
+    // (a retina screenshot exceeds it on the first try). Floor at ~300px — below that, tell the
+    // student to crop instead of pasting mush.
+    let edge = Math.min(PASTE_EDGE_START, Math.max(w0, h0));
+    for (;;) {
+      const scale = edge / Math.max(w0, h0);
+      const w = Math.max(1, Math.round(w0 * scale)), h = Math.max(1, Math.round(h0 * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, w, h);
+      const b64 = canvas.toDataURL("image/png").split(",")[1];
+      if (b64.length <= PASTE_B64_MAX) {
+        app.add_pasted_clipping(b64, "", w, h); // display at the encoded size (CSS px at scale 1)
+        renderNotes();
+        revealNotes();
+        status("Image pasted into your notes.");
+        return;
+      }
+      if (edge <= 300) {
+        status("That image is too detailed to paste — snip or crop a smaller region.");
+        return;
+      }
+      edge = Math.round(edge * 0.7);
+    }
+  } catch (e) {
+    // Rust rejections (notes full, bad PNG) surface here too — show its message, not a stack.
+    status(typeof e === "string" ? e
+      : e?.message === "decode" ? "Couldn't read that image."
+      : `Couldn't paste: ${e?.message || e}`);
+  } finally {
+    bitmap?.close?.();
+    if (imgUrl) URL.revokeObjectURL(imgUrl);
+  }
+}
+
+// Button path: clipboard.read() must be called SYNCHRONOUSLY in the click handler — WebKit
+// consumes the user activation at the first await, and the permission prompt needs it.
+$("btn-paste-img")?.addEventListener("click", () => {
+  if (!docOpen() || READONLY) return;
+  if (!navigator.clipboard?.read) {
+    status("This browser can't read the clipboard from a button — click the notes and press Ctrl/⌘+V instead.");
+    return;
+  }
+  navigator.clipboard.read().then(async (items) => {
+    for (const item of items) {
+      const type = item.types.find((t) => t === "image/png") || item.types.find((t) => /^image\//.test(t));
+      if (type) { await pasteBlobToNotes(await item.getType(type)); return; }
+    }
+    status("No image on the clipboard — snip something in the reference tab first.");
+  }).catch(() => {
+    status("Clipboard access was blocked — click the notes and press Ctrl/⌘+V instead.");
+  });
+});
+
+// Ctrl/⌘+V accelerator. A text paste into a caption/text field stays native (no preventDefault);
+// an IMAGE paste is ours wherever it lands — even in a textarea, where native would no-op anyway.
+document.addEventListener("paste", (e) => {
+  if (!docOpen() || READONLY) return;
+  if (document.querySelector(".modal-overlay:not([hidden])")) return; // a dialog owns the keyboard
+  const items = [...(e.clipboardData?.items || [])];
+  const imgItem = items.find((it) => it.kind === "file" && /^image\//.test(it.type));
+  const inTextField = e.target instanceof Element &&
+    e.target.matches("input, textarea, select, [contenteditable]");
+  if (inTextField && items.some((it) => it.kind === "string" && it.type === "text/plain")) return;
+  if (!imgItem) return;
+  e.preventDefault();
+  pasteBlobToNotes(imgItem.getAsFile());
+});
+
 function buildClippingBlock(div, i) {
   const img = document.createElement("img");
   img.src = b64ToBlobUrl(app.note_png(i));
@@ -3328,7 +3502,15 @@ helpOverlay.addEventListener("click", (ev) => {
 //     PDF is reopened. Nothing leaves the machine; it's the same local-only data.
 
 // Namespace LAYOUT prefs per PL element so two overlay questions on one page don't clobber each other.
-const PREFS_KEY = "scribble.prefs.v1" + (window.__SCRIBBLE_PL?.name ? "." + window.__SCRIBBLE_PL.name : "");
+// Per-question prefs: the element passes a qid (path under /questions/, dot-joined) so panel layouts
+// stop leaking across questions that all share the default answers-name. Missing qid (older element,
+// deploy-order skew) → the legacy shared key; standalone keeps the bare key. A11Y_KEY stays shared.
+const PREFS_KEY = "scribble.prefs.v1" + (() => {
+  const pl = window.__SCRIBBLE_PL;
+  if (!pl) return "";
+  const parts = [pl.qid, pl.name].filter(Boolean);
+  return parts.length ? "." + parts.join(".") : "";
+})();
 // USER-level accessibility prefs (Larger controls, colourblind-safe palette) are NOT per-question — a shared,
 // un-namespaced key so enabling them on one question applies to every question (they serve the users who
 // most need consistency).
@@ -3786,7 +3968,11 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
                    parseFloat(nf.width) || 340, parseFloat(nf.height) || 320);
       }
     }
-    autoOpenIfRequested(); // "Open in a new tab" → pop the file picker here
+    // #15: any ?file= present routes to the reference opener (which shows a kind message and leaves
+    // the normal Open UI if the value is invalid); the ?open picker-popper runs only when ?file is
+    // absent. Branch on PRESENCE, not validity, so a malformed link still gets feedback.
+    if (new URLSearchParams(location.search).has("file")) openReferenceFile();
+    else autoOpenIfRequested(); // "Open in a new tab" → pop the file picker here
     idbPrune(); // bound the autosave store (keep the most-recent snapshots)
   })
   .catch((e) => {

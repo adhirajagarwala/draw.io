@@ -633,6 +633,7 @@ body.readonly #rail,
 body.readonly #context-bar,
 body.readonly #btn-add-note,
 body.readonly #btn-add-sketch,
+body.readonly #btn-paste-img,
 body.readonly #btn-notes-dock,
 body.readonly #btn-open,
 body.readonly #btn-save,
@@ -1508,6 +1509,17 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
   #topbar .btn.labeled, #rail .btn.labeled { font-size: 0; gap: 0; padding: 0 8px; }
   .brand { display: none; }
 }
+
+/* #15: the locked reference tool (auto-opened via a valid ?file=) is a pure reference sheet —
+   NO file actions at all (user decision): students scribble with every tool and snip-copy regions
+   to paste into the PL question's notes. Affordance-only by accepted design (JS guards back it). */
+body.locked #btn-open,
+body.locked #btn-save,
+body.locked #btn-load,
+body.locked #btn-export,
+body.locked #btn-paste-img { display: none !important; }
+/* ＋Paste is hidden too: in the locked REFERENCE tab it would paste into that tab's own scratch
+   notes, not the student's PL answer — the intended flow is snip HERE, paste in the question tab. */
 
 /* ---------- About: the "i" popover ---------- */
 /* The wrapper keeps the popover anchored to the button in BOTH homes (standalone #topbar and the

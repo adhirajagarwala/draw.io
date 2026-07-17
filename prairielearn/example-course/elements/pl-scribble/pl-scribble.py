@@ -181,6 +181,24 @@ _OVERLAY_WRAP = (
 )
 
 
+def _qid(data):
+    """A stable per-question id for CLIENT-SIDE layout prefs (panel positions), so a toolbar dragged
+    on one question stops restoring on every other question (they all default answers-name).
+
+    Uses the question directory path AFTER the /questions/ segment — nested QIDs (exams/mt1/q3 vs
+    exams/mt2/q3) stay distinct where a bare basename would collide — slash-sanitized to dots.
+    Falls back to the basename when the marker is absent; None keeps the client on its legacy
+    shared key (deploy-order-safe: either artifact can ship first)."""
+    p = str(data["options"].get("question_path", "") or "")
+    if not p:
+        return None
+    marker = "/questions/"
+    i = p.find(marker)
+    rel = p[i + len(marker):] if i >= 0 else os.path.basename(p)
+    rel = rel.strip("/").replace("/", ".")
+    return rel or None
+
+
 def _bundle_index(data):
     """Read the deployed Scribble index.html, or None if the bundle isn't there."""
     index_path = os.path.join(data["options"]["client_files_course_path"], "scribble", "index.html")
@@ -305,7 +323,7 @@ def render(element_html, data):
         if not blob:
             return ""
         cfg = "<script>window.__SCRIBBLE_PL=%s;window.__SCRIBBLE_READONLY=true;</script>" % json.dumps(
-            {"readOnly": True, "data": blob, "name": name}  # name → same namespaced PREFS_KEY as the editable view
+            {"readOnly": True, "data": blob, "name": name, "qid": _qid(data)}  # same namespaced PREFS_KEY as the editable view
         )
         srcdoc = _build_srcdoc(doc, base_url, cfg, overlay=False)
         if srcdoc is None:
@@ -316,7 +334,7 @@ def render(element_html, data):
         ) % (inner, _FRAME % ("Saved annotations", srcdoc))
 
     # panel == "question": editable, with a hidden form input PrairieLearn persists.
-    cfg = "<script>window.__SCRIBBLE_PL=%s;</script>" % json.dumps({"readOnly": False, "name": name})
+    cfg = "<script>window.__SCRIBBLE_PL=%s;</script>" % json.dumps({"readOnly": False, "name": name, "qid": _qid(data)})
     srcdoc = _build_srcdoc(doc, base_url, cfg, overlay=overlay)
     if srcdoc is None:
         return _INJECT_FAIL

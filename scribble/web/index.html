@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=158">
+  <link rel="stylesheet" href="style.css?v=159">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -275,6 +275,7 @@
         <span>
           <button id="btn-add-note" class="btn" title="Add a text block">＋ Text</button>
           <button id="btn-add-sketch" class="btn" title="Add a blank canvas you can draw on with the same tools">＋ Draw</button>
+          <button id="btn-paste-img" class="btn" title="Paste an image from the clipboard — e.g. a snip copied in the reference tab (Ctrl/⌘+V works too)">＋ Paste</button>
           <button id="btn-notes-dock" class="btn" title="Float notes as a window">Float</button>
           <button id="btn-notes-hide" class="btn icon-btn" title="Hide the notes — reopen with the Notes button on the toolbar" aria-label="Hide the notes">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -340,6 +341,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=158"></script>
+  <script type="module" src="app.js?v=159"></script>
 </body>
 </html>
