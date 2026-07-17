@@ -19,6 +19,25 @@ Skipping this has repeatedly caused rework. Plan first, even when the change
 feels obvious. Also: **ASK before assuming** when scope is ambiguous — this is a
 project rule, not a suggestion.
 
+## 0.1 Substantive changes — full pipeline + staged deploy (XHIGH) — REQUIRED
+
+For any non-trivial change (a feature, a multi-file fix, anything bound for the
+class site), the user requires this exact process:
+
+1. **Run the elaborate multi-agent pipeline** — ideate → plan → execute →
+   debug/adversarial-review — via the **Workflow** tool, with agents at **XHIGH**
+   reasoning effort. Adversarially verify every finding. Reviewers are
+   **READ-ONLY** — never let a review agent edit the shared working tree (a
+   Cycle-2 agent once reverted `lib.rs`); the main loop applies the fixes.
+2. **Deploy to the LOCAL PL course first** — `prairielearn/example-course` (what
+   local Docker at :3000 serves). Bump the cache version, verify live.
+3. **STOP and wait for the user to confirm it works on the local copy.**
+4. **Only after the user confirms, push to the actual class site** — the
+   `pl-uiuc-ece498sl` repo → prairielearn.com. Commit as the user (sole author,
+   **no** co-author trailer); the user does the final push/merge to `main`.
+
+Never jump straight to the class site. Local-verify → user confirms → production.
+
 ## Mistakes log — read before testing/shipping (do NOT repeat)
 
 - **Stale cache while testing through the browser.** A plain navigate served a

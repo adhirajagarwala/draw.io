@@ -124,6 +124,102 @@ export function htmlTextInRegion(htmlFrame, x0, y0, w, h) {
   };
 }
 
+// Overlay mode: the question lives in the PARENT page (not an iframe), so text-node geometry is in
+// VIEWPORT coords — convert to page coords by subtracting the host's top-left. Whole-node granularity
+// (a caption, not a transcript); MathJax's hidden MathML twin is skipped so equations don't double up.
+export function overlayTextInRegion(host, x0, y0, w, h) {
+  if (!host || !host.ownerDocument) return { text: "", hadMath: false };
+  const hb = host.getBoundingClientRect();
+  const ox = hb.left, oy = hb.top;
+  const x1 = x0 + w, y1 = y0 + h;
+  const doc = host.ownerDocument;
+  const hits = [], seenLinks = new Set(), mathSeen = new Set();
+  let hadMath = false;
+  const walker = doc.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+  const range = doc.createRange();
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const s = n.nodeValue.trim();
+    if (!s) continue;
+    const pe = n.parentElement;
+    if (!pe) continue;
+    if (pe.closest("mjx-assistive-mml, .MathJax_Preview, .katex-mathml")) continue; // hidden math twin
+    range.selectNodeContents(n);
+    let box = null;
+    for (const rc of range.getClientRects()) {
+      const l = rc.left - ox, t = rc.top - oy, r = rc.right - ox, b = rc.bottom - oy;
+      if (r >= x0 && l <= x1 && b >= y0 && t <= y1) { box = { top: t, left: l }; break; }
+    }
+    if (!box) continue;
+    const mc = pe.closest("mjx-container, .MathJax, [data-latex], .katex");
+    if (mc) {
+      hadMath = true;
+      if (mathSeen.has(mc)) continue;
+      mathSeen.add(mc);
+      const tex = (mc.getAttribute("data-latex")
+        || mc.querySelector?.('annotation[encoding="application/x-tex"]')?.textContent || s).trim();
+      const r = mc.getBoundingClientRect();
+      hits.push({ top: r.top - oy, left: r.left - ox, str: tex });
+      continue;
+    }
+    // Sub-region precision: keep only the characters actually under the box, so a box over half a
+    // sentence yields that half — not the whole text node. clipNodeChars works in VIEWPORT coords, so
+    // convert the page-space region back to viewport (add the host origin). A node fully inside the box,
+    // or one too long to scan per-char, is taken whole. (This mirrors htmlTextInRegion.)
+    const ub = range.getBoundingClientRect();
+    const vx0 = x0 + ox, vy0 = y0 + oy, vx1 = x1 + ox, vy1 = y1 + oy;
+    const wholeIn = ub.left >= vx0 - 0.5 && ub.right <= vx1 + 0.5 && ub.top >= vy0 - 0.5 && ub.bottom <= vy1 + 0.5;
+    let str = s, aTop = box.top, aLeft = box.left;
+    if (!wholeIn && n.nodeValue.length <= 4000) {
+      const clip = clipNodeChars(range, n, vx0, vy0, vx1, vy1);
+      if (!clip) continue;
+      str = clip.str.replace(/\s+/g, " ").trim();
+      if (!str) continue;
+      aTop = clip.top - oy; aLeft = clip.left - ox;
+    }
+    const a = pe.closest("a[href]");
+    if (a) { const href = a.getAttribute("href"); if (href && !seenLinks.has(href)) { seenLinks.add(href); str += ` (${href})`; } }
+    hits.push({ top: aTop, left: aLeft, str });
+  }
+  // SVG-rendered MathJax has NO text nodes (the glyphs are SVG paths and the MathML twin is skipped above),
+  // so the text walk misses every equation. Catch each math container in the region directly and pull its
+  // accessible source — TeX if present, else MathJax's plain speech ("t equals 0") — so math isn't dropped.
+  const mathText = (mc) => {
+    const sp = mc.getAttribute("data-semantic-speech-none"); // MathJax's clean spoken form, e.g. "t equals 0"
+    if (sp && sp.trim()) return sp.replace(/\s+/g, " ").trim();
+    // else a real TeX source if present; do NOT fall back to raw MathML textContent (it runs the tokens
+    // together into garble like "dqdt"). No clean source → skip it (the snip IMAGE still carries the math).
+    return (mc.getAttribute("data-latex")
+      || mc.querySelector?.('annotation[encoding="application/x-tex"]')?.textContent || "").trim();
+  };
+  // ONE representation per TOP-LEVEL equation: match only the outer container (a bare [data-latex] selector
+  // catches nested sub-expressions, and each fragment would garble the caption) and skip nested/seen ones.
+  for (const mc of host.querySelectorAll("mjx-container, .katex")) {
+    if (mathSeen.has(mc) || mc.parentElement?.closest("mjx-container, .katex")) continue;
+    const r = mc.getBoundingClientRect();
+    const l = r.left - ox, t = r.top - oy;
+    if (!(r.right - ox >= x0 && l <= x1 && r.bottom - oy >= y0 && t <= y1)) continue; // outside the snip
+    mathSeen.add(mc);
+    const str = mathText(mc);
+    if (!str) continue;
+    hadMath = true;
+    // Anchor at the container top (matches the surrounding text hits' box.top). A tall inline equation's box
+    // extends above/below the line, so linearising it into a 1-D caption can't be pixel-perfect — top keeps it
+    // roughly in its sentence position (centre-anchoring pushed it out of order and read worse).
+    hits.push({ top: t, left: l, str });
+  }
+  hits.sort((p, q) => (Math.abs(p.top - q.top) > 6 ? p.top - q.top : p.left - q.left));
+  let text = "", prevTop = null;
+  for (const it of hits) {
+    if (prevTop !== null) text += (it.top - prevTop > 6) ? "\n" : " ";
+    text += it.str;
+    prevTop = it.top;
+  }
+  return {
+    text: text.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim(),
+    hadMath,
+  };
+}
+
 // Extract PDF text overlapping the region, in reading order. Uses each glyph
 // run's box (not just its baseline anchor) so partly-covered runs are caught,
 // and groups runs into rows so the result reads top-to-bottom, left-to-right.

@@ -99,31 +99,83 @@ _FRAME = (
 # faithful; min-height (== Scribble's 200px page floor) stops a short prose from clipping the canvas.
 _OVERLAY_FRAME = (
     '<iframe class="pl-scribble-overlay-frame" title="%s" '
-    'style="position:absolute;top:0;left:0;width:100%%;height:200px;border:0;background:transparent;" '
+    # z-index near INT_MAX so Scribble's toolbar/notes sit ABOVE any other page overlay or browser
+    # extension the student runs. It stays a good citizen: pointer-events:none (below) makes the whole
+    # transparent frame click-through until "Annotate" is pressed, so other overlays remain reachable.
+    'style="position:absolute;top:0;left:0;width:100%%;height:200px;border:0;background:transparent;'
+    'z-index:2147482000;" '
     'srcdoc="%s"></iframe>'
 )
-# Size the overlay iframe to the live prose host (and keep it in sync on load / MathJax / resize).
-# A custom element may emit a parent-page inline <script>; PrairieLearn's page CSP has no script-src.
+# "Annotate" launch button (editable overlay only). Until clicked, the drawing layer passes pointer
+# events THROUGH to the live question and Scribble's UI stays hidden (style.css :not(.annotate-active));
+# clicking flips drawing on. Prof. Lumetta asked for an explicit launch affordance (cf. PL's Calculator).
+_ANNOTATE_BTN = (
+    '<button type="button" class="pl-scribble-annotate-btn" aria-pressed="false" '
+    # z-index above the overlay frame (2147482000) so the launch affordance is never buried by another
+    # extension's overlay; the active "Done" state floats even higher (2147483000, in the sizer).
+    'style="position:absolute;top:8px;right:8px;z-index:2147482500;display:inline-flex;align-items:center;gap:6px;'
+    'padding:6px 12px;border:1px solid #c9d6f7;border-radius:8px;background:#fff;color:#2f5fde;'
+    'font:600 13px/1 system-ui,-apple-system,sans-serif;cursor:pointer;box-shadow:0 1px 3px rgba(20,24,28,.12);">'
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/>'
+    '<path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg><span>Annotate</span></button>'
+)
+# Size the overlay iframe to the live prose host (in sync on load / MathJax / resize), and wire the
+# Annotate toggle. A custom element may emit a parent-page inline <script>; PL's page CSP has no
+# script-src. The iframe is same-origin (srcdoc + allow-same-origin), so we flip a class on its body.
 _OVERLAY_SIZER = (
     "<script>(function(){var w=document.currentScript.parentElement,"
-    "h=w.querySelector('.pl-scribble-host'),f=w.querySelector('.pl-scribble-overlay-frame');"
+    "h=w.querySelector('.pl-scribble-host'),f=w.querySelector('.pl-scribble-overlay-frame'),"
+    "b=w.querySelector('.pl-scribble-annotate-btn');"
     "function s(){f.style.height=Math.max(h.offsetHeight,200)+'px';}s();"
     "window.addEventListener('load',s);window.addEventListener('resize',s);"
     "if(window.MathJax&&MathJax.startup&&MathJax.startup.promise){MathJax.startup.promise.then(s);}"
+    "f.style.pointerEvents='none';"  # default click-through — also covers the read-only view (no button)
+    "if(b){var on=false,bp=b.parentNode,dg=null,sc=false;function m(){f.style.pointerEvents=on?'auto':'none';"
+    "var sp=b.querySelector('span');"
+    # ACTIVE: a big, filled, DRAGGABLE floating action button, pinned bottom-right. CRITICAL: a PrairieLearn
+    # ancestor (question card) can carry a CSS transform, which makes a position:fixed DESCENDANT resolve
+    # against THAT box, not the viewport — so the button lands off-screen down a long question and the student
+    # can't find "Done". Reparent it to <body> (outside any transformed ancestor) so fixed == viewport, and
+    # make it large/prominent. INACTIVE: the compact launch pill back at the question's top-right corner.
+    "if(on){if(b.parentNode!==document.body)document.body.appendChild(b);"
+    "b.style.position='fixed';b.style.left='auto';b.style.top='auto';b.style.bottom='24px';b.style.right='24px';b.style.zIndex='2147483000';"
+    "b.style.padding='14px 26px';b.style.fontSize='17px';b.style.fontWeight='700';"
+    "b.style.background='#2f5fde';b.style.color='#fff';b.style.borderColor='#2f5fde';b.style.borderRadius='999px';"
+    "b.style.boxShadow='0 6px 22px rgba(47,95,222,.45)';b.style.cursor='move';b.style.touchAction='none';"
+    "if(sp)sp.textContent='Done';}"
+    "else{if(b.parentNode!==bp)bp.appendChild(b);"
+    "b.style.position='absolute';b.style.left='auto';b.style.top='8px';b.style.bottom='auto';b.style.right='8px';b.style.zIndex='2147482500';"
+    "b.style.padding='6px 12px';b.style.fontSize='13px';b.style.fontWeight='600';"
+    "b.style.background='#fff';b.style.color='#2f5fde';b.style.borderColor='#c9d6f7';b.style.borderRadius='8px';"
+    "b.style.boxShadow='0 1px 3px rgba(20,24,28,.12)';b.style.cursor='pointer';"
+    "if(sp)sp.textContent='Annotate';}"
+    "w.classList.toggle('scribble-active',on);b.setAttribute('aria-pressed',String(on));"
+    "try{var d=f.contentDocument;if(d&&d.body)d.body.classList.toggle('annotate-active',on);}catch(e){}}"
+    # Drag the active Done button to reposition it (viewport-clamped). DRAG_SLOP separates a drag from a click,
+    # and sc suppresses the toggle on the click that ends a drag; sc resets on every pointerdown so it can't stick.
+    "b.addEventListener('pointerdown',function(e){sc=false;if(!on||e.button!==0)return;var r=b.getBoundingClientRect();"
+    "dg={sx:e.clientX,sy:e.clientY,ox:r.left,oy:r.top,mv:false};try{b.setPointerCapture(e.pointerId);}catch(_){}});"
+    "b.addEventListener('pointermove',function(e){if(!dg)return;"
+    "if(!dg.mv){if(Math.abs(e.clientX-dg.sx)<4&&Math.abs(e.clientY-dg.sy)<4)return;dg.mv=true;b.style.bottom='auto';b.style.right='auto';}"
+    "b.style.left=Math.round(Math.max(4,Math.min(window.innerWidth-b.offsetWidth-4,dg.ox+e.clientX-dg.sx)))+'px';"
+    "b.style.top=Math.round(Math.max(4,Math.min(window.innerHeight-b.offsetHeight-4,dg.oy+e.clientY-dg.sy)))+'px';});"
+    "function ed(){if(dg&&dg.mv)sc=true;dg=null;}"
+    "b.addEventListener('pointerup',ed);b.addEventListener('pointercancel',ed);"
+    "m();f.addEventListener('load',m);b.addEventListener('click',function(){if(sc){sc=false;return;}on=!on;m();});}"
     "})();</script>"
 )
 _OVERLAY_WRAP = (
     # Full-bleed: negative side margins eat PrairieLearn's 16px card-body padding so Scribble uses the
-    # card edge-to-edge (the drawing canvas stays locked at 816px inside, so replay is unaffected). No
-    # top margin, so the toolbar sits right under the question header.
+    # card edge-to-edge (the drawing canvas stays locked at 816px inside, so replay is unaffected).
     '<div class="pl-scribble-wrap pl-scribble-overlay" '
     'style="position:relative;margin:0 -16px;width:calc(100%% + 32px);max-width:none;">'
     "%s"  # hidden form input (question panel) or "" (read-only submission)
-    # padding-top clears the single-row merged toolbar; min-height reserves room BELOW the prose for
-    # the notes panel. box-sizing:border-box so the height math matches Scribble's measured offsetHeight.
+    # padding-top clears the single-row merged toolbar; min-height reserves room BELOW the prose for notes.
     '<div class="pl-scribble-host" '
     'style="box-sizing:border-box;min-height:520px;padding:52px 10px 14px;">%s</div>'  # VISIBLE live prose
     "%s"  # the transparent overlay iframe
+    "%s"  # the Annotate toggle button (editable) or "" (read-only)
     + _OVERLAY_SIZER
     + "</div>"
 )
@@ -146,7 +198,10 @@ def _build_srcdoc(doc, base_url, extra_head, overlay=False):
     None if no <head> was found (tolerates attributes/case on the tag)."""
     flag = "window.__SCRIBBLE_EMBED = true;"
     if overlay:
-        flag += "window.__SCRIBBLE_OVERLAY = true;"  # Option C: transparent draw-over-live-question
+        # Set the flag AND tag <html class="pl-overlay"> synchronously (this inline script runs before the
+        # first paint), so the anti-FOUC CSS can hide the standalone chrome until app.js sets body.overlay.
+        # Without it the iframe paints its default standalone look for ~160ms before flipping to the overlay.
+        flag += "window.__SCRIBBLE_OVERLAY = true;document.documentElement.classList.add('pl-overlay');"
     inject = (
         '<base href="%s"><script>%s</script>'
         % (_html.escape(base_url, quote=True), flag)
@@ -164,32 +219,47 @@ def prepare(element_html, data):
     pl.check_attribs(element, required_attribs=[], optional_attribs=["answers-name", "mode"])
 
 
-# The transparent overlay iframe captures every pointer/selection over the prose, so interactive/form
-# content nested inside <pl-scribble mode="overlay"> is silently dead. Warn the author at render time.
-# Genuinely-interactive HTML tags (a bare decorative <label> is fine — only a control matters, and that's
-# caught on its own), plus the interactive PL widget families (display-only pl-figure/pl-code/etc. are fine).
-_INTERACTIVE_TAGS = frozenset({"input", "button", "select", "textarea", "object"})
-_INTERACTIVE_PL = frozenset({
-    "pl-checkbox", "pl-multiple-choice", "pl-matching", "pl-order-blocks", "pl-file-upload",
-    "pl-drawing", "pl-dropdown", "pl-rich-text-editor", "pl-hidden-hints",
+# NOTE: interactive content (inputs, links) MAY be nested inside <pl-scribble mode="overlay">. The drawing
+# layer is transparent to pointer events until the student clicks "Annotate" (it flips to capture only while
+# drawing, then back on "Done"), so nested widgets render, stay answerable, and grade normally. This lets a
+# whole question be wrapped in the element to give it a draw-over-the-question scratchpad.
+
+
+# Interactive PL widgets whose correct answer belongs in the answer panel — used to decide whether a wrapped
+# question has graded content INSIDE <pl-scribble> (pass it through) or not (add nothing, don't leak prose).
+_ANSWER_PL = frozenset({
+    "pl-multiple-choice", "pl-checkbox", "pl-matching", "pl-order-blocks", "pl-dropdown",
 })
-_OVERLAY_INTERACTIVE_WARNING = (
-    '<div style="padding:10px 12px;border:1px solid #f0d9a8;background:#fff7e6;border-radius:8px;margin:8px 0;">'
-    "<strong>pl-scribble (overlay):</strong> interactive content nested inside "
-    "<code>&lt;pl-scribble mode=&quot;overlay&quot;&gt;</code> is covered by the transparent drawing layer and "
-    "cannot be clicked or selected. Keep prose only inside; put answer widgets / links OUTSIDE the element.</div>"
-)
 
 
-def _overlay_has_interactive(element):
+def _is_answer_widget(tag):
+    return tag in _ANSWER_PL or (tag.startswith("pl-") and tag.endswith("-input"))
+
+
+def _answer_widget_els(element):
+    """The OUTERMOST graded widgets inside <pl-scribble> (skipping any nested inside another widget).
+
+    The answer (correct-answer) panel renders ONLY these — never pl.inner_html — so a wrapped question's
+    prose (pl-question-panel, pl-code, etc.) does not get dragged into the correct-answer panel. Widgets
+    that live OUTSIDE <pl-scribble> render their own correct answers, so an element with none here adds
+    nothing to the answer panel.
+    """
+    out = []
     for el in element.iterdescendants():
         tag = el.tag.lower() if isinstance(el.tag, str) else ""
-        # Interactive HTML, an interactive PL widget, any pl-*-input family member, or a real link.
-        if tag in _INTERACTIVE_TAGS or tag in _INTERACTIVE_PL or (tag.startswith("pl-") and tag.endswith("-input")):
-            return True
-        if tag == "a" and el.get("href"):
-            return True
-    return False
+        if not _is_answer_widget(tag):
+            continue
+        anc = el.getparent()
+        nested = False
+        while anc is not None and anc is not element:
+            atag = anc.tag.lower() if isinstance(anc.tag, str) else ""
+            if _is_answer_widget(atag):
+                nested = True
+                break
+            anc = anc.getparent()
+        if not nested:
+            out.append(el)
+    return out
 
 
 def render(element_html, data):
@@ -199,10 +269,16 @@ def render(element_html, data):
     if mode not in ("inside", "overlay"):
         mode = "inside"  # unknown mode → safe default (Option B)
     overlay = mode == "overlay"
-    warn = _OVERLAY_INTERACTIVE_WARNING if (overlay and _overlay_has_interactive(element)) else ""
     panel = data["panel"]
     if panel == "answer":
-        return ""  # a scratchpad has no canonical answer to show
+        # The scratchpad has no canonical answer. A WRAPPED question keeps its graded widgets INSIDE the
+        # element — render ONLY those widgets (their correct answers), NOT pl.inner_html, which would leak
+        # the whole question's prose (pl-question-panel, pl-code, …) into the correct-answer panel. Widgets
+        # OUTSIDE <pl-scribble> render their own correct answers, so an element with none adds nothing here.
+        widgets = _answer_widget_els(element)
+        if not widgets:
+            return ""
+        return "".join(lxml.html.tostring(w, encoding="unicode") for w in widgets)
 
     inner = pl.inner_html(element)  # the annotatable content — our element's own children
     base_url = data["options"]["client_files_course_url"].rstrip("/") + "/scribble/"
@@ -211,20 +287,29 @@ def render(element_html, data):
         return _MISSING_BUNDLE
 
     if panel == "submission":
-        # A saved submission: render the annotations read-only, injected server-side.
+        if overlay:
+            # OVERLAY (Option C) graded view: show ONLY the submitted answers — never the annotation. The
+            # strokes are saved in page coords relative to the WHOLE live question; but in the submission panel
+            # the prose (pl-question-panel/pl-code) is hidden, so replaying them would float the drawing,
+            # misaligned, in blank space (the confusing "scribble on nothing" the student saw). Showing it
+            # aligned would require re-drawing the whole question, which we deliberately don't. The drawing
+            # stays saved for the STUDENT's own continued work (the question panel re-seeds it); the graded
+            # panel just surfaces the nested graded widgets' submitted answers (+ correct/incorrect badges).
+            # Widgets OUTSIDE <pl-scribble> render their own submissions, so an element with none adds nothing.
+            widgets = _answer_widget_els(element)
+            return "".join(lxml.html.tostring(w, encoding="unicode") for w in widgets) if widgets else ""
+        # Option B (non-overlay embed): the annotation replays in a SELF-CONTAINED clone of the question, so it
+        # stays aligned — keep showing it read-only. No annotations → contribute nothing (widgets render their
+        # own submissions).
         blob = data["submitted_answers"].get(name) or ""
         if not blob:
-            return '<div class="pl-scribble-wrap" style="margin:14px 0;"><em>No saved annotations.</em></div>'
-        # blob is base64 (alphabet has no <, >, ") → safe inside a JS string and an HTML attr.
+            return ""
         cfg = "<script>window.__SCRIBBLE_PL=%s;window.__SCRIBBLE_READONLY=true;</script>" % json.dumps(
             {"readOnly": True, "data": blob, "name": name}  # name → same namespaced PREFS_KEY as the editable view
         )
-        srcdoc = _build_srcdoc(doc, base_url, cfg, overlay=overlay)
+        srcdoc = _build_srcdoc(doc, base_url, cfg, overlay=False)
         if srcdoc is None:
             return _INJECT_FAIL
-        if overlay:
-            # Re-render the live question; the saved strokes replay over it, read-only.
-            return warn + _OVERLAY_WRAP % ("", inner, _OVERLAY_FRAME % ("Saved annotations", srcdoc))
         return (
             '<div class="pl-scribble-wrap" style="margin:14px 0;">'
             '<div class="pl-scribble-source" hidden>%s</div>%s</div>'
@@ -242,9 +327,10 @@ def render(element_html, data):
         _html.escape(seed, quote=True),
     )
     if overlay:
-        # Live question visible; transparent Scribble iframe over it. Answer widgets live
-        # OUTSIDE <pl-scribble> so the pointer-capturing overlay never covers an input.
-        return warn + _OVERLAY_WRAP % (input_html, inner, _OVERLAY_FRAME % ("Scribble scratchpad", srcdoc))
+        # Live question visible; transparent Scribble iframe over it. Answer widgets may live INSIDE or
+        # OUTSIDE <pl-scribble>: the overlay only captures pointer events while the student is drawing, so
+        # nested inputs stay answerable (verified end-to-end: render + type-through + grade).
+        return _OVERLAY_WRAP % (input_html, inner, _OVERLAY_FRAME % ("Scribble scratchpad", srcdoc), _ANNOTATE_BTN)
     return (
         '<div class="pl-scribble-wrap" style="margin:14px 0;">'
         '<div class="pl-scribble-source" hidden>%s</div>'

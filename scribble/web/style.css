@@ -505,6 +505,8 @@ body.cbar-docked #context-bar.cbar-dragging { transform: none !important; }
   flex: none;
   cursor: col-resize;
   background: var(--line);
+  touch-action: none;   /* a touch-drag resizes; it must never pan/zoom the page instead */
+  user-select: none;    /* nor sweep a text selection across the panes */
 }
 #splitter:hover { background: var(--accent); }
 
@@ -569,6 +571,10 @@ body.embedded #notes-pane .notes-grip {
 #notes-pane .notes-grip:hover { color: var(--ink); background: #eef0f3; }
 #notes-pane .notes-grip:active { cursor: grabbing; }
 #notes-pane header button { cursor: pointer; } /* buttons keep the pointer cursor, not the grip's grab */
+/* The WHOLE header is a drag handle now (embed/overlay only) — hint it with grab. Collapsed strip is
+   tap-to-expand, so it keeps the pointer cursor (rule below, .notes-collapsed > header). */
+body.embedded #notes-pane:not(.notes-collapsed) > header { cursor: grab; }
+body.embedded #notes-pane.notes-dragging > header { cursor: grabbing; }
 
 /* Picked up: fixed to the viewport, lifted (mirror #context-bar.cbar-dragging). */
 #notes-pane.notes-dragging {
@@ -608,6 +614,13 @@ body.notes-floating #notes-pane .notes-resize {
 #btn-notes-dock { display: none; }
 body.embedded #btn-notes-dock { display: inline-flex; }
 
+/* ✕ Hide button on the notes header: overlay-only. Fully tucks the notes away (distinct from Minimise,
+   which only collapses to a strip) so a student who just wants to annotate can get them out of the way;
+   the toolbar Notes button reopens it. */
+#btn-notes-hide { display: none; }
+body.overlay:not(.readonly) #btn-notes-hide { display: inline-flex; align-items: center; }
+#btn-notes-hide.icon-btn { padding: 3px 5px; }
+
 /* Read-only (a saved PrairieLearn submission): annotations render but nothing edits.
    The JS READONLY gates are the real lock — this just removes the now-dead chrome.
    Export, zoom, page-nav and the notes toggle stay (they're read-safe). */
@@ -632,6 +645,12 @@ body.overlay #main,
 body.overlay #stage,
 body.overlay #viewer,
 body.overlay #page-wrap { background: transparent; }
+/* Anti-FOUC: the srcdoc iframe paints its standalone look for ~160ms before app.js sets body.overlay. The
+   element tags <html class="pl-overlay"> synchronously (before first paint), so hide the pre-boot content
+   until boot — the live question behind the transparent iframe stays visible the whole time (no flash of the
+   standalone toolbar/empty state). Once boot adds body.overlay the :not(.overlay) guard releases it. */
+html.pl-overlay { background: transparent; }
+html.pl-overlay body:not(.overlay) { visibility: hidden; }
 /* The page is locked to 816px (replay fidelity) but the PL card may be narrower; clip the
    horizontal overflow so the right edge of the canvas doesn't add a scrollbar. Vertical
    matches the host, so this never clips drawable height. Fixed chrome escapes this clip. */
@@ -667,34 +686,28 @@ body.overlay #rail {
   box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14);
   max-height: none; overflow: visible;
 }
-/* Merge: colour/width strip + actions fold into the rail as one row. Tools go icon-only so it all
-   fits (tooltips remain); the colour strip flows inline; actions push to the right edge. */
-body.overlay #rail .tool span { display: none; }
-body.overlay #rail .rail-actions .btn span { display: none; }
+/* Merge: colour/width strip + actions fold into the rail as one row. The full VISUAL treatment
+   (icon-over-label tools, hairline dividers, flat colour bar) lives in the "Hairline+" block below,
+   which is pasted after these structural rules so it wins on source order. */
 body.overlay #context-bar {
   position: static; top: auto; left: auto; margin: 0 4px;
 }
-body.overlay #context-bar.moved { left: auto; top: auto; } /* neutralize any stale inline float pin */
-body.overlay #context-bar .cbar-grip,
-body.overlay #context-bar #cbar-collapse { display: none; } /* the rail's own grip/collapse governs the bar */
-body.overlay #rail .rail-actions { margin-left: auto; display: flex; gap: 4px; align-items: center; }
 body.overlay #topbar { display: none; } /* husk — Notes/Larger/Help moved into the rail */
-body.overlay #rail .rail-group { flex-direction: row; align-items: stretch; gap: 4px; border: 0; padding: 0; margin: 0; }
 body.overlay #rail .rail-group + .rail-group { border-left: 1px solid var(--line); padding-left: 6px; margin-left: 2px; }
-body.overlay #rail .rail-label { display: none; }    /* section labels break the horizontal flow */
+/* (#context-bar.moved, .cbar-grip/#cbar-collapse, .rail-actions, .rail-group, .rail-label overlay rules
+   live once in the "Hairline+" block below — the earlier duplicates were removed.) */
 /* Trim to the scratchpad essentials so the toolbar stays a single compact row over the question
    (shapes/snip stay available in standalone + non-overlay embed). */
 body.overlay #rail [data-tool="circle"],
 body.overlay #rail [data-tool="arrow"],
-body.overlay #rail [data-tool="rect"],
-body.overlay #rail [data-tool="snip"] { display: none; }
+body.overlay #rail [data-tool="rect"] { display: none; }  /* snip stays: it clips the question into notes */
 /* width:auto so each tool sizes to its icon+label — the base width:100% made labels overflow
-   their buttons and collide ("Text on page" over "Erase"). */
-body.overlay #rail .tool { width: auto; min-width: 0; height: 32px; padding: 0 5px; gap: 6px; }
+   their buttons and collide ("Text on page" over "Erase"). Height/padding come from the stacked
+   rule above (icon over label); only the width behaviour is set here. */
+body.overlay #rail .tool { width: auto; min-width: 0; }
 /* Drop the mark/shape/capture groups whose tools are all hidden in overlay — they'd leave empty
    separators and push the one row to overflow. */
 body.overlay #rail .rail-group:has([data-tool="tick"]),
-body.overlay #rail .rail-group:has([data-tool="snip"]),
 body.overlay #rail .rail-group:has([data-tool="circle"]),
 body.overlay #rail .rail-group:has([data-tool="arrow"]) { display: none; }
 /* Row 2 of the floating toolbar: the colour bar (left) + topbar actions (right), below the
@@ -710,6 +723,23 @@ body.overlay #context-bar {
 body.overlay #context-bar.cbar-dragging { z-index: 80; }
 /* Notes sits below the question; a light shadow (the base floating 0 10px 30px blur lags on drag). */
 body.overlay #notes-pane { box-shadow: 0 1px 6px rgba(20, 24, 28, 0.16); }
+
+/* Annotate launch button: until the student clicks "Annotate" (parent adds .annotate-active to <body>),
+   hide the drawing UI — the iframe passes pointer events through to the live question. EDITABLE overlay
+   only; the read-only/graded view (body.readonly) keeps its saved annotations + notes visible. */
+body.overlay:not(.readonly):not(.annotate-active) :is(#rail, #notes-pane) { display: none !important; }
+
+/* Collapsed ("minimised") notes: a small click-to-expand strip IN PLACE — the overlay's answer to a
+   full hide, which lost the pane. Only the header shows; the body / resize grip / add-buttons fold away,
+   and the whole strip is a click target to expand. */
+#notes-pane.notes-collapsed { width: max-content; max-width: 100%; height: auto; min-height: 0; }
+#notes-pane.notes-collapsed #notes-list,
+#notes-pane.notes-collapsed #btn-add-note,
+#notes-pane.notes-collapsed #btn-add-sketch { display: none; }
+/* outrank body.notes-floating #notes-pane .notes-resize (1,2,1) — a collapsed strip can't be resized */
+body.notes-floating #notes-pane.notes-collapsed .notes-resize { display: none; }
+#notes-pane.notes-collapsed > header { border-bottom: 0; cursor: pointer; border-radius: inherit; }
+#notes-pane.notes-collapsed > header:hover { background: var(--accent-soft); }
 
 /* ---- Floating + hideable panels: the tool rail and the actions bar (overlay only) ----
    Each gets a drag grip (the ONLY drag target, so tool clicks survive) + a collapse chevron.
@@ -747,16 +777,8 @@ body.overlay #topbar.fp-collapsed .fp-collapse { transform: rotate(-90deg); }
    clampFixed snaps left back to 4). */
 body.overlay #rail.fp-moved, body.overlay #topbar.fp-moved { top: auto; left: auto; right: auto; }
 body.overlay #rail.fp-moved { width: max-content; max-width: calc(100vw - 8px); }
-/* U1: on a narrow card the merged bar would overflow and clip the collapse/actions off-screen. Keep the
-   grip + actions + collapse pinned (flex:none) and let the tools+colours middle scroll horizontally. */
-body.overlay #rail .rail-scroll {
-  display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto;
-  overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
-  padding: 4px 0; margin: -4px 0; /* room for a focus ring (overflow-y:hidden would clip it) without adding height */
-}
-body.overlay #rail .fp-grip,
-body.overlay #rail .rail-actions,
-body.overlay #rail #rail-collapse { flex: none; }
+/* (.rail-scroll and the .fp-grip/.rail-actions/#rail-collapse flex:none rules live once in the
+   "Hairline+" block below — the earlier duplicates here were removed.) */
 /* U4: hide overlay-irrelevant shortcut rows (Snip / page-nav) from the Help dialog. */
 body.overlay #help-overlay .ov-hide { display: none; }
 /* resting panels sit above the colour bar (z-index:9); a lifted panel rises further */
@@ -764,10 +786,158 @@ body.overlay #rail, body.overlay #topbar { z-index: 10; }
 body.overlay #rail.fp-dragging, body.overlay #topbar.fp-dragging {
   z-index: 80; cursor: grabbing; box-shadow: 0 6px 20px rgba(20, 24, 28, 0.22);
 }
+/* Whole bar is a drag surface now (grip + labels + gaps + background). Hint it with a grab cursor;
+   tool/action buttons keep their own pointer cursor (they're excluded from the drag). */
+body.overlay #rail, body.overlay #topbar { cursor: grab; }
+/* …and a touch drag on it must MOVE the bar, not pan the parent PL page (which would fire
+   pointercancel and rubber-band the lift — finger drags were effectively broken). The scrollable
+   middle keeps pan-x so its own overflow still finger-scrolls; buttons keep their tap behaviour. */
+body.overlay #rail, body.overlay #topbar { touch-action: none; }
+body.overlay #rail .rail-scroll { touch-action: pan-x; }
+body.embedded #notes-pane > header { touch-action: none; }
 /* collapsed → minimise to just the grip + chevron (a small handle to restore from) */
 body.overlay #rail.fp-collapsed :is(.rail-group, #context-bar, .rail-actions) { display: none; }
 body.overlay #rail.fp-collapsed { width: auto; } /* shrink to the handle — don't leave a full-width empty bar */
 body.overlay #topbar.fp-collapsed :is(.brand, #btn-open, .topbar-right) { display: none; }
+
+/* ============================================================================
+   OVERLAY TOOLBAR REDESIGN — "Hairline+"  (from the design workflow: winner
+   "Hairline" avg 8/10, plus the judges' legibility + touch-target grafts)
+   Calm, modern, one row. Grey-on-white; exactly one accent colour, and only on
+   the active tool / swatch / width. Groups separated by hairlines, never boxes.
+   Overlay-scoped only — pasted AFTER the structural overlay rules so it wins.
+   Depends on the existing hide-rules (Marks/Capture/shape groups) leaving only
+   7 tools: Undo, Redo | Select | Pen, Highlight, Text, Erase.
+   ============================================================================ */
+/* Shell: white, one hairline, soft radius, whisper shadow, fixed height */
+body.overlay #rail {
+  gap: 6px; padding: 5px 7px; height: 52px;
+  border-radius: 12px; border: 1px solid var(--line); background: #fff;
+  box-shadow: 0 1px 3px rgba(20, 24, 28, 0.10); align-items: center;
+}
+/* Groups flow as rows, separated ONLY by a hairline (no boxes) */
+body.overlay #rail .rail-group { flex-direction: row; align-items: center; gap: 2px; border: 0; padding: 0; margin: 0; }
+body.overlay #rail .rail-scroll > .rail-group + .rail-group,
+body.overlay #rail .rail-scroll > #context-bar {
+  border-left: 1px solid var(--line); margin-left: 8px; padding-left: 8px;
+}
+body.overlay #rail .rail-label { display: none; }
+/* Tool cells + Notes: 18px icon OVER a legible 10.5px label */
+body.overlay #rail .tool,
+body.overlay #rail .rail-actions .btn {
+  flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  width: auto; min-width: 0; height: 40px; padding: 0 7px;
+  border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--ink);
+}
+body.overlay #rail .tool svg,
+body.overlay #rail .rail-actions .btn svg { width: 18px; height: 18px; flex: none; stroke-width: 1.85; }
+body.overlay #rail .tool span,
+body.overlay #rail .rail-actions .btn span,
+body.overlay #rail .rail-actions .btn.labeled {
+  display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .1px;
+  line-height: 1; white-space: nowrap; color: var(--muted);
+}
+/* Shorten the one wide label to "Text" without touching the accessible name (the real
+   "Text on page" stays in the span for AT + the title tooltip; only the glyphs are swapped). */
+body.overlay #rail .tool[data-tool="text"] span { font-size: 0; letter-spacing: normal; }
+body.overlay #rail .tool[data-tool="text"] span::after {
+  content: "Text"; font-size: 10.5px; font-weight: 600; letter-spacing: .1px; color: inherit;
+}
+/* Hover: an almost-invisible wash, no border flash */
+body.overlay #rail .tool:hover:not(.active):not(:disabled),
+body.overlay #rail .rail-actions .btn:hover:not(:disabled) { background: #f5f6f8; border-color: transparent; }
+body.overlay #rail .tool:hover:not(.active):not(:disabled) span { color: var(--ink); }
+/* Active tool: the ONE accent moment — soft tint + accent-tint border */
+body.overlay #rail .tool.active {
+  background: var(--accent-soft); border-color: #c9d6f7; color: var(--accent); box-shadow: none;
+}
+body.overlay #rail .tool.active svg { stroke: var(--accent); }
+body.overlay #rail .tool.active span,
+body.overlay #rail .tool.active span::after { color: var(--accent); font-weight: 600; }
+body.overlay #rail .tool:disabled { opacity: .34; }
+body.overlay #rail .tool:disabled span { color: var(--muted); }
+/* Drag grip: barely-there, thin */
+body.overlay #rail .fp-grip { padding: 0 3px; color: #aab0b7; }
+body.overlay #rail .fp-grip:hover { color: var(--muted); background: transparent; }
+/* Colour bar folded flat into the white rail (no card / blur / shadow) */
+body.overlay #context-bar {
+  position: static; margin: 0; padding: 0; gap: 6px; background: transparent;
+  border: 0; border-radius: 0; box-shadow: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none; transform: none;
+}
+body.overlay #context-bar.moved { left: auto; top: auto; }
+body.overlay #context-bar .cbar-grip,
+body.overlay #context-bar #cbar-collapse { display: none; }
+body.overlay #context-bar .cbar-content { gap: 6px; overflow: visible; }
+body.overlay #context-bar #colors { gap: 6px; }
+body.overlay #context-bar .bar-divider,
+body.overlay #context-bar #width-divider { width: 1px; height: 20px; margin: 0 1px; background: var(--line); align-self: center; }
+/* Swatches: flat 22px discs, no border, with a 44px INVISIBLE hit area */
+body.overlay #context-bar .swatch {
+  position: relative; width: 22px; height: 22px; margin: 0;
+  border: 1px solid transparent; box-shadow: none; transition: box-shadow .1s ease;
+}
+body.overlay #context-bar .swatch::before {
+  content: ""; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 44px; height: 44px;
+}
+body.overlay #context-bar .swatch:hover { box-shadow: 0 0 0 1px rgba(20,24,28,0.20); }
+body.overlay #context-bar .swatch[data-color="yellow"] { border-color: rgba(20,24,28,0.20); }
+body.overlay #context-bar .swatch.active { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--accent); }
+/* Line-weight picker: 3 dots fused into ONE quiet segmented pill */
+body.overlay #context-bar #widths { gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+body.overlay #context-bar .btn.width {
+  min-width: 30px; height: 28px; padding: 0 6px; border: 0; border-radius: 0;
+  border-left: 1px solid var(--line); background: transparent;
+}
+body.overlay #context-bar .btn.width:first-child { border-left: 0; }
+body.overlay #context-bar .btn.width:hover { background: #f5f6f8; }
+body.overlay #context-bar .btn.width.active { background: var(--accent-soft); }
+body.overlay #context-bar .btn.width.active .dot { background: var(--accent); }
+/* Palette toggle: a lone quiet icon chip, matches the rail */
+body.overlay #context-bar #btn-palette {
+  height: 30px; min-width: 34px; padding: 0 7px; border: 1px solid transparent; border-radius: 8px; background: transparent;
+}
+body.overlay #context-bar #btn-palette svg { width: 18px; height: 18px; }
+body.overlay #context-bar #btn-palette:hover { background: #f5f6f8; }
+body.overlay #context-bar #btn-palette[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: #c9d6f7; }
+/* Right cluster: Notes (labelled) + Aa + Help, then the chevron */
+body.overlay #rail .rail-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; padding-left: 7px; border-left: 1px solid var(--line); }
+body.overlay #rail .rail-actions #btn-big,
+body.overlay #rail .rail-actions #btn-help { gap: 0; padding: 0; min-width: 34px; height: 40px; }
+body.overlay #rail .rail-actions .btn.active,
+body.overlay #rail .rail-actions .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: #c9d6f7; color: var(--accent); }
+body.overlay #rail .rail-actions .btn.active span,
+body.overlay #rail .rail-actions .btn[aria-pressed="true"] span { color: var(--accent); }
+/* "More" menu: a ⋯ button on the bar opens a small popover holding Larger / Help / colour-blind palette. */
+body.overlay #rail #btn-more[aria-expanded="true"] { background: var(--accent-soft); border-color: #c9d6f7; color: var(--accent); }
+body.overlay #rail #more-popover {
+  position: absolute; top: calc(100% + 6px); right: 6px; z-index: 90;
+  display: flex; flex-direction: column; gap: 2px; min-width: 190px;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(20, 24, 28, 0.18); padding: 5px;
+}
+body.overlay #rail #more-popover[hidden] { display: none; }
+/* moved controls become full-width labelled menu rows (icon left, text right) */
+body.overlay #rail #more-popover .btn {
+  flex-direction: row; justify-content: flex-start; align-items: center; gap: 10px;
+  width: 100%; min-width: 0; height: auto; padding: 8px 10px;
+  border: 1px solid transparent; border-radius: 7px; background: transparent;
+}
+body.overlay #rail #more-popover .btn svg { width: 18px; height: 18px; flex: none; }
+body.overlay #rail #more-popover .btn span { display: inline; font-size: 12.5px; font-weight: 500; color: var(--ink); letter-spacing: 0; line-height: 1.2; white-space: nowrap; }
+body.overlay #rail #more-popover .btn:hover { background: #f5f6f8; }
+body.overlay #rail #more-popover .btn.active,
+body.overlay #rail #more-popover .btn[aria-pressed="true"] { background: var(--accent-soft); }
+body.overlay #rail #more-popover .btn.active span,
+body.overlay #rail #more-popover .btn[aria-pressed="true"] span { color: var(--accent); }
+/* Collapse chevron: quiet, matches the hairline system */
+body.overlay #rail .fp-collapse { width: 30px; height: 30px; border: 1px solid var(--line); background: #fff; border-radius: 8px; color: var(--muted); }
+body.overlay #rail .fp-collapse:hover { background: #f5f6f8; color: var(--ink); border-color: var(--line); }
+/* Narrow-card fallback kept: middle scrolls, ends stay pinned */
+body.overlay #rail .rail-scroll { display: flex; align-items: center; gap: 0; min-width: 0; flex: 1 1 auto; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; padding: 2px 0; margin: -2px 0; }
+body.overlay #rail .fp-grip,
+body.overlay #rail .rail-actions,
+body.overlay #rail #rail-collapse { flex: none; }
 
 /* ---- UX: PrairieLearn scratchpad simplifications (embed only) ---- */
 /* Trim grader-only marks for the student scratchpad — Pen/Highlight/Text/Erase/Select/Snip
@@ -803,10 +973,14 @@ body.html-doc #scroll-mode { display: none; }
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
   font-weight: 600;
 }
+/* On a narrow pane the "Notes" title gives way (ellipsis) so the +Text/+Draw/Hide buttons never collide. */
+#notes-pane header > span:nth-child(2) { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#notes-pane header > span:last-child { flex: none; display: flex; gap: 4px; align-items: center; }
 
 #notes-list {
   flex: 1;
@@ -898,9 +1072,35 @@ body.html-doc #scroll-mode { display: none; }
 }
 .note-block img {
   max-width: 100%;
+  max-height: 200px;   /* a snip can be tall/wide; keep it usable in the pane — click enlarges it */
+  width: auto;
+  height: auto;
+  object-fit: contain;
   display: block;
   border: 1px solid var(--line);
   border-radius: 4px;
+  cursor: zoom-in;
+}
+/* Clipping image + a small "×" (top-right, the conventional remove spot) to drop just the image and keep the
+   caption. z-index:2 makes it WIN over the block's top-right ↑↓✕ if a full-width clip makes them overlap — the
+   safe outcome (remove just the image, not the whole note). Hidden = pointer-events:none so an invisible button
+   can't eat a tap meant to enlarge the image (a real hazard on no-hover touch devices). */
+.note-block .clip-img-wrap { position: relative; display: inline-block; max-width: 100%; }
+.note-block .clip-rm-img {
+  position: absolute; top: 4px; right: 4px; z-index: 2;
+  width: 20px; height: 20px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 50%;
+  background: rgba(20, 24, 28, 0.6); color: #fff;
+  font-size: 14px; line-height: 1; cursor: pointer;
+  opacity: 0; pointer-events: none; transition: opacity 0.12s;
+}
+.note-block .clip-img-wrap:hover .clip-rm-img,
+.note-block .clip-rm-img:focus-visible { opacity: 1; pointer-events: auto; }
+.note-block .clip-rm-img:hover { background: rgba(20, 24, 28, 0.85); }
+/* Touch / no-hover devices (PL tablet exams): keep it visible + tappable, since there is no hover to reveal it. */
+@media (hover: none) {
+  .note-block .clip-rm-img { opacity: 1; pointer-events: auto; }
 }
 .note-block .caption {
   width: 100%;
@@ -1152,21 +1352,39 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
 }
 .modal-actions .btn.primary { border-color: var(--ink); }
 
-/* captured-text preview in the "keep text?" snip dialog */
-.snip-text-preview {
-  max-height: 150px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: #f4f5f7;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 8px 10px;
-  margin: 0 0 14px;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--ink);
+/* Chrome text is NOT selectable — dragging across the toolbar shouldn't highlight button labels ("Pen",
+   "Highlight", …). Notes CONTENT (textareas, captions) stays selectable so students can copy their own work. */
+#topbar, #rail, #context-bar, #more-popover, #notes-pane > header, #status, .rail-label {
+  -webkit-user-select: none; user-select: none;
 }
+
+/* ---------- snip preview + keep-text-or-not confirm ---------- */
+.snip-confirm { max-height: 88vh; overflow-y: auto; }
+.snip-confirm .snip-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 30vh;   /* keep the whole dialog inside the visible band; JS also positions it there */
+  margin: 0 auto 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff; /* clips can be transparent — show them on white, like the notes list */
+}
+.snip-confirm .snip-text-opt {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 0 0 6px;
+  font-size: 13.5px; color: var(--ink); cursor: pointer;
+}
+.snip-confirm .snip-text-opt input { margin-top: 2px; flex: none; }
+.snip-confirm .snip-text-preview {
+  margin: 0 0 14px; padding: 8px 10px;
+  max-height: 84px; overflow-y: auto;
+  background: rgba(20, 24, 28, 0.04); border-radius: 6px;
+  color: var(--muted); font-size: 12.5px; line-height: 1.45;
+  white-space: pre-wrap; word-break: break-word;
+}
+/* Pin Add/Cancel to the bottom of the (height-capped, scrollable) card so they're reachable without scrolling. */
+.snip-confirm .modal-actions { position: sticky; bottom: 0; background: var(--panel); padding-top: 8px; }
+
 
 /* ---------- clipping lightbox (click a snipped image to enlarge) ---------- */
 .lightbox { flex-direction: column; gap: 14px; cursor: zoom-out; }
@@ -1203,6 +1421,12 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
   overflow: auto;
   padding: 6px 18px 18px;
 }
+/* Credit + license line (Prof. Lumetta asked that the ? icon show the author + a licence). */
+#help-about {
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
+  font-size: 12px; line-height: 1.5; color: var(--muted);
+}
+#help-about strong { color: var(--ink); }
 #help-card header {
   display: flex;
   align-items: center;
@@ -1269,8 +1493,36 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
 
 #status.show { opacity: 1; }
 
-/* small screens: hide button labels, keep icons */
+/* small screens: hide TOOLBAR button labels, keep icons. Scoped to #topbar/#rail on purpose — a bare
+   `.btn.labeled` would also blank the text of body-level modal buttons (confirmSnip / confirmOpenDialog),
+   which have no icon, leaving unlabeled buttons on the narrow (<900px) overlay iframe. */
 @media (max-width: 900px) {
-  .btn.labeled { font-size: 0; gap: 0; padding: 0 8px; }
+  #topbar .btn.labeled, #rail .btn.labeled { font-size: 0; gap: 0; padding: 0 8px; }
   .brand { display: none; }
+}
+
+/* ---------- About: the "i" popover + the always-visible overlay attribution ---------- */
+/* The wrapper keeps the popover anchored to the button in BOTH homes (standalone #topbar and the
+   overlay's merged rail — the whole wrapper is moved into .rail-actions there). */
+.about-wrap { position: relative; display: inline-flex; }
+#about-popover {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 90;
+  min-width: 200px; background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(20, 24, 28, 0.18); padding: 9px 12px;
+  font-size: 12.5px; color: var(--ink); line-height: 1.55; white-space: nowrap;
+}
+#about-popover[hidden] { display: none; }
+
+/* Attribution line, always on in the EDITABLE overlay: a new id on purpose — the annotate gate
+   (body.overlay:not(.annotate-active) …) hides only #rail/#notes-pane, so this line survives it and
+   shows before the student ever clicks Annotate. :not(.readonly): the graded submission panels are
+   also overlay builds, and each would paint its own copy. pointer-events:none — it can never eat a
+   stroke or a click meant for the live question. Fixed inside the question-tall iframe = pinned to
+   the question's bottom-left corner. z-index below #status (60) and the chrome (9+). */
+#about-line { display: none; }
+body.overlay:not(.readonly) #about-line {
+  display: block; position: fixed; left: 8px; bottom: 6px; z-index: 8;
+  pointer-events: none; user-select: none;
+  font-size: 11px; color: var(--muted);
+  background: rgba(255, 255, 255, 0.85); border-radius: 6px; padding: 2px 8px;
 }

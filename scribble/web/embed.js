@@ -14,7 +14,7 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
   document.body.classList.add("embedded");
   // Don't force the notes pane open — it steals height from the question on first load.
   // It auto-opens when there's something to show (a snip, a grab, or hydrated notes).
-  const pl = window.__SCRIBBLE_PL || {}; // server-injected config: { readOnly, name?, data?, hostH? }
+  const pl = window.__SCRIBBLE_PL || {}; // server-injected config: { readOnly, name?, data? }
 
   // Whenever there are unsaved edits, write base64(save_json()) into the hidden form input
   // and fire input/change so PrairieLearn marks the form dirty + persists on its Save. The
@@ -54,7 +54,11 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
     const measuredH = (host && host.offsetHeight) || window.innerHeight || 600;
     openOverlay(measuredH);
     const seed = pl.readOnly ? pl.data : (input && input.value);
-    if (seed) hydrateAnnotations(seed);
+    // Restoring saved work must NEVER abort the boot. This runs synchronously (unlike Option B's async IIFE
+    // below), so a throw here would propagate out of initEmbed and skip the toolbar merge + notes setup that
+    // run right after this call — leaving a raw, unresponsive bar. Contain it; the scratchpad still works.
+    try { if (seed) hydrateAnnotations(seed); }
+    catch (e) { console.warn("hydrate failed — starting with a blank scratchpad:", e); status("Couldn't restore your last work — starting fresh."); }
     if (pl.readOnly || !input) { if (pl.readOnly) status("Read-only — viewing a submitted answer."); return; }
     status("Scratchpad — draw right on the question.");
     wireSaveLoop(input);

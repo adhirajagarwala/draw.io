@@ -1,5 +1,5 @@
 // Scribble — the movable / collapsible / dockable colour bar: the grip-drag
-// engine, the dock-into-toolbar logic, and the resize handle. It holds no app
+// engine and the dock-into-toolbar logic. It holds no app
 // state of its own — initColorBar() injects the few app handles it needs (els,
 // $, status, savePrefs) and wires the listeners, and app.js calls the exported
 // dockCbar / isCbarDocked / clampContextBar / setCbarCollapsed back from its
@@ -88,8 +88,8 @@ function clampContextBar() {
   cb.style.top = `${Math.round(top)}px`;
 }
 
-// Inject the app handles and wire the grip-drag, resize handle, collapse button
-// and window-resize listener. Call once at startup, then use the exports above.
+// Inject the app handles and wire the grip-drag, collapse button and window-resize
+// listener. Call once at startup, then use the exports above.
 export function initColorBar(deps) {
   ({ els, $, status, savePrefs } = deps);
   topbarEl = $("topbar");
@@ -106,33 +106,57 @@ export function initColorBar(deps) {
   const cb = els.contextBar;
   const grip = cb.querySelector(".cbar-grip");
   let drag = null;
+  const DRAG_SLOP = 4; // px before the lift commits — a plain click on the grip must not run a dock/float commit
+  const clampv = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
   const overTopbar = (y) => y <= topbarEl.getBoundingClientRect().bottom + 6;
   grip.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return; // ignore right/middle — they'd open the context menu mid-lift
+    if (drag || ev.button !== 0) return; // one drag at a time; right/middle would open the context menu mid-lift
     const br = cb.getBoundingClientRect();
-    // Lift in place: go fixed at the current on-screen spot, then follow the cursor.
-    drag = { dx: ev.clientX - br.left, dy: ev.clientY - br.top, fx: br.left, fy: br.top };
-    cb.classList.add("cbar-dragging");
-    cb.style.left = `${Math.round(br.left)}px`;
-    cb.style.top = `${Math.round(br.top)}px`;
-    grip.setPointerCapture?.(ev.pointerId);
+    // Capture FIRST (it can throw if the pointer is already gone — then we never lift and nothing
+    // strands mid-flight), and defer the actual lift until the pointer passes DRAG_SLOP. `pre`
+    // snapshots the full pre-lift state so a cancelled drag restores it exactly (mode AND position).
+    try { grip.setPointerCapture(ev.pointerId); } catch { return; }
+    drag = { id: ev.pointerId, dx: ev.clientX - br.left, dy: ev.clientY - br.top, fx: br.left, fy: br.top,
+             br, sx: ev.clientX, sy: ev.clientY, lifted: false,
+             pre: { docked: isCbarDocked(), moved: cb.classList.contains("moved"),
+                    left: cb.style.left, top: cb.style.top } };
     ev.preventDefault();
   });
   grip.addEventListener("pointermove", (ev) => {
-    if (!drag) return;
+    if (!drag || ev.pointerId !== drag.id) return; // only the owning contact drives the drag
+    if (!(ev.buttons & 1)) return endDrag(null); // press ended unseen — restore, don't chase the pointer
+    if (!drag.lifted) {
+      if (Math.abs(ev.clientX - drag.sx) < DRAG_SLOP && Math.abs(ev.clientY - drag.sy) < DRAG_SLOP) return;
+      drag.lifted = true;
+      // Lift in place: go fixed at the current on-screen spot, then follow the cursor.
+      cb.classList.add("cbar-dragging");
+      cb.style.left = `${Math.round(drag.br.left)}px`;
+      cb.style.top = `${Math.round(drag.br.top)}px`;
+    }
     drag.fx = ev.clientX - drag.dx;
     drag.fy = ev.clientY - drag.dy;
-    cb.style.left = `${Math.round(drag.fx)}px`;
-    cb.style.top = `${Math.round(drag.fy)}px`;
+    // Live clamp of the APPLIED values only (viewport coords while lifted) — the bar stays reachable
+    // even mid-drag; the grab offset re-attaches when the pointer returns from past the edge.
+    cb.style.left = `${Math.round(clampv(drag.fx, 4, window.innerWidth - cb.offsetWidth - 4))}px`;
+    cb.style.top = `${Math.round(clampv(drag.fy, 4, window.innerHeight - cb.offsetHeight - 4))}px`;
     topbarEl.classList.toggle("cbar-drop", overTopbar(ev.clientY));
   });
   const endDrag = (ev) => {
     if (!drag) return;
     const d = drag;
     drag = null;
+    if (!d.lifted) return; // a plain click on the grip — nothing lifted, nothing to commit
     cb.classList.remove("cbar-dragging");
     topbarEl.classList.remove("cbar-drop");
-    const wantsDock = ev ? overTopbar(ev.clientY) : isCbarDocked();
+    if (!ev) {
+      // A cancel (pointercancel / swallowed up) is not a drop intent — restore the exact pre-lift
+      // state: mode AND position. No savePrefs, no "not enough room" toast for a mere tab switch.
+      if (d.pre.docked) dockCbar(parseFloat(d.pre.left) || 12);
+      else if (d.pre.moved) floatCbar(parseFloat(d.pre.left) || 12, parseFloat(d.pre.top) || 10);
+      else { cb.classList.remove("moved"); cb.style.left = d.pre.left; cb.style.top = d.pre.top; }
+      return;
+    }
+    const wantsDock = overTopbar(ev.clientY);
     if (wantsDock && dockZone().fits) {
       dockCbar(d.fx - topbarEl.getBoundingClientRect().left);
     } else {
@@ -145,12 +169,16 @@ export function initColorBar(deps) {
     }
     savePrefs();
   };
-  grip.addEventListener("pointerup", endDrag);
-  // A pointercancel is not a drop — pass no event so endDrag restores the pre-lift
-  // docked/floating state (isCbarDocked) instead of committing at the cancel position.
-  grip.addEventListener("pointercancel", () => endDrag(null));
+  grip.addEventListener("pointerup", (ev) => { if (drag && ev.pointerId === drag.id) endDrag(ev); });
+  // A pointercancel is not a drop — pass no event so endDrag restores the pre-lift state.
+  grip.addEventListener("pointercancel", (ev) => { if (drag && ev.pointerId === drag.id) endDrag(null); });
+  // A tab switch / OS overlay can swallow the pointerup. On BLUR only, keep a drag whose grip still
+  // HOLDS pointer capture (focus changes don't interrupt captured delivery); visibility:hidden is a
+  // real tab switch and cancels unconditionally.
+  window.addEventListener("blur", () => { if (drag && !grip.hasPointerCapture?.(drag.id)) endDrag(null); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") endDrag(null); });
 
   window.addEventListener("resize", clampContextBar);
 }
 
-export { setCbarCollapsed, isCbarDocked, dockCbar, clampContextBar, floatCbar };
+export { setCbarCollapsed, isCbarDocked, dockCbar, clampContextBar };

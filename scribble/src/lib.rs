@@ -38,6 +38,17 @@ struct DragState {
     grab: (f32, f32),
 }
 
+/// A rigid move of several selected items at once (multi-select group drag).
+/// Each item is translated from its pre-drag `original`, so repeated
+/// `drag_group` calls never accumulate drift.
+struct GroupDrag {
+    surface: Surface,
+    /// (id, item-as-it-was-when-the-drag-began) for every selected item.
+    items: Vec<(u64, Item)>,
+    /// Pointer position where the group was grabbed.
+    grab: (f32, f32),
+}
+
 #[wasm_bindgen]
 pub struct App {
     doc: Document,
@@ -57,6 +68,8 @@ pub struct App {
     erase_pending: Option<(Surface, Vec<(usize, Item)>)>,
     /// Existing item being moved or resized with the select tool.
     item_drag: Option<DragState>,
+    /// Several selected items being moved together (multi-select group drag).
+    group_drag: Option<GroupDrag>,
     /// Active color palette (display preference; files store color names).
     palette: Palette,
 }
@@ -79,6 +92,7 @@ impl App {
             current_shape: None,
             erase_pending: None,
             item_drag: None,
+            group_drag: None,
             palette: Palette::Standard,
         }
     }
@@ -296,6 +310,13 @@ impl App {
         // keeps its z-position rather than jumping to the top of the stack.
         if let Some(drag) = self.item_drag.take() {
             self.replace_by_id(drag.surface, drag.original);
+        }
+        // A cancelled GROUP move reverts every member to its pre-drag state.
+        if let Some(g) = self.group_drag.take() {
+            let surface = g.surface;
+            for (_, original) in g.items {
+                self.replace_by_id(surface, original);
+            }
         }
         // Committed erasures stay; record them so undo works.
         if let Some((surface, removed)) = self.erase_pending.take() {
@@ -577,6 +598,168 @@ impl App {
         self.dirty = true;
     }
 
+    // ---------- multi-select (marquee + group move / delete) ----------
+    //
+    // Selection membership lives in JS; these give it the geometry (which items a
+    // marquee covers) and the batch mutations (move-all, delete-all) so a group
+    // gesture is ONE undoable step.
+
+    /// Ids of every item whose bounding box intersects the given (unordered)
+    /// rectangle — the marquee hit-test. Non-finite input yields an empty list.
+    pub fn items_in_rect(&self, page: usize, x0: f32, y0: f32, x1: f32, y1: f32) -> Vec<f64> {
+        if !(x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite()) {
+            return Vec::new();
+        }
+        let (lo_x, hi_x) = (x0.min(x1), x0.max(x1));
+        let (lo_y, hi_y) = (y0.min(y1), y0.max(y1));
+        let Some(p) = self.page_ref(Surface::Pdf(page)) else {
+            return Vec::new();
+        };
+        p.items
+            .iter()
+            .filter(|it| {
+                let bb = item_bbox(it);
+                // AABB overlap: not fully left/right/above/below of the marquee.
+                bb[0] <= hi_x && bb[2] >= lo_x && bb[1] <= hi_y && bb[3] >= lo_y
+            })
+            .map(|it| it.id() as f64)
+            .collect()
+    }
+
+    /// Begin moving several selected items together. Snapshots each item's
+    /// pre-drag state so `drag_group` stays drift-free. Returns false if none of
+    /// the ids resolve to an item on the page.
+    pub fn begin_group_drag(&mut self, page: usize, ids: Vec<f64>, x: f32, y: f32) -> bool {
+        if !x.is_finite() || !y.is_finite() {
+            return false;
+        }
+        let surface = Surface::Pdf(page);
+        let want: Vec<u64> = ids.iter().filter_map(|&id| checked_id(id)).collect();
+        let Some(p) = self.page_ref(surface) else {
+            return false;
+        };
+        let items: Vec<(u64, Item)> = p
+            .items
+            .iter()
+            .filter(|it| want.contains(&it.id()))
+            .map(|it| (it.id(), it.clone()))
+            .collect();
+        if items.is_empty() {
+            return false;
+        }
+        self.group_drag = Some(GroupDrag {
+            surface,
+            items,
+            grab: (x, y),
+        });
+        true
+    }
+
+    /// Move the whole group with the pointer. The translation is clamped once for
+    /// the UNION box, so every item shifts by the same delta (the group stays
+    /// rigid) and no member is pushed off the page independently.
+    pub fn drag_group(&mut self, x: f32, y: f32) {
+        if !x.is_finite() || !y.is_finite() {
+            return;
+        }
+        let Some(g) = &self.group_drag else {
+            return;
+        };
+        let (surface, grab) = (g.surface, g.grab);
+        let originals = g.items.clone();
+        // Union bbox of the group as it was grabbed.
+        let mut ub = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+        for (_, it) in &originals {
+            let bb = item_bbox(it);
+            ub[0] = ub[0].min(bb[0]);
+            ub[1] = ub[1].min(bb[1]);
+            ub[2] = ub[2].max(bb[2]);
+            ub[3] = ub[3].max(bb[3]);
+        }
+        let Some(p) = self.page_ref(surface) else {
+            return;
+        };
+        let (w, h) = (p.width, p.height);
+        let (dx, dy) = (
+            (x - grab.0).clamp(-ub[0], (w - ub[2]).max(-ub[0])),
+            (y - grab.1).clamp(-ub[1], (h - ub[3]).max(-ub[1])),
+        );
+        for (id, original) in &originals {
+            let moved = translate_item(original, dx, dy);
+            if let Some(p) = self.page_mut(surface) {
+                if let Some(slot) = p.items.iter_mut().find(|it| it.id() == *id) {
+                    *slot = moved;
+                }
+            }
+        }
+    }
+
+    /// Finish a group move, recording it as ONE undoable step (a batch of the
+    /// individual item replacements). Unmoved members contribute nothing.
+    pub fn end_group_drag(&mut self) {
+        let Some(g) = self.group_drag.take() else {
+            return;
+        };
+        let Some(p) = self.page_ref(g.surface) else {
+            return;
+        };
+        let mut cmds: Vec<Command> = Vec::new();
+        for (id, original) in g.items {
+            if let Some(new) = p.items.iter().find(|it| it.id() == id).cloned() {
+                if !item_geometry_eq(&original, &new) {
+                    cmds.push(Command::Replace {
+                        surface: g.surface,
+                        old: Box::new(original),
+                        new: Box::new(new),
+                    });
+                }
+            }
+        }
+        if cmds.is_empty() {
+            return; // nothing actually moved
+        }
+        // A single-item group collapses to a plain Replace (no needless nesting).
+        let cmd = if cmds.len() == 1 {
+            cmds.pop().unwrap()
+        } else {
+            Command::Batch { commands: cmds }
+        };
+        self.history.push(cmd);
+        self.dirty = true;
+    }
+
+    /// Delete several selected items at once, as ONE undoable step. Returns how
+    /// many were removed (0 leaves history untouched).
+    pub fn delete_items(&mut self, page: usize, ids: Vec<f64>) -> u32 {
+        let surface = Surface::Pdf(page);
+        let want: Vec<u64> = ids.iter().filter_map(|&id| checked_id(id)).collect();
+        if want.is_empty() {
+            return 0;
+        }
+        let Some(p) = self.page_mut(surface) else {
+            return 0;
+        };
+        // Record ORIGINAL indices (re_add_at sorts ascending on undo, restoring z-order).
+        let removed: Vec<(usize, Item)> = p
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| want.contains(&it.id()))
+            .map(|(i, it)| (i, it.clone()))
+            .collect();
+        if removed.is_empty() {
+            return 0;
+        }
+        p.items.retain(|it| !want.contains(&it.id()));
+        let n = removed.len() as u32;
+        self.history.push(Command::Remove {
+            surface,
+            items: removed,
+        });
+        self.dirty = true;
+        n
+    }
+
     /// Replace the content of an existing text note (empty content deletes it).
     pub fn update_text(&mut self, page: usize, id: f64, content: &str) -> Result<(), String> {
         self.update_text_on(Surface::Pdf(page), id, content)
@@ -690,8 +873,29 @@ impl App {
 
     pub fn note_source_page(&self, i: usize) -> i32 {
         match self.doc.notes.get(i) {
-            Some(NoteBlock::Clipping { source_page, .. }) => *source_page as i32,
-            _ => -1,
+            Some(NoteBlock::Clipping {
+                source_page: Some(p),
+                ..
+            }) => *p as i32,
+            _ => -1, // non-clipping OR a page-less (pasted) clipping → no jump target
+        }
+    }
+
+    /// Stored on-screen size of a clipping in CSS px, or -1 if none (⇒ natural size).
+    pub fn note_disp_w(&self, i: usize) -> f32 {
+        match self.doc.notes.get(i) {
+            Some(NoteBlock::Clipping {
+                disp_w: Some(w), ..
+            }) => *w,
+            _ => -1.0,
+        }
+    }
+    pub fn note_disp_h(&self, i: usize) -> f32 {
+        match self.doc.notes.get(i) {
+            Some(NoteBlock::Clipping {
+                disp_h: Some(h), ..
+            }) => *h,
+            _ => -1.0,
         }
     }
 
@@ -734,12 +938,42 @@ impl App {
         Ok(self.doc.notes.len() - 1)
     }
 
-    /// Append a snipped clipping. Returns its index.
+    /// Append a snipped clipping (came from a page in THIS document). `disp_w`/`disp_h`
+    /// are the on-screen CSS px the region occupied when captured (<=0/non-finite ⇒
+    /// natural size). Returns its index.
     pub fn add_clipping(
         &mut self,
         png_b64: &str,
         source_page: usize,
         caption: &str,
+        disp_w: f32,
+        disp_h: f32,
+    ) -> Result<usize, String> {
+        if source_page >= MAX_PAGES {
+            return Err("bad source page".into());
+        }
+        self.push_clipping(png_b64, Some(source_page as u32), caption, disp_w, disp_h)
+    }
+
+    /// Append a clipping with NO source page in this document — e.g. an image pasted
+    /// from another tab (the reference sheet). Same validation as `add_clipping`.
+    pub fn add_pasted_clipping(
+        &mut self,
+        png_b64: &str,
+        caption: &str,
+        disp_w: f32,
+        disp_h: f32,
+    ) -> Result<usize, String> {
+        self.push_clipping(png_b64, None, caption, disp_w, disp_h)
+    }
+
+    fn push_clipping(
+        &mut self,
+        png_b64: &str,
+        source_page: Option<u32>,
+        caption: &str,
+        disp_w: f32,
+        disp_h: f32,
     ) -> Result<usize, String> {
         if self.doc.notes.len() >= MAX_NOTE_BLOCKS {
             return Err("notes are full".into());
@@ -747,16 +981,36 @@ impl App {
         if !valid_b64_png(png_b64) {
             return Err("invalid image data".into());
         }
-        if source_page >= MAX_PAGES {
-            return Err("bad source page".into());
-        }
+        let disp = |v: f32| (v.is_finite() && v > 0.0 && v <= MAX_PAGE_DIM).then_some(v);
         self.doc.notes.push(NoteBlock::Clipping {
             png_b64: png_b64.to_string(),
-            source_page: source_page as u32,
+            source_page,
             caption: sanitize_text_capped(caption, MAX_CAPTION_LEN),
+            disp_w: disp(disp_w),
+            disp_h: disp(disp_h),
         });
         self.dirty = true;
         Ok(self.doc.notes.len() - 1)
+    }
+
+    /// Drop just the IMAGE of a clipping: with a caption it becomes a `Text` block in
+    /// place (position kept); image-only, the whole block is removed. True if a
+    /// clipping was found at `i`. (For "wanted only the captured text, not the image".)
+    pub fn remove_clipping_image(&mut self, i: usize) -> bool {
+        let Some(NoteBlock::Clipping { caption, .. }) = self.doc.notes.get(i) else {
+            return false;
+        };
+        let caption = caption.clone();
+        if caption.trim().is_empty() {
+            // No text to keep → remove the block (shifts indices → drop sketch history).
+            self.doc.notes.remove(i);
+            self.discard_history_referencing_sketches();
+        } else {
+            // In-place clipping→text swap keeps the index, so sketch history stays sound.
+            self.doc.notes[i] = NoteBlock::Text { content: caption };
+        }
+        self.dirty = true;
+        true
     }
 
     pub fn update_note_text(&mut self, i: usize, content: &str) -> Result<(), String> {
@@ -842,27 +1096,47 @@ impl App {
 
     pub fn undo(&mut self) {
         if let Some(cmd) = self.history.pop_undo() {
-            match cmd {
-                Command::Add { surface, item } => self.remove_by_id(surface, item.id()),
-                Command::Remove { surface, items } => self.re_add_at(surface, items),
-                Command::Replace { surface, old, .. } => self.replace_by_id(surface, *old),
-            }
+            self.apply_undo(cmd);
             self.dirty = true;
+        }
+    }
+
+    fn apply_undo(&mut self, cmd: Command) {
+        match cmd {
+            Command::Add { surface, item } => self.remove_by_id(surface, item.id()),
+            Command::Remove { surface, items } => self.re_add_at(surface, items),
+            Command::Replace { surface, old, .. } => self.replace_by_id(surface, *old),
+            // Unwind a group step in reverse, so anything added-then-touched inside
+            // it comes apart in the right order.
+            Command::Batch { commands } => {
+                for c in commands.into_iter().rev() {
+                    self.apply_undo(c);
+                }
+            }
         }
     }
 
     pub fn redo(&mut self) {
         if let Some(cmd) = self.history.pop_redo() {
-            match cmd {
-                Command::Add { surface, item } => self.re_add(surface, vec![item]),
-                Command::Remove { surface, items } => {
-                    for (_, it) in &items {
-                        self.remove_by_id(surface, it.id());
-                    }
-                }
-                Command::Replace { surface, new, .. } => self.replace_by_id(surface, *new),
-            }
+            self.apply_redo(cmd);
             self.dirty = true;
+        }
+    }
+
+    fn apply_redo(&mut self, cmd: Command) {
+        match cmd {
+            Command::Add { surface, item } => self.re_add(surface, vec![item]),
+            Command::Remove { surface, items } => {
+                for (_, it) in &items {
+                    self.remove_by_id(surface, it.id());
+                }
+            }
+            Command::Replace { surface, new, .. } => self.replace_by_id(surface, *new),
+            Command::Batch { commands } => {
+                for c in commands {
+                    self.apply_redo(c);
+                }
+            }
         }
     }
 
@@ -899,6 +1173,7 @@ impl App {
         self.current_shape = None;
         self.erase_pending = None;
         self.item_drag = None;
+        self.group_drag = None;
         self.dirty = false;
         Ok(())
     }
@@ -1729,6 +2004,80 @@ mod tests {
         assert!(!a.delete_item(0, 999.0));
     }
 
+    // ---------- multi-select ----------
+
+    #[test]
+    fn marquee_selects_only_intersecting_items() {
+        let mut a = app_with_page();
+        a.add_text(0, 50.0, 50.0, "a").unwrap(); // bbox near [50,34,59.6,50]
+        a.add_text(0, 400.0, 400.0, "b").unwrap(); // bbox near [400,384,409.6,400]
+        let id_a = a.find_item(0, 51.0, 49.0);
+        // A small marquee over the top-left grabs only "a".
+        let hit = a.items_in_rect(0, 0.0, 0.0, 100.0, 100.0);
+        assert_eq!(hit, vec![id_a]);
+        // Unordered corners give the same result.
+        assert_eq!(a.items_in_rect(0, 100.0, 100.0, 0.0, 0.0), vec![id_a]);
+        // A marquee spanning both grabs both.
+        assert_eq!(a.items_in_rect(0, 0.0, 0.0, 500.0, 500.0).len(), 2);
+        // Non-finite input is rejected.
+        assert!(a.items_in_rect(0, f32::NAN, 0.0, 1.0, 1.0).is_empty());
+    }
+
+    #[test]
+    fn group_move_is_one_undo_step() {
+        let mut a = app_with_page();
+        a.add_text(0, 100.0, 100.0, "a").unwrap();
+        a.add_text(0, 200.0, 200.0, "b").unwrap();
+        let id_a = a.find_item(0, 101.0, 99.0);
+        let id_b = a.find_item(0, 201.0, 199.0);
+        assert!(a.begin_group_drag(0, vec![id_a, id_b], 100.0, 100.0));
+        a.drag_group(110.0, 130.0); // +10, +30 for the whole group
+        a.end_group_drag();
+        assert_eq!(a.text_pos(0, id_a), vec![110.0, 130.0]);
+        assert_eq!(a.text_pos(0, id_b), vec![210.0, 230.0]);
+        // ONE undo reverts BOTH...
+        a.undo();
+        assert_eq!(a.text_pos(0, id_a), vec![100.0, 100.0]);
+        assert_eq!(a.text_pos(0, id_b), vec![200.0, 200.0]);
+        // ...and the NEXT undo peels the add of "b" (proving the move was one entry).
+        a.undo();
+        assert_eq!(a.find_item(0, 201.0, 199.0), -1.0);
+        assert_eq!(a.find_item(0, 101.0, 99.0), id_a);
+    }
+
+    #[test]
+    fn begin_group_drag_rejects_unknown_ids() {
+        let mut a = app_with_page();
+        a.add_text(0, 100.0, 100.0, "a").unwrap();
+        let id_a = a.find_item(0, 101.0, 99.0);
+        assert!(!a.begin_group_drag(0, vec![9999.0], 0.0, 0.0));
+        // No group drag armed → drag/end are no-ops; the item never moves.
+        a.drag_group(50.0, 50.0);
+        a.end_group_drag();
+        assert_eq!(a.text_pos(0, id_a), vec![100.0, 100.0]);
+    }
+
+    #[test]
+    fn delete_items_batch_one_undo() {
+        let mut a = app_with_page();
+        a.add_text(0, 100.0, 100.0, "a").unwrap();
+        a.add_text(0, 200.0, 200.0, "b").unwrap();
+        let id_a = a.find_item(0, 101.0, 99.0);
+        let id_b = a.find_item(0, 201.0, 199.0);
+        // A bad id is silently skipped; the two real ones delete.
+        assert_eq!(a.delete_items(0, vec![id_a, id_b, 9999.0]), 2);
+        assert_eq!(a.doc.pages[0].items.len(), 0);
+        // ONE undo restores BOTH at their original z-order.
+        a.undo();
+        assert_eq!(a.find_item(0, 101.0, 99.0), id_a);
+        assert_eq!(a.find_item(0, 201.0, 199.0), id_b);
+        // Empty / all-bad id lists never touch history.
+        let before = a.doc.pages[0].items.len();
+        assert_eq!(a.delete_items(0, vec![]), 0);
+        assert_eq!(a.delete_items(0, vec![9999.0]), 0);
+        assert_eq!(a.doc.pages[0].items.len(), before);
+    }
+
     fn page_ids(a: &App) -> Vec<u64> {
         a.doc.pages[0].items.iter().map(|it| it.id()).collect()
     }
@@ -1806,13 +2155,17 @@ mod tests {
     fn notes_blocks_roundtrip_and_validate() {
         let mut a = app_with_page();
         let i = a.add_text_note("first thought\nsecond line").unwrap();
-        let j = a.add_clipping(PNG_1X1_B64, 0, "eq (3)").unwrap();
+        let j = a
+            .add_clipping(PNG_1X1_B64, 0, "eq (3)", 120.0, 40.0)
+            .unwrap();
         assert_eq!(a.notes_len(), 2);
         assert_eq!(a.note_kind(i), "text");
         assert_eq!(a.note_kind(j), "clipping");
+        assert_eq!(a.note_disp_w(j), 120.0); // display size stored
+        assert_eq!(a.note_source_page(j), 0);
         a.update_note_text(i, "edited \u{202E}clean").unwrap();
         assert_eq!(a.note_text(i), "edited clean"); // bidi stripped
-        assert!(a.add_clipping("<bad>", 0, "x").is_err());
+        assert!(a.add_clipping("<bad>", 0, "x", 1.0, 1.0).is_err());
         assert!(a.move_note(j, -1));
         assert_eq!(a.note_kind(0), "clipping");
         let json = a.save_json().unwrap();
@@ -1820,8 +2173,59 @@ mod tests {
         b.load_json(&json).unwrap();
         assert_eq!(b.notes_len(), 2);
         assert_eq!(b.note_caption(0), "eq (3)");
+        assert_eq!(b.note_disp_w(0), 120.0); // survives save/load
         assert!(b.remove_note(0));
         assert_eq!(b.notes_len(), 1);
+    }
+
+    #[test]
+    fn pasted_clipping_has_no_source_page() {
+        let mut a = app_with_page();
+        let i = a
+            .add_pasted_clipping(PNG_1X1_B64, "from ref", 0.0, 0.0)
+            .unwrap();
+        assert_eq!(a.note_kind(i), "clipping");
+        assert_eq!(a.note_source_page(i), -1); // page-less → no jump target
+        assert_eq!(a.note_disp_w(i), -1.0); // 0 display size ⇒ natural (None)
+                                            // survives round-trip as a page-less clipping
+        let json = a.save_json().unwrap();
+        let mut b = App::new();
+        b.load_json(&json).unwrap();
+        assert_eq!(b.note_source_page(0), -1);
+    }
+
+    #[test]
+    fn remove_clipping_image_keeps_caption_or_deletes() {
+        let mut a = app_with_page();
+        // captioned clipping → becomes a text block in place, caption preserved
+        let i = a
+            .add_clipping(PNG_1X1_B64, 0, "just the words", 10.0, 10.0)
+            .unwrap();
+        assert!(a.remove_clipping_image(i));
+        assert_eq!(a.note_kind(i), "text");
+        assert_eq!(a.note_text(i), "just the words");
+        // image-only clipping → whole block removed
+        let j = a.add_clipping(PNG_1X1_B64, 0, "", 10.0, 10.0).unwrap();
+        let before = a.notes_len();
+        assert!(a.remove_clipping_image(j));
+        assert_eq!(a.notes_len(), before - 1);
+        // non-clipping index → false, no-op
+        assert!(!a.remove_clipping_image(0));
+    }
+
+    #[test]
+    fn old_blob_without_new_clipping_fields_loads() {
+        // A file predating source_page:Option / disp_w/h — bare number source_page,
+        // no disp fields — must still load (serde default), image renders at natural size.
+        let json = format!(
+            r#"{{"version":{DOC_VERSION},"pdf_sha256":"","pages":[],"notes":[{{"type":"Clipping","png_b64":"{PNG_1X1_B64}","source_page":1,"caption":"legacy"}}]}}"#
+        );
+        let mut b = App::new();
+        b.load_json(&json).unwrap();
+        assert_eq!(b.note_kind(0), "clipping");
+        assert_eq!(b.note_caption(0), "legacy");
+        assert_eq!(b.note_source_page(0), 1); // bare number → Some(1)
+        assert_eq!(b.note_disp_w(0), -1.0); // absent → None → natural size
     }
 
     #[test]

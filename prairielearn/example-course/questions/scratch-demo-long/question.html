@@ -1,0 +1,68 @@
+<!-- A deliberately LONG, MathJax-heavy overlay question — spans more than a screen so the tall-page
+     growth, notes positioning, full-width canvas, and snip (over rendered equations) all get exercised.
+     Prof. Lumetta asked for problems that "span more than a screen or two" to test before going live. -->
+<pl-scribble mode="overlay">
+  <h3>Charging an RC circuit</h3>
+
+  <p>
+    A capacitor of capacitance <b>C = {{params.c_uf}} µF</b> is charged through a resistor of
+    resistance <b>R = {{params.r_k}} kΩ</b> from an ideal DC source of EMF <b>V₀ = {{params.v0}} V</b>.
+    At time $t = 0$ the switch closes and the (initially uncharged) capacitor begins to charge. Assume
+    ideal wires, an ideal source, and that the resistor and capacitor are linear and time-invariant.
+  </p>
+
+  <p>
+    Applying Kirchhoff's voltage law around the single loop, the source EMF equals the sum of the drop
+    across the resistor and the drop across the capacitor:
+  </p>
+  <p>$$ V_0 = i(t)\,R + \frac{q(t)}{C}. $$</p>
+
+  <p>
+    Since the current is the rate at which charge accumulates on the capacitor, $i(t) = \dfrac{dq}{dt}$,
+    substitution gives a first-order linear ordinary differential equation for the charge $q(t)$:
+  </p>
+  <p>$$ R\,\frac{dq}{dt} + \frac{q}{C} = V_0, \qquad q(0) = 0. $$</p>
+
+  <p>
+    Separating variables and integrating (or recognising the standard form) yields the well-known
+    charging solution, in which the charge rises exponentially toward its final value $Q_\infty = C V_0$:
+  </p>
+  <p>$$ q(t) = C V_0 \left( 1 - e^{-t/\tau} \right), \qquad \tau \equiv RC. $$</p>
+
+  <p>
+    The quantity $\tau = RC$ is the <b>time constant</b> of the circuit. It has units of time: here
+    $\tau = (R)(C) = ({{params.r_k}}\,\text{k}\Omega)({{params.c_uf}}\,\mu\text{F}) = {{params.tau_ms}}\,\text{ms}$,
+    using the convenient fact that kilo-ohms multiplied by micro-farads gives milliseconds.
+  </p>
+
+  <p>
+    Differentiating $q(t)$ gives the current, which <em>decays</em> from its initial maximum $V_0/R$ as
+    the capacitor voltage rises to oppose the source:
+  </p>
+  <p>$$ i(t) = \frac{dq}{dt} = \frac{V_0}{R}\, e^{-t/\tau}. $$</p>
+
+  <p>
+    The voltage across the capacitor, $V_C(t) = q(t)/C$, therefore follows the same exponential approach
+    to the source voltage:
+  </p>
+  <p>$$ V_C(t) = V_0 \left( 1 - e^{-t/\tau} \right). $$</p>
+
+  <p>A few checkpoints worth sketching on the curve before you answer:</p>
+  <ol>
+    <li>At $t = 0$: $V_C = 0$ and the current is at its maximum, $i = V_0/R$.</li>
+    <li>At $t = \tau$: the capacitor has reached $1 - e^{-1} \approx 63.2\%$ of the source voltage.</li>
+    <li>At $t = 5\tau$: the capacitor is within $1\%$ of fully charged — often taken as "steady state".</li>
+    <li>As $t \to \infty$: $V_C \to V_0$ and $i \to 0$ (the capacitor behaves as an open circuit to DC).</li>
+  </ol>
+
+  <p>
+    <b>Sketch</b> the $V_C(t)$ curve directly on the question (mark $\tau$, the $63.2\%$ level, and the
+    asymptote at $V_0$), jot any intermediate algebra in the notes, and then compute the value asked for
+    below. Recall $e^{-1} \approx 0.3679$.
+  </p>
+</pl-scribble>
+
+<!-- Graded answer OUTSIDE <pl-scribble> so the overlay never covers the input. NOT wrapped in a
+     pl-question-panel, so its submitted + correct answers reach the submission and answer panels. -->
+<pl-number-input answers-name="vc" label="Capacitor voltage at one time constant, $V_C(\tau) =$"
+                 suffix="V" comparison="relabs" rtol="0.02" digits="3"></pl-number-input>

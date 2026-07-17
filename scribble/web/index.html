@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=116">
+  <link rel="stylesheet" href="style.css?v=153">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -47,6 +47,16 @@
       <button id="btn-help" class="btn" title="Keyboard shortcuts (?)" aria-label="Show keyboard shortcuts" aria-haspopup="dialog">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.2a2.8 2.8 0 1 1 3.6 2.7c-.8.3-1.3 1-1.3 1.9v.4"/><path d="M12 17.5v.01"/></svg>
       </button>
+      <!-- About: attribution reachable in ONE click everywhere (the overlay footer line + the Help
+           modal footer carry it too). Wrapper spans button + popover so the overlay merge moves both. -->
+      <span class="about-wrap" id="about-wrap">
+        <button id="btn-about" class="btn" title="About Scribble" aria-label="About Scribble" aria-expanded="false">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.5v.01"/></svg>
+        </button>
+        <div id="about-popover" hidden>
+          <strong>Scribble</strong> — by Adhiraj Agarwala.<br>© 2026 · MIT License.
+        </div>
+      </span>
 
       <span class="bar-divider"></span>
 
@@ -88,7 +98,7 @@
         </button>
       </div>
       <div class="rail-group">
-        <button class="tool" data-tool="select" title="Select — move, resize or delete any annotation (shortcut: V)">
+        <button class="tool" data-tool="select" title="Select — click an annotation to move, resize or delete it. Drag an empty area to box-select several; Shift-click adds or removes one (shortcut: V)">
           <svg viewBox="0 0 24 24"><path d="M6 3l12 9-6 1 3 6-3 1-3-6-4 4V3z"/></svg>
           <span>Select</span>
         </button>
@@ -264,6 +274,9 @@
           <button id="btn-add-note" class="btn" title="Add a text block">＋ Text</button>
           <button id="btn-add-sketch" class="btn" title="Add a blank canvas you can draw on with the same tools">＋ Draw</button>
           <button id="btn-notes-dock" class="btn" title="Float notes as a window">Float</button>
+          <button id="btn-notes-hide" class="btn icon-btn" title="Hide the notes — reopen with the Notes button on the toolbar" aria-label="Hide the notes">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
         </span>
       </header>
       <div id="notes-list"></div>
@@ -301,7 +314,9 @@
             <dt>Ctrl/⌘ Z</dt><dd>Undo</dd>
             <dt>Ctrl/⌘ Y</dt><dd>Redo</dd>
             <dt>Ctrl/⌘ S</dt><dd>Save work file</dd>
-            <dt>Delete</dt><dd>Remove selected mark</dd>
+            <dt>Drag empty</dt><dd>Box-select several marks</dd>
+            <dt>Shift-click</dt><dd>Add / remove one from the selection</dd>
+            <dt>Delete</dt><dd>Remove selected mark(s)</dd>
             <dt>Esc</dt><dd>Deselect</dd>
           </dl>
         </section>
@@ -316,12 +331,16 @@
           </dl>
         </section>
       </div>
+      <footer id="help-about"><strong>Scribble</strong> — by Adhiraj Agarwala. © 2026 · MIT License.</footer>
     </div>
   </div>
+
+  <!-- Always-visible attribution in the overlay (styled/gated in CSS; inert everywhere else). -->
+  <div id="about-line" aria-hidden="true"><strong>Scribble</strong> — by Adhiraj Agarwala · MIT License</div>
 
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=116"></script>
+  <script type="module" src="app.js?v=153"></script>
 </body>
 </html>

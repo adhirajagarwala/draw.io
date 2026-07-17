@@ -20,42 +20,78 @@ function trapModalFocus(ov, label) {
   });
 }
 
-// Ask whether to add a snip's captured text to the note (the image goes in either
-// way — the caller adds it after this resolves). Enter = keep, Esc = skip.
-export function confirmSnipText(text) {
+// After a snip, PREVIEW the captured image so the student sees exactly what was grabbed, and — when text
+// was recognised in the region — let them choose whether to keep it as a caption before it lands in notes.
+// `text` is passed via textContent only (never innerHTML). Resolves { add, includeText }.
+export function confirmSnip(imgUrl, text) {
   return new Promise((resolve) => {
     const opener = document.activeElement;
+    const hasText = !!(text && text.trim());
     const ov = document.createElement("div");
     ov.className = "modal-overlay";
     const card = document.createElement("div");
-    card.className = "modal-card";
+    card.className = "modal-card snip-confirm";
     const h = document.createElement("h3");
-    h.textContent = "Keep the captured text?";
-    const pre = document.createElement("p");
-    pre.className = "snip-text-preview";
-    pre.textContent = text; // textContent — never innerHTML of captured content
-    const actions = document.createElement("div");
-    actions.className = "modal-actions";
+    h.textContent = "Add this clip to your notes?";
+    const img = document.createElement("img");
+    img.className = "snip-preview";
+    img.src = imgUrl;
+    img.alt = "Preview of the region you snipped";
+    card.append(h, img);
+    let checkbox = null;
+    if (hasText) {
+      const label = document.createElement("label");
+      label.className = "snip-text-opt";
+      checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = true; // default: keep the text (the student can untick to save the image alone)
+      const span = document.createElement("span");
+      span.textContent = "Keep the recognised text below the image";
+      label.append(checkbox, span);
+      const preview = document.createElement("p");
+      preview.className = "snip-text-preview";
+      preview.textContent = text; // textContent-safe: recovered page text is never HTML
+      card.append(label, preview);
+    }
+    const row = document.createElement("div");
+    row.className = "modal-actions";
+    const cleanup = () => { ov.remove(); document.removeEventListener("keydown", onKey); opener?.focus?.(); };
     const add = document.createElement("button");
-    add.className = "btn primary";
-    add.textContent = "Keep text (Enter)";
-    const skip = document.createElement("button");
-    skip.className = "btn";
-    skip.textContent = "Image only (Esc)";
-    const done = (v) => { ov.remove(); document.removeEventListener("keydown", onKey, true); opener?.focus?.(); resolve(v); };
-    const onKey = (e) => {
-      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); done(true); }
-      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); }
+    add.className = "btn labeled primary";
+    add.textContent = "Add to notes";
+    add.addEventListener("click", () => { const inc = checkbox ? checkbox.checked : false; cleanup(); resolve({ add: true, includeText: inc }); });
+    const cancel = document.createElement("button");
+    cancel.className = "btn labeled";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => { cleanup(); resolve({ add: false, includeText: false }); });
+    row.append(add, cancel);
+    card.append(row);
+    ov.append(card);
+    const onKey = (e) => { if (e.key === "Escape") { cleanup(); resolve({ add: false, includeText: false }); } };
+    ov.addEventListener("click", (e) => { if (e.target === ov) { cleanup(); resolve({ add: false, includeText: false }); } });
+    trapModalFocus(ov, "Add this clip to your notes?");
+    document.addEventListener("keydown", onKey);
+    document.body.append(ov);
+    // Place the dialog in the VISIBLE band of the (possibly multi-screen-tall) overlay iframe, not the centre
+    // of its full height — else Add/Cancel land below the fold and you'd scroll to reach them. Recompute once
+    // the preview image DECODES and grows the card (its height is unknown at first paint, so a one-shot
+    // measure would mis-place it). Same-origin read of the parent's scroll; falls back to the centred layout.
+    const place = () => {
+      try {
+        const fr = window.frameElement && window.frameElement.getBoundingClientRect();
+        const pvh = window.parent && window.parent.innerHeight;
+        if (!fr || !pvh) return;
+        const visTop = Math.max(0, -fr.top);
+        const band = Math.min(pvh - fr.top, fr.height) - visTop;
+        if (band <= 160) return;
+        ov.style.alignItems = "flex-start"; // stop the flex from re-centring in the full iframe height
+        card.style.maxHeight = `${Math.round(band - 32)}px`;
+        card.style.marginTop = `${Math.max(8, Math.round(visTop + band / 2 - card.offsetHeight / 2 - 20))}px`;
+      } catch { /* cross-frame — keep the default centred layout */ }
     };
-    add.addEventListener("click", () => done(true));
-    skip.addEventListener("click", () => done(false));
-    ov.addEventListener("click", (e) => { if (e.target === ov) done(false); });
-    actions.append(add, skip);
-    card.append(h, pre, actions);
-    ov.appendChild(card);
-    trapModalFocus(ov, "Keep the captured text?");
-    document.addEventListener("keydown", onKey, true);
-    document.body.appendChild(ov);
+    place();
+    img.addEventListener("load", place);
+    img.decode?.().then(place).catch(() => {}); // fires even when the object URL is already decoded
     add.focus();
   });
 }

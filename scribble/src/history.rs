@@ -21,6 +21,19 @@ pub enum Command {
         old: Box<Item>,
         new: Box<Item>,
     },
+    /// Several commands applied as ONE undoable step (group move / group delete
+    /// from a multi-selection). Undo replays them in reverse; redo, in order.
+    Batch { commands: Vec<Command> },
+}
+
+/// True if a single command touches a sketch surface (recursing into batches).
+fn cmd_references_sketch(c: &Command) -> bool {
+    match c {
+        Command::Add { surface, .. }
+        | Command::Remove { surface, .. }
+        | Command::Replace { surface, .. } => matches!(surface, Surface::Sketch(_)),
+        Command::Batch { commands } => commands.iter().any(cmd_references_sketch),
+    }
 }
 
 #[derive(Default)]
@@ -69,16 +82,6 @@ impl History {
     /// True if any queued command targets a sketch surface (whose note index
     /// can shift when notes are added, removed, or reordered).
     pub fn references_sketch(&self) -> bool {
-        let is_sketch = |c: &Command| {
-            matches!(
-                match c {
-                    Command::Add { surface, .. } => surface,
-                    Command::Remove { surface, .. } => surface,
-                    Command::Replace { surface, .. } => surface,
-                },
-                Surface::Sketch(_)
-            )
-        };
-        self.undo.iter().any(is_sketch) || self.redo.iter().any(is_sketch)
+        self.undo.iter().any(cmd_references_sketch) || self.redo.iter().any(cmd_references_sketch)
     }
 }

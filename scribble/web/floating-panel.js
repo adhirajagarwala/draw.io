@@ -11,34 +11,50 @@ const DRAG_SLOP = 4; // px before a lift commits — a press-without-move is a n
 // Keep a moved panel on-screen after a window/iframe resize. Clamp to the
 // VIEWPORT (the panel is position:fixed), NOT a stage rect. Skip mid-drag
 // (style.left/top are live) and when it was never moved.
-export function clampFixed(el) {
-  if (!el.classList.contains("fp-moved") || el.classList.contains("fp-dragging")) return;
+// `win` is the realm whose viewport bounds the panel: the iframe's own window by
+// default, or `window.parent` once the panel is reparented into the PL page (so
+// "fixed" means the REAL browser viewport, not the question-tall iframe box).
+export function clampFixed(el, win = window) {
+  // Skip when never-moved, mid-drag, or NOT RENDERED (display:none via the Annotate gate) — a hidden
+  // element's rect is 0×0, so the clamp bound would be innerWidth-0 and under-clamp a restored position.
+  if (!el.classList.contains("fp-moved") || el.classList.contains("fp-dragging") || !el.getClientRects().length) return;
   const r = el.getBoundingClientRect();
-  el.style.left = `${Math.round(clamp(parseFloat(el.style.left) || 0, 4, innerWidth - r.width - 4))}px`;
-  el.style.top = `${Math.round(clamp(parseFloat(el.style.top) || 0, 4, innerHeight - r.height - 4))}px`;
+  el.style.left = `${Math.round(clamp(parseFloat(el.style.left) || 0, 4, win.innerWidth - r.width - 4))}px`;
+  el.style.top = `${Math.round(clamp(parseFloat(el.style.top) || 0, 4, win.innerHeight - r.height - 4))}px`;
 }
 
 // el          : the panel (#rail / #topbar). Already position:fixed in body.overlay.
-// opts.grip   : the ⠿ drag handle — the ONLY pointerdown target, so tool/action
-//               button clicks never start a drag. REQUIRED.
+// opts.grip   : the ⠿ handle — VESTIGIAL (kept for API compat): the whole bar is the
+//               drag surface now, minus the DRAG_EXCLUDE interactive parts below.
 // opts.collapse : the collapse/restore toggle button.
 // opts.onChange : savePrefs-style callback after any committed move/collapse.
-export function makeFloating(el, { grip, collapse, onChange }) {
+// Interactive parts that a pointerdown must NOT turn into a drag (tool/action buttons, the colour+width bar,
+// links, form fields, open popovers). Everything ELSE on the panel — grip, labels, gaps, background — drags
+// the WHOLE bar.
+const DRAG_EXCLUDE = "button, input, select, textarea, a, #context-bar, [contenteditable], [role=button], #more-popover, #about-popover";
+
+// opts.win : the realm whose viewport the drop-clamp measures against — the iframe's
+//            own window by default, or `window.parent` when `el` is reparented into the
+//            PL page (so a dropped bar is clamped to the REAL screen, not the tall iframe).
+export function makeFloating(el, { grip, collapse, onChange, win = window }) {
   let drag = null, raf = 0;
 
-  grip.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0 || ev.target.closest("button")) return; // right/middle + any button never lift
+  el.addEventListener("pointerdown", (ev) => {
+    if (drag || ev.button !== 0 || ev.target.closest(DRAG_EXCLUDE)) return; // one drag at a time; buttons/inputs never lift
     const r = el.getBoundingClientRect();
     // Defer the lift until the pointer passes DRAG_SLOP, so a click-without-move
-    // on the grip never re-pins the panel (click ≠ drag).
-    drag = { dx: ev.clientX - r.left, dy: ev.clientY - r.top, fx: r.left, fy: r.top,
-             sx: ev.clientX, sy: ev.clientY, lifted: false };
-    try { grip.setPointerCapture(ev.pointerId); } catch { /* pointer already gone */ }
+    // anywhere on the bar never re-pins the panel (click ≠ drag). Record the owning
+    // pointerId and the pre-lift state so a cancelled drag can restore it exactly.
+    drag = { id: ev.pointerId, dx: ev.clientX - r.left, dy: ev.clientY - r.top, fx: r.left, fy: r.top,
+             sx: ev.clientX, sy: ev.clientY, lifted: false,
+             preMoved: el.classList.contains("fp-moved"), preL: el.style.left, preT: el.style.top };
+    try { el.setPointerCapture(ev.pointerId); } catch { /* pointer already gone */ }
     ev.preventDefault();
   });
 
-  grip.addEventListener("pointermove", (ev) => {
-    if (!drag) return;
+  el.addEventListener("pointermove", (ev) => {
+    if (!drag || ev.pointerId !== drag.id) return; // only the owning contact drives the drag
+    if (!(ev.buttons & 1)) return end(true); // the press ended somewhere we never heard about — cancel, don't chase
     if (!drag.lifted) {
       if (Math.abs(ev.clientX - drag.sx) < DRAG_SLOP &&
           Math.abs(ev.clientY - drag.sy) < DRAG_SLOP) return; // below threshold — not a drag yet
@@ -48,27 +64,48 @@ export function makeFloating(el, { grip, collapse, onChange }) {
       el.classList.add("fp-moved", "fp-dragging");
       el.style.left = `${Math.round(r.left)}px`;
       el.style.top = `${Math.round(r.top)}px`;
+      // Cache the LIFTED size for the live clamp: fp-moved shrinks the bar to max-content
+      // (the pre-lift rect is the full-width bar and would over-clamp left to ~4px).
+      const lr = el.getBoundingClientRect();
+      drag.pw = lr.width; drag.ph = lr.height;
     }
     drag.fx = ev.clientX - drag.dx;
     drag.fy = ev.clientY - drag.dy;
     if (!raf) raf = requestAnimationFrame(() => {
       raf = 0;
-      el.style.left = `${Math.round(drag.fx)}px`;
-      el.style.top = `${Math.round(drag.fy)}px`;
+      // Live clamp: the bar can never leave the viewport even mid-drag. Clamp only the
+      // APPLIED values (never drag.dx/dy) — sticky-edge, and the grab offset re-attaches
+      // when the pointer comes back. clampFixed can't do this (it skips .fp-dragging).
+      el.style.left = `${Math.round(clamp(drag.fx, 4, win.innerWidth - drag.pw - 4))}px`;
+      el.style.top = `${Math.round(clamp(drag.fy, 4, win.innerHeight - drag.ph - 4))}px`;
     });
   });
 
-  const end = () => {
+  const end = (cancelled = false) => {
     if (!drag) return;
     const d = drag; drag = null;
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
     if (!d.lifted) return;            // a pure click/press on the grip — nothing moved
     el.classList.remove("fp-dragging");
-    clampFixed(el);                   // clamp the drop into the viewport
+    if (cancelled) {
+      // A cancel is not a drop intent — restore the exact pre-lift state (position or CSS pin),
+      // then re-clamp: the window may have shrunk while the drag was in flight.
+      if (d.preMoved) { el.style.left = d.preL; el.style.top = d.preT; }
+      else { el.classList.remove("fp-moved"); el.style.left = ""; el.style.top = ""; }
+      clampFixed(el, win);
+      return;
+    }
+    clampFixed(el, win);              // clamp the drop into the (possibly parent) viewport
     onChange?.();
   };
-  grip.addEventListener("pointerup", end);
-  grip.addEventListener("pointercancel", end);
+  el.addEventListener("pointerup", (ev) => { if (drag && ev.pointerId === drag.id) end(false); });
+  el.addEventListener("pointercancel", (ev) => { if (drag && ev.pointerId === drag.id) end(true); });
+  // A tab switch / OS overlay can swallow the pointerup entirely. But in the overlay the "window"
+  // is the iframe, so ANY tap on the parent PL page fires blur — a drag whose element still HOLDS
+  // pointer capture keeps receiving events across that and must not be killed. Only cancel on blur
+  // when capture is gone; visibility:hidden is a real tab switch and cancels unconditionally.
+  win.addEventListener("blur", () => { if (drag && !el.hasPointerCapture?.(drag.id)) end(true); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") end(true); });
 
   // Keep title AND aria-label in sync (aria-label wins as the accessible name — a stale one makes a screen
   // reader announce "Hide" on a button that now Shows).
@@ -83,6 +120,10 @@ export function makeFloating(el, { grip, collapse, onChange }) {
     const on = !el.classList.contains("fp-collapsed");
     el.classList.toggle("fp-collapsed", on);
     labelCollapse(on);
+    // The bar's width jumps on collapse/expand (handle ↔ max-content); re-clamp at the
+    // NEW size so expanding near the right edge can't overflow the viewport. rAF: measure
+    // after the class change lands in layout.
+    requestAnimationFrame(() => clampFixed(el, win));
     onChange?.();
   });
 

@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "116";
+const APP_VERSION = "153";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=116";
+import init, { App } from "./pkg/scribble.js?v=153";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,21 +17,20 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=116";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=116";
-import { initEmbed } from "./embed.js?v=116";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=116";
-import { htmlTextInRegion, pdfTextInRegion } from "./text-extract.js?v=116";
-import { confirmOpenDialog, showClippingLightbox } from "./modals.js?v=116";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed, floatCbar } from "./colorbar.js?v=116";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes } from "./notes-dock.js?v=116";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=116";
+} from "./utils.js?v=153";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=153";
+import { initEmbed } from "./embed.js?v=153";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=153";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=153";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip } from "./modals.js?v=153";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=153";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=153";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=153";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
 // head script, ahead of the CSP meta). All edit entry points short-circuit on it.
 const READONLY = !!window.__SCRIBBLE_READONLY;
-// Unsaved work relative to the LAST PrairieLearn commit (Save / Save & Grade). The
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -105,8 +104,21 @@ const els = {
 // Tools that exist only in the UI layer (the Rust core stays in a neutral
 // tool while they're active).
 const JS_TOOLS = new Set(["snip"]);
+// ⚠ PHASE 1 (toolbar reparent) IS PAUSED AND GATED OFF — DO NOT FLIP THIS ON without finishing + verifying it.
+// It moves #rail out to the parent PL page so position:fixed follows the browser viewport. The code below is
+// written and its first review round is fixed (7 bugs found: iframe-realm tool queries, an un-gated body.big
+// that crushed the bar to 140px, a missing focus ring, the Larger toggle, and three $()-after-reparent nulls),
+// but it has NEVER been verified in a real browser and step 1b (the notes pane) isn't started. With this false,
+// every Phase-1 addition is inert: railHostDoc stays this document (identical to the old behaviour), chrome.css
+// is never injected, and floating-panel's `win` defaults to this window. See memory: scribble-vnext-15point-plan.
+const PHASE1_CHROME_REPARENT = false;
+// The realm the tool rail lives in. Normally this iframe's document; when the Phase-1 reparent is enabled the
+// rail lives in the parent page, so every tool/colour/width query must search THAT document — a plain
+// `document.querySelector` would search the now-empty iframe. Set by the reparent; defaults to the iframe.
+let railHostDoc = document;
+let railHostEl = null; // the parent-realm .scribble-chrome host (for state classes like .big); null if not reparented
 const activeTool = () =>
-  document.querySelector(".tool.active")?.dataset.tool;
+  railHostDoc.querySelector(".tool.active")?.dataset.tool;
 
 let app;            // WASM App
 let pdfDoc = null;  // PDF.js document
@@ -117,6 +129,8 @@ let drawing = false;
 const activePointers = new Map(); // pointerId -> pointerType
 let penActive = false;            // a stylus is the current input → ignore touch (palm)
 let drawingPointerId = null;      // which contact owns the in-progress stroke
+let gesturePointerId = null;      // the ONE contact that owns ANY armed canvas gesture (draw/snip/marquee/drag)
+let gestureCaptureEl = null;      // the canvas that captured it — a blur with capture still held is benign
 // Backstop: the canvas-bound pointerup/cancel handlers only fire when a pointer ends ON the canvas. A
 // rejected 2nd touch (or a stroke ending over a floating panel) would otherwise leave its id in
 // activePointers forever — and once >=2 stale ids accumulate, EVERY later stroke is rejected and the
@@ -210,15 +224,27 @@ function status(msg) {
 
 // ---------- selection ----------
 
-let selectedId = -1;          // current selection (select tool)
+let selectedId = -1;          // lone selection id (resize/hover path); -1 when 0 or >1 selected
+let selectedIds = new Set();  // multi-selection membership on the ACTIVE page (source of truth)
+let marquee = null;           // {x0,y0,x1,y1,page,add} rubber-band rect while box-selecting (page coords)
+let groupDrag = null;         // {startX,startY,moved} while moving a multi-selection together
 const HANDLE_PX = 7;          // on-screen handle half-size (CSS px)
 // Bigger eraser hit on touch devices (fingertips are imprecise vs a mouse).
 const COARSE_POINTER = !!window.matchMedia?.("(any-pointer: coarse)").matches;
 const ERASE_RADIUS_PX = COARSE_POINTER ? 20 : 10; // eraser hit radius (CSS px; ÷ scale for page units)
 const MOVE_THRESHOLD_PX = 3;  // a drag must exceed this before it counts as a move
 
+// Selection is kept in TWO forms in lock-step: selectedIds (the set) is the truth;
+// selectedId mirrors it ONLY when exactly one item is selected, so the resize/handle
+// path (single-item only) keeps working unchanged. Zero or many selected → selectedId = -1.
 function setSelection(id) {
   selectedId = id;
+  selectedIds = id < 0 ? new Set() : new Set([id]);
+  redrawAnnotations();
+}
+function setSelectionSet(ids) {
+  selectedIds = new Set(ids);
+  selectedId = selectedIds.size === 1 ? [...selectedIds][0] : -1;
   redrawAnnotations();
 }
 
@@ -252,11 +278,34 @@ function drawSelectionBox(ctx, bb, corners, scl, ratio) {
   ctx.restore();
 }
 
+// Dashed rubber-band rectangle for an in-progress marquee (page coords → device px).
+function drawMarquee(ctx, m, scl, ratio) {
+  const k = scl * ratio;
+  const x = Math.min(m.x0, m.x1) * k, y = Math.min(m.y0, m.y1) * k;
+  const w = Math.abs(m.x1 - m.x0) * k, h = Math.abs(m.y1 - m.y0) * k;
+  ctx.save();
+  ctx.strokeStyle = "#2f5fde";
+  ctx.fillStyle = "rgba(47, 95, 222, 0.08)";
+  ctx.lineWidth = 1 * ratio;
+  ctx.setLineDash([4 * ratio, 3 * ratio]);
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
+}
+
 function drawSelection(ctx) {
-  if (selectedId < 0) return;
-  const bb = app.item_bbox_of(pageNum, selectedId);
-  if (bb.length !== 4) { selectedId = -1; return; }
-  drawSelectionBox(ctx, bb, handlePoints(bb), scale(), curRatio());
+  // Rubber-band under the selection boxes (only on the page it started on).
+  if (marquee && marquee.page === pageNum) drawMarquee(ctx, marquee, scale(), curRatio());
+  if (selectedIds.size === 0) return;
+  const single = selectedIds.size === 1;
+  for (const id of [...selectedIds]) {
+    const bb = app.item_bbox_of(pageNum, id);
+    if (bb.length !== 4) { selectedIds.delete(id); continue; } // item gone (undo/delete) — drop it
+    // Handles only for a lone selection; a group shows plain boxes (no group-resize).
+    drawSelectionBox(ctx, bb, single ? handlePoints(bb) : [], scale(), curRatio());
+  }
+  // Keep the mirror honest if items were pruned above.
+  selectedId = selectedIds.size === 1 ? [...selectedIds][0] : -1;
 }
 
 // Which corner handle (0..3) is under (x, y) page coords, or -1.
@@ -611,6 +660,9 @@ function newDocument(mode) {
   dirtySinceFileSave = false;
   pageNum = 0;
   selectedId = -1;
+  selectedIds = new Set();
+  marquee = null;
+  groupDrag = null;
   zoomMode = "fit-width"; // fill the viewer width; the page scales, never reflows
 }
 
@@ -827,6 +879,23 @@ function renderHtmlPage() {
 // Bypasses measureHtmlHeight (the frame is empty → it would floor to 200) and forces
 // zoomMode off "fit-width" (which would rescale the canvas on resize while the live
 // question behind it does not).
+// Overlay drawable width = the live card's width (the #stage spans the full host). Fill it instead of
+// locking to HTML_BASE_W — on a wide screen the card is ~958px, so a fixed 816 left ~142px of the card
+// un-drawable on the right. Clamped to a sane range; the caller keeps it grow-only so strokes never clip.
+function overlayStageW() {
+  const s = $("stage");
+  const w = Math.round((s && (s.clientWidth || s.getBoundingClientRect().width)) || HTML_BASE_W);
+  return Math.max(360, Math.min(w, 4000));
+}
+
+// The live question host. It's a SIBLING of our iframe (both children of .pl-scribble-overlay), NOT an
+// ancestor — so frameElement.closest('.pl-scribble-host') is null; go up to the wrapper and back down.
+function overlayHost() {
+  const wrap = window.frameElement && window.frameElement.parentElement;
+  if (!wrap) return null;
+  return wrap.querySelector(":scope > .pl-scribble-host") || wrap.querySelector(".pl-scribble-host");
+}
+
 function openOverlay(measuredH) {
   if (pdfDoc) { try { pdfDoc.destroy(); } catch { /* ignore */ } pdfDoc = null; }
   contTeardown();
@@ -845,8 +914,9 @@ function openOverlay(measuredH) {
   els.pdfCanvas.hidden = true;
   els.htmlFrame.hidden = true; // no clone, no srcdoc — the live question shows through
   const h = Math.min(Math.max(measuredH | 0, 200), HTML_MAX_PAGE_H);
-  basePage = { w: HTML_BASE_W, h };
-  app.ensure_page(0, HTML_BASE_W, h);
+  const w = overlayStageW(); // fill the card, don't lock to 816
+  basePage = { w, h };
+  app.ensure_page(0, w, h);
   htmlSnipCanvas = null;
   renderHtmlPage(); // sizes #anno-canvas + #page-wrap from basePage; #html-frame stays hidden
   enableDocUI({ thumbs: false, pageNav: false });
@@ -863,10 +933,15 @@ function openOverlay(measuredH) {
 // authoritative). embed.js drives this from a ResizeObserver on the parent host + MathJax.startup.promise.
 function resizeOverlay(measuredH) {
   if (READONLY || docMode !== "html" || !document.body.classList.contains("overlay")) return;
-  const h = Math.min(measuredH | 0, HTML_MAX_PAGE_H);
-  if (h <= basePage.h) return; // grow-only; same/smaller is a no-op (no spurious re-render → no observer loop)
-  basePage = { w: HTML_BASE_W, h };
-  app.ensure_page(0, HTML_BASE_W, h);
+  // GROW-ONLY on BOTH axes: height grows as the question content grows; width grows if the card widens
+  // (window resize). Never shrink — that would clip existing strokes; and same/smaller is a no-op so the
+  // ResizeObserver doesn't loop. Width only re-fills a widened card, never chases it narrower.
+  const h = Math.max(basePage.h, Math.min(measuredH | 0, HTML_MAX_PAGE_H));
+  const w = Math.max(basePage.w, overlayStageW());
+  if (h === basePage.h && w === basePage.w) return;
+  basePage = { w, h };
+  app.ensure_page(0, w, h);
+  htmlSnipCanvas = null; // the page grew → the cached snip raster is stale (else post-grow snips are blank/misaligned)
   renderHtmlPage();
 }
 
@@ -922,6 +997,10 @@ const eraseRadius = () => ERASE_RADIUS_PX / scale();
 // let that abort an input handler mid-state-change. Captures on the canvas the
 // event fired on (the single-page canvas, or the active continuous page).
 function capturePointer(ev) {
+  // Called exactly when a canvas gesture ARMS — record its owner so no other contact
+  // (a hovering pen, a bumped mouse, a resting palm) can drive or cancel it.
+  gesturePointerId = ev.pointerId;
+  gestureCaptureEl = ev.currentTarget;
   try {
     ev.currentTarget.setPointerCapture(ev.pointerId);
   } catch {
@@ -939,8 +1018,13 @@ function onAnnoPointerDown(ev) {
   // progress and don't draw (native gestures are off via touch-action:none, but at
   // minimum a two-finger gesture must never leave a stray stroke).
   if (activePointers.size >= 2) {
-    if (drawing) { drawing = false; app.pointer_cancel(); }
-    snip = resizeDrag = itemDrag = null;
+    // A second contact cancels ANY in-progress single-pointer op. pointer_cancel() reverts an
+    // in-flight stroke, a single move/resize (item_drag) AND a group move to their pre-drag state,
+    // and is a safe no-op when nothing is armed — so call it unconditionally. (Reverting only some
+    // drag types left an interrupted single move half-applied and un-undoable.)
+    drawing = false;
+    app.pointer_cancel();
+    snip = resizeDrag = itemDrag = groupDrag = marquee = null;
     redrawAnnotations();
     return;
   }
@@ -962,7 +1046,7 @@ function onAnnoPointerDown(ev) {
   if (tool === "select") {
     ev.preventDefault();
     commitTextInput();
-    // Resize if a handle of the current selection was grabbed.
+    // Resize if a handle of the (single) current selection was grabbed.
     const h = handleAt(x, y);
     if (h >= 0 && app.begin_item_drag(pageNum, selectedId, x, y)) {
       const bb = app.item_bbox_of(pageNum, selectedId);
@@ -976,11 +1060,38 @@ function onAnnoPointerDown(ev) {
       return;
     }
     const id = app.find_item(pageNum, x, y);
-    setSelection(id);
-    if (id >= 0 && app.begin_item_drag(pageNum, id, x, y)) {
-      itemDrag = { id, startX: x, startY: y, moved: false };
-      capturePointer(ev);
+    // Shift = additive: toggle a clicked item, or start an ADD marquee on empty space.
+    if (ev.shiftKey) {
+      if (id >= 0) {
+        const next = new Set(selectedIds);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        setSelectionSet([...next]);
+      } else {
+        marquee = { x0: x, y0: y, x1: x, y1: y, page: pageNum, add: true };
+        capturePointer(ev);
+      }
+      return;
     }
+    // Grabbing any member of a multi-selection drags the WHOLE group together.
+    if (id >= 0 && selectedIds.size > 1 && selectedIds.has(id) &&
+        app.begin_group_drag(pageNum, [...selectedIds], x, y)) {
+      groupDrag = { startX: x, startY: y, moved: false };
+      capturePointer(ev);
+      return;
+    }
+    // Plain click on an item: select just it (and arm a single move).
+    if (id >= 0) {
+      setSelection(id);
+      if (app.begin_item_drag(pageNum, id, x, y)) {
+        itemDrag = { id, startX: x, startY: y, moved: false };
+        capturePointer(ev);
+      }
+      return;
+    }
+    // Plain click/drag on empty space: clear, then rubber-band a replace-marquee.
+    setSelection(-1);
+    marquee = { x0: x, y0: y, x1: x, y1: y, page: pageNum, add: false };
+    capturePointer(ev);
     return;
   }
   if (tool === "text") {
@@ -1007,12 +1118,15 @@ function onAnnoPointerDown(ev) {
 }
 els.annoCanvas.addEventListener("pointerdown", onAnnoPointerDown);
 
-// Drag the open snip marquee's far corner.
+// Drag the open snip marquee's far corner. Coalesce the repaint into ONE per frame — a raw pointermove
+// can fire 100+/sec and each redrawAnnotations() re-renders every stroke (app.render), which is the
+// snip-selection lag; rAF caps it to the display rate.
+let snipRaf = 0;
 function moveSnip(ev) {
   const [x, y] = pageCoords(ev);
   snip.x1 = x;
   snip.y1 = y;
-  redrawAnnotations();
+  if (!snipRaf) snipRaf = requestAnimationFrame(() => { snipRaf = 0; if (snip) redrawAnnotations(); });
 }
 
 // Scale the selected item by how far the grabbed corner moved from its anchor.
@@ -1092,11 +1206,41 @@ function moveDraw(ev) {
 
 // Pointer-move dispatcher: one in-progress gesture at a time, else hover/draw.
 function onAnnoPointerMove(ev) {
+  if (drawing || snip || marquee || itemDrag || resizeDrag || groupDrag) {
+    // Only the contact that ARMED the gesture may drive or end it — a hovering pen
+    // (buttons=0) or a bumped second pointer must neither corrupt nor cancel it.
+    if (ev.pointerId !== gesturePointerId) return;
+    // The owning press ended somewhere we never heard about (tab switch, OS overlay) —
+    // a move with no button down means the pointerup was swallowed. Cancel; don't keep drawing.
+    if (!(ev.buttons & 1)) { onAnnoPointerCancel(ev); return; }
+  }
   if (snip) { moveSnip(ev); return; }
+  if (marquee) { moveMarquee(ev); return; }
   if (resizeDrag) { moveResize(ev); return; }
+  if (groupDrag) { moveGroup(ev); return; }
   if (itemDrag) { moveItem(ev); return; }
   if (!drawing) { updateHoverCursor(ev); return; }
   moveDraw(ev);
+}
+
+// Rubber-band the marquee's far corner (coalesced to one repaint per frame).
+let marqueeRaf = 0;
+function moveMarquee(ev) {
+  const [x, y] = pageCoords(ev);
+  marquee.x1 = x; marquee.y1 = y;
+  if (!marqueeRaf) marqueeRaf = requestAnimationFrame(() => { marqueeRaf = 0; if (marquee) redrawAnnotations(); });
+}
+
+// Move the whole multi-selection together, past the same small threshold as a single move.
+function moveGroup(ev) {
+  const [x, y] = pageCoords(ev);
+  if (Math.hypot(x - groupDrag.startX, y - groupDrag.startY) > MOVE_THRESHOLD_PX / scale()) {
+    groupDrag.moved = true;
+  }
+  if (groupDrag.moved) {
+    app.drag_group(x, y);
+    redrawAnnotations();
+  }
 }
 els.annoCanvas.addEventListener("pointermove", onAnnoPointerMove);
 
@@ -1114,6 +1258,32 @@ function endStroke(ev) {
     snip = null;
     redrawAnnotations();
     finishSnip(r);
+    return;
+  }
+  if (marquee) {
+    const m = marquee;
+    marquee = null;
+    // A near-zero drag is a click, not a box-select: replace-mode already cleared on
+    // pointerdown; add-mode (shift) leaves the current selection untouched.
+    if (Math.abs(m.x1 - m.x0) < 3 && Math.abs(m.y1 - m.y0) < 3) {
+      redrawAnnotations();
+      return;
+    }
+    // Float64Array → plain number[] so Set/spread behave predictably.
+    const ids = Array.from(app.items_in_rect(m.page, m.x0, m.y0, m.x1, m.y1));
+    if (m.add) {
+      const next = new Set(selectedIds);
+      ids.forEach((i) => next.add(i));
+      setSelectionSet([...next]);
+    } else {
+      setSelectionSet(ids); // replace (empty list clears)
+    }
+    return; // setSelectionSet already repainted
+  }
+  if (groupDrag) {
+    groupDrag = null;
+    app.end_group_drag();
+    redrawAnnotations();
     return;
   }
   if (resizeDrag) {
@@ -1152,12 +1322,24 @@ function onAnnoPointerCancel(ev) {
   if (ev) {
     activePointers.delete(ev.pointerId);
     if (ev.pointerType === "pen") penActive = false;
+  } else {
+    // No event = a swallowed pointerup (tab switch / OS overlay): the per-pointer cleanup and the
+    // window backstop never fired for that dead contact. Reset the tracking wholesale — one stale
+    // pen id would otherwise keep penActive on (all touch rejected) and trip the two-contact
+    // cancel on every future stroke ("can't draw until reload").
+    activePointers.clear();
+    penActive = false;
   }
+  gesturePointerId = null;
+  gestureCaptureEl = null;
+  drawingPointerId = null;
   drawing = false;
   itemDrag = null;
   resizeDrag = null;
+  groupDrag = null;
+  marquee = null;
   snip = null;
-  app.pointer_cancel();
+  app.pointer_cancel(); // reverts any in-flight single OR group move
   redrawAnnotations();
 }
 els.annoCanvas.addEventListener("pointerup", endStroke);
@@ -1347,15 +1529,23 @@ function regionHasBrokenImage(x0, y0, x1, y1) {
   return false;
 }
 
+// Surface the notes after a snip: show it if hidden, and expand it if it's minimised to a strip (overlay)
+// — otherwise a clip lands out of sight in the collapsed strip.
+function revealNotes() {
+  if (els.notesPane.hidden) { toggleNotes(true); return; }
+  if (document.body.classList.contains("overlay") && isNotesCollapsed()) { setNotesCollapsed(false); savePrefs(); }
+}
+
 async function finishSnip(r) {
-  // Snapshot the document identity up front: the confirm-text modal below is
-  // interactive, so the user could navigate to another page or close the doc
-  // while it's open — the clipping must still be attributed to THIS page/mode.
+  // Snapshot the document identity up front: the async awaits below (raster, text extraction, toBlob)
+  // yield, and a scroll can reassign pageNum/basePage meanwhile — the clipping must still be attributed
+  // to THIS page/mode/base.
   const snipPage = pageNum;
   const snipMode = docMode;
   // Snapshot the base size too: basePage is reassigned on scroll, and the text
   // extraction below must use the page the snip started on (snapshot invariant).
   const snipBase = isContinuous() ? (cont.pages[snipPage]?.base || basePage) : basePage;
+  const snipScale = scale(); // snapshot: the on-screen size the region occupied when boxed (page-units × scale)
   const x0 = Math.min(r.x0, r.x1), y0 = Math.min(r.y0, r.y1);
   const w = Math.abs(r.x1 - r.x0), h = Math.abs(r.y1 - r.y0);
   if (w < 4 || h < 4) {
@@ -1371,7 +1561,11 @@ async function finishSnip(r) {
       // we keep going — the text alone is still worth saving.
       try { out = await snipHtmlRegion(x0, y0, w, h); }
       catch (e) { console.warn("snip raster failed:", e); }
-      ({ text, hadMath } = htmlTextInRegion(els.htmlFrame, x0, y0, w, h));
+      if (document.body.classList.contains("overlay")) {
+        ({ text, hadMath } = overlayTextInRegion(overlayHost(), x0, y0, w, h));
+      } else {
+        ({ text, hadMath } = htmlTextInRegion(els.htmlFrame, x0, y0, w, h));
+      }
     } else {
       // Copy the region from the active page's live canvases (single page, or
       // the active continuous page).
@@ -1405,7 +1599,7 @@ async function finishSnip(r) {
       if (finalText) {
         app.add_text_note(finalText);
         renderNotes();
-        if (els.notesPane.hidden) toggleNotes(true);
+        revealNotes();
         status(`Snipped text only — ${reason}.`);
       } else {
         status("Couldn't capture that region.");
@@ -1418,11 +1612,20 @@ async function finishSnip(r) {
     // PNG encode can return null (e.g. canvas over the encode limit).
     if (!blob) { saveTextOnly("the image was too large to capture"); return; }
     const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
-    const caption = finalText
-      || (snipMode === "html" ? "from the page" : `from page ${snipPage + 1}`);
-    app.add_clipping(b64, snipPage, caption);
+    // Preview the clip + let the student see what was grabbed and choose whether to keep the recognised
+    // text as its caption, before it lands in the notes. (Revoke the preview URL either way.)
+    const previewUrl = URL.createObjectURL(blob);
+    let choice;
+    try { choice = await confirmSnip(previewUrl, finalText); }
+    finally { URL.revokeObjectURL(previewUrl); }
+    if (!choice.add) { status("Snip discarded."); return; }
+    const keepText = choice.includeText && !!finalText;
+    const caption = keepText ? finalText : ""; // "image only" → no caption text under the clip
+    // Store the on-screen CSS-px size the region occupied so the note renders at SOURCE size, not the
+    // 2-4x high-DPI raster (which made snips render ~2x too big).
+    app.add_clipping(b64, snipPage, caption, Math.round(w * snipScale), Math.round(h * snipScale));
     renderNotes();
-    if (els.notesPane.hidden) toggleNotes(true);
+    revealNotes();
 
     // Best-effort: also put the image on the system clipboard.
     try {
@@ -1430,9 +1633,12 @@ async function finishSnip(r) {
         await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
       }
     } catch { /* clipboard permission is optional */ }
-    const imgWarn = (snipMode === "html" && regionHasBrokenImage(x0, y0, x0 + w, y0 + h))
+    // Overlay drops cross-origin question images from the raster (regionHasBrokenImage is a no-op there,
+    // since Scribble's own iframe is empty) — use the raster's own drop-count instead.
+    const imgWarn = (snipMode === "html" && (document.body.classList.contains("overlay")
+      ? overlaySnipDropped > 0 : regionHasBrokenImage(x0, y0, x0 + w, y0 + h)))
       ? " (some external images couldn't be captured)" : "";
-    status((finalText ? "Snipped — image and text added to notes." : "Snipped to notes.") + imgWarn);
+    status((keepText ? "Snipped — image and text added to notes." : "Snipped — image added to notes.") + imgWarn);
   } catch (e) {
     console.error("snip failed:", e);
     status(`Snip failed: ${e?.message || e}`);
@@ -1457,6 +1663,11 @@ function openTextEditor(pageX, pageY, initial, editId) {
   if (els.textInput.parentElement !== host) host.appendChild(els.textInput);
   els.textInput.style.left = `${pageX * scale()}px`;
   els.textInput.style.top = `${(pageY - 18) * scale()}px`;
+  // Scale the editing box's font WITH the zoom so the text you type matches the size/position it will
+  // render at once committed (the canvas draws the note at page-size × scale). The CSS base is 15px, which
+  // matches the rendered note at scale 1; multiplying by scale() keeps them aligned at any zoom. (In the
+  // overlay scale is locked to 1, so this is a no-op there; it fixes standalone/embed zoom drift.)
+  els.textInput.style.fontSize = `${15 * scale()}px`;
   els.textInput.value = initial;
   els.textInput.hidden = false;
   autoGrow(els.textInput);
@@ -1580,7 +1791,15 @@ async function loadJsonFile(file) {
 // holding its own (soon-stale) app reference. save_json clears the Rust dirty flag.
 function serializeAnnotations() {
   if (!app || !app.is_dirty()) return null;
-  return bytesToB64(new TextEncoder().encode(app.save_json()));
+  // Notes are SCRATCH: the PL submission persists ONLY the annotations drawn on the question, never the
+  // notes/clippings. Strip the notes array from the blob before it lands in the form input. (save_json clears
+  // the Rust dirty flag; the app keeps its notes in-session — only what's SAVED drops them.)
+  let json = app.save_json();
+  try {
+    const o = JSON.parse(json);
+    if (Array.isArray(o.notes) && o.notes.length) { o.notes = []; json = JSON.stringify(o); }
+  } catch { /* unparseable — save as-is rather than lose the annotations */ }
+  return bytesToB64(new TextEncoder().encode(json));
 }
 
 // Restore a base64-encoded annotation document over the already-open question (the
@@ -1588,10 +1807,11 @@ function serializeAnnotations() {
 // proven loadJsonFile sequence, and re-syncs the HTML page box from the saved height.
 function hydrateAnnotations(b64) {
   if (!b64 || !b64.trim()) return false; // blank scratchpad — load_json("") would throw
-  let json, savedH;
+  let json, savedH, savedW;
   try {
     json = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
-    savedH = JSON.parse(json)?.pages?.[0]?.height;
+    const p0 = JSON.parse(json)?.pages?.[0];
+    savedH = p0?.height; savedW = p0?.width;
   } catch { status("Couldn't restore saved work."); return false; }
   try {
     app.load_json(json); // Rust validates + replaces the doc wholesale; throws on bad input (doc untouched)
@@ -1600,16 +1820,30 @@ function hydrateAnnotations(b64) {
     return false;
   }
   app.set_pdf_sha256(""); // HTML mode has no PDF hash
-  if (docMode === "html" && savedH > 0) {
-    basePage = { w: HTML_BASE_W, h: savedH }; // width is fixed, so trusting the saved height keeps x/y exact
-    htmlSavedHeightHydrated = true;           // lock it: a later image re-measure must not clobber savedH (F2)
-    clearTimeout(htmlRemeasureTimer);
-    renderHtmlPage();
-  } else {
-    renderDoc();
+  // The doc is already replaced (load_json succeeded); a failure PAST here is only a render hiccup. Guard it
+  // so hydrate can NEVER throw out of the synchronous overlay boot — an unguarded throw here would propagate
+  // through initEmbed and skip the toolbar merge + notes setup, leaving a raw, unresponsive bar (real bug).
+  try {
+    if (docMode === "html" && savedH > 0) {
+      // Overlay: fill the current card, but never below the saved width (else strokes near the old right
+      // edge would clip). Option-B keeps the fixed 816 HTML-clone width.
+      const isOverlay = document.body.classList.contains("overlay");
+      const w = isOverlay ? Math.max(Math.round(savedW || 0), overlayStageW()) : HTML_BASE_W;
+      basePage = { w, h: savedH };
+      if (isOverlay) app.ensure_page(0, w, savedH); // reconcile the Rust page width with the render
+      htmlSavedHeightHydrated = true;           // lock it: a later image re-measure must not clobber savedH (F2)
+      clearTimeout(htmlRemeasureTimer);
+      renderHtmlPage();
+    } else {
+      renderDoc();
+    }
+    renderNotes();
+    if (app.notes_len() > 0 && els.notesPane.hidden) toggleNotes(true);
+  } catch (e) {
+    console.warn("hydrate render failed (doc loaded, will re-render on next paint):", e);
+    status("Restored your work — refreshing the view…");
+    return false;
   }
-  renderNotes();
-  if (app.notes_len() > 0 && els.notesPane.hidden) toggleNotes(true);
   return true;
 }
 
@@ -1707,7 +1941,10 @@ async function emitClippingNote(L, i) {
   } catch {
     return; // unrenderable clipping: skip rather than fail the export
   }
-  let drawW = Math.min(L.contentW, im.pxW / 2); // snips are 2x resolution
+  // Use the stored on-screen size if present; else fall back to the old "snips are 2x resolution" guess
+  // (older files without disp_w — this was wrong for 3-4x standalone snips).
+  const dispW = app.note_disp_w(i);
+  let drawW = Math.min(L.contentW, dispW > 0 ? dispW : im.pxW / 2);
   let drawH = drawW * (im.pxH / im.pxW);
   const maxH = L.h - 2 * L.margin - 20;
   if (drawH > maxH) {
@@ -1781,6 +2018,87 @@ function htmlPageToCanvas(ratio = EXPORT_SCALE) {
   });
 }
 
+// Rasterize the LIVE PrairieLearn question (rendered in the PARENT page, behind the transparent overlay)
+// so a student can snip a region of it into their notes. The parent is same-origin, so we clone the
+// question host, bake COMPUTED styles inline (robust no matter where PL's CSS is served from), inline
+// same-origin images as data-URLs (a data: SVG can't fetch anything external), drop scripts + the overlay
+// iframe, then reuse the same <foreignObject> raster path. Aligned 1:1 with page coords — the canvas
+// overlays the host, so page (0,0) is the host's top-left.
+const OVERLAY_SNIP_PROPS = ("display position top left right bottom float clear box-sizing overflow width height " +
+  "min-width min-height max-width max-height margin-top margin-right margin-bottom margin-left " +
+  "padding-top padding-right padding-bottom padding-left border-top-width border-right-width border-bottom-width " +
+  "border-left-width border-top-style border-right-style border-bottom-style border-left-style border-top-color " +
+  "border-right-color border-bottom-color border-left-color border-top-left-radius border-top-right-radius " +
+  "border-bottom-left-radius border-bottom-right-radius color background-color background-image background-position " +
+  "background-size background-repeat font-family font-size font-weight font-style font-variant line-height " +
+  "letter-spacing text-align text-decoration text-transform text-indent white-space word-spacing vertical-align " +
+  "list-style-type list-style-position opacity visibility flex-direction flex-wrap justify-content align-items " +
+  "align-content gap flex-grow flex-shrink flex-basis transform transform-origin box-shadow outline-width " +
+  "outline-style outline-color outline-offset text-shadow text-overflow word-break overflow-wrap direction " +
+  "border-collapse border-spacing table-layout object-fit object-position font-feature-settings tab-size").split(" ");
+
+// Count of question images the last raster had to drop (cross-origin / fetch failure) — surfaced as a
+// "some external images couldn't be captured" warning after a snip, since the raster leaves a blank gap.
+let overlaySnipDropped = 0;
+
+async function overlayHostToCanvas(ratio = EXPORT_SCALE) {
+  const host = overlayHost();
+  if (!host) throw new Error("no question to render");
+  overlaySnipDropped = 0;
+  const w = Math.max(1, Math.round(basePage.w));
+  const h = Math.max(1, Math.round(basePage.h));
+  const clone = host.cloneNode(true);
+  // Bake computed styles inline, walking original + clone in lockstep (identical structure pre-removal).
+  const src = [host, ...host.querySelectorAll("*")];
+  const dst = [clone, ...clone.querySelectorAll("*")];
+  const count = Math.min(src.length, dst.length);
+  for (let i = 0; i < count; i++) {
+    const cs = getComputedStyle(src[i]);
+    let decl = "";
+    for (const p of OVERLAY_SNIP_PROPS) { const v = cs.getPropertyValue(p); if (v) decl += `${p}:${v};`; }
+    dst[i].setAttribute("style", decl);
+  }
+  clone.querySelectorAll("iframe, script, noscript, canvas").forEach((el) => el.remove()); // can't render in a data: SVG
+  // Inline same-origin images; cross-origin can't be inlined without tainting the canvas → drop them.
+  await Promise.all([...clone.querySelectorAll("img")].map(async (im) => {
+    try {
+      const s = im.getAttribute("src");
+      if (!s || s.startsWith("data:")) return;
+      const u = new URL(s, location.href);
+      if (u.origin !== location.origin) { im.remove(); overlaySnipDropped++; return; }
+      const blob = await (await fetch(u.href)).blob();
+      im.setAttribute("src", await new Promise((res, rej) => {
+        const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob);
+      }));
+    } catch { im.remove(); overlaySnipDropped++; }
+  }));
+  // Render the host standalone at the page width from its top-left; kill the full-bleed negative margin,
+  // give it an opaque white page (the live host is transparent so the question shows through).
+  clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+  clone.style.width = `${w}px`;
+  clone.style.maxWidth = "none";
+  clone.style.margin = "0";
+  clone.style.background = "#ffffff";
+  const xhtml = new XMLSerializer().serializeToString(clone);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">` +
+    `<foreignObject x="0" y="0" width="${w}" height="${h}">${xhtml}</foreignObject></svg>`;
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      const safe = Math.max(1, Math.min(ratio, MAX_CANVAS_DIM / Math.max(w, h)));
+      c.width = Math.max(1, Math.round(w * safe));
+      c.height = Math.max(1, Math.round(h * safe));
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      resolve(c);
+    };
+    img.onerror = () => reject(new Error("could not rasterize the question"));
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  });
+}
+
 // Snip raster resolution for the uploaded HTML page: match the CURRENT view
 // (zoom × DPR) so a magnified region stays crisp, clamped to a sane range. The
 // full-page raster is cached and rebuilt only when the effective ratio changes
@@ -1798,7 +2116,8 @@ function htmlSnipRatio() {
 async function snipHtmlRegion(x0, y0, w, h) {
   const ratio = htmlSnipRatio();
   if (!htmlSnipCanvas || htmlSnipCanvasRatio !== ratio) {
-    htmlSnipCanvas = await htmlPageToCanvas(ratio);
+    htmlSnipCanvas = await (document.body.classList.contains("overlay")
+      ? overlayHostToCanvas(ratio) : htmlPageToCanvas(ratio));
     htmlSnipCanvasRatio = ratio;
   }
   const full = htmlSnipCanvas;
@@ -1965,13 +2284,13 @@ els.fileJson.addEventListener("change", () => {
 // any change to the toolbar / view toggles / segmented control.
 function syncAria() {
   const set = (el, on) => el && el.setAttribute("aria-pressed", on ? "true" : "false");
-  document.querySelectorAll(".tool").forEach((t) => set(t, t.classList.contains("active")));
-  document.querySelectorAll("#colors .swatch").forEach((s) => set(s, s.classList.contains("active")));
-  document.querySelectorAll("#widths .width").forEach((w) => set(w, w.classList.contains("active")));
+  railHostDoc.querySelectorAll(".tool").forEach((t) => set(t, t.classList.contains("active")));
+  railHostDoc.querySelectorAll("#colors .swatch").forEach((s) => set(s, s.classList.contains("active")));
+  railHostDoc.querySelectorAll("#widths .width").forEach((w) => set(w, w.classList.contains("active")));
   set(els.btn.palette, els.btn.palette.classList.contains("active"));
   set(els.btn.big, document.body.classList.contains("big"));
   set(els.btn.thumbs, !els.thumbs.hidden);
-  set(els.btn.notes, !els.notesPane.hidden);
+  set(els.btn.notes, !els.notesPane.hidden); // the toolbar Notes button reflects shown vs fully hidden
   set(els.seg.paged, els.seg.paged.classList.contains("active"));
   set(els.seg.cont, els.seg.cont.classList.contains("active"));
 }
@@ -1986,7 +2305,7 @@ for (const b of document.querySelectorAll(".tool")) {
     } else if (!app.set_tool(name)) {
       return;
     }
-    document.querySelectorAll(".tool").forEach((x) => x.classList.remove("active"));
+    railHostDoc.querySelectorAll(".tool").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     hideRegionButton();
     if (name !== "select") setSelection(-1);
@@ -1994,6 +2313,33 @@ for (const b of document.querySelectorAll(".tool")) {
     updateContextBar(name);
     syncAria();
   });
+}
+
+// ---- About ("i"): a small anchored disclosure, NOT the Help modal — the modal centres in the full
+// (question-tall) iframe and can open below the fold on a long overlay question. Plain aria-expanded
+// (no aria-haspopup, which would announce a menu); outside-click + Escape close, focus returns.
+{
+  const aboutBtn = $("btn-about"), aboutPop = $("about-popover");
+  const closeAbout = () => {
+    if (!aboutPop || aboutPop.hidden) return;
+    const hadFocus = aboutPop.contains(document.activeElement);
+    aboutPop.hidden = true;
+    aboutBtn.setAttribute("aria-expanded", "false");
+    if (hadFocus) aboutBtn.focus();
+  };
+  if (aboutBtn && aboutPop) {
+    // No stopPropagation: the click must reach the document closers so opening About
+    // auto-closes the More popover (each closer already excludes its own button).
+    aboutBtn.addEventListener("click", () => {
+      const open = aboutPop.hidden;
+      aboutPop.hidden = !open;
+      aboutBtn.setAttribute("aria-expanded", String(open));
+    });
+    document.addEventListener("click", (e) => {
+      if (!aboutPop.hidden && !aboutPop.contains(e.target) && !aboutBtn.contains(e.target)) closeAbout();
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAbout(); });
+  }
 }
 
 // Tools that use a colour. Width applies to freehand + stroked shapes only
@@ -2024,7 +2370,7 @@ function updateContextBar(tool) {
 for (const b of document.querySelectorAll("#widths .width")) {
   b.addEventListener("click", () => {
     if (!app.set_pen_width(b.dataset.width)) return;
-    document.querySelectorAll("#widths .width").forEach((x) => x.classList.remove("active"));
+    railHostDoc.querySelectorAll("#widths .width").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     syncAria();
   });
@@ -2033,7 +2379,7 @@ for (const b of document.querySelectorAll("#widths .width")) {
 for (const s of document.querySelectorAll("#colors .swatch")) {
   s.addEventListener("click", () => {
     if (!app.set_color(s.dataset.color)) return;
-    document.querySelectorAll("#colors .swatch").forEach((x) => x.classList.remove("active"));
+    railHostDoc.querySelectorAll("#colors .swatch").forEach((x) => x.classList.remove("active"));
     s.classList.add("active");
     syncAria();
   });
@@ -2096,7 +2442,9 @@ els.zoomSelect.addEventListener("change", () => {
 
 // Trackpad pinch / Ctrl+wheel zooms; a plain wheel stays fully native (never scroll-jack, §10).
 els.viewer.addEventListener("wheel", (ev) => {
-  if (!docOpen() || !(ev.ctrlKey || ev.metaKey)) return;
+  // Overlay is locked at 1:1 (the live question behind it can't zoom with us; zooming would misalign the
+  // canvas + break snip coordinate mapping). The zoom UI is already CSS-hidden there.
+  if (!docOpen() || document.body.classList.contains("overlay") || !(ev.ctrlKey || ev.metaKey)) return;
   ev.preventDefault();
   nudgeZoom(ev.deltaY < 0 ? 1.08 : 1 / 1.08);
 }, { passive: false });
@@ -2174,8 +2522,8 @@ document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape" || ev.key === "?") { ev.preventDefault(); toggleHelp(false); }
     return;
   }
-  // A pop-up dialog (snip-text confirm, clipping lightbox, unsaved-work prompt)
-  // owns the keyboard while open — its own handlers take Enter/Esc/Tab; don't let
+  // A pop-up dialog (clipping lightbox, unsaved-work prompt) owns the keyboard
+  // while open — its own handlers take Enter/Esc/Tab; don't let
   // shortcuts, deletes or page-nav fire on the document behind it.
   if (document.querySelector(".modal-overlay:not([hidden])")) return;
   const mod = ev.ctrlKey || ev.metaKey;
@@ -2199,9 +2547,11 @@ document.addEventListener("keydown", (ev) => {
       downloadJson();
     }
   } else if ((ev.key === "Delete" || ev.key === "Backspace")) {
-    if (selectedId >= 0) {
+    if (selectedIds.size > 0) {
       ev.preventDefault();
-      app.delete_item(pageNum, selectedId);
+      // One item → the plain path; a multi-selection → one batched (single-undo) delete.
+      if (selectedIds.size === 1) app.delete_item(pageNum, [...selectedIds][0]);
+      else app.delete_items(pageNum, [...selectedIds]);
       setSelection(-1);
     } else if (activeSketch && activeSketch.selected >= 0) {
       ev.preventDefault();
@@ -2209,7 +2559,8 @@ document.addEventListener("keydown", (ev) => {
     }
   } else if (ev.key === "Escape") {
     if (snip) { snip = null; redrawAnnotations(); } // cancel an in-progress snip
-    if (selectedId >= 0) setSelection(-1);
+    if (marquee) { marquee = null; redrawAnnotations(); } // cancel an in-progress marquee
+    if (selectedIds.size > 0) setSelection(-1);
     if (activeSketch && activeSketch.selected >= 0) {
       activeSketch.selected = -1;
       activeSketch.draw();
@@ -2218,7 +2569,7 @@ document.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     toggleHelp(true);
   } else if (!mod && TOOL_KEYS[key]) {
-    const btn = document.querySelector(`[data-tool="${TOOL_KEYS[key]}"]`);
+    const btn = railHostDoc.querySelector(`[data-tool="${TOOL_KEYS[key]}"]`);
     if (btn && btn.offsetParent !== null) btn.click(); // skip tools hidden in this mode (e.g. Snip in overlay)
   } else if (ev.key === "PageDown" || ev.key === "PageUp") {
     if (!pdfDoc || isContinuous()) return; // continuous: let the browser scroll
@@ -2317,18 +2668,22 @@ class SketchView {
     if (!handle) return;
     let rz = null;
     handle.addEventListener("pointerdown", (e) => {
-      rz = { x: e.clientX, w: this.w * this.scale };
-      handle.setPointerCapture?.(e.pointerId);
+      if (rz) return; // one resize at a time — a second contact must not reassign it
+      rz = { pid: e.pointerId, x: e.clientX, w: this.w * this.scale };
+      // ?. only guards the method's existence — setPointerCapture throws NotFoundError for an
+      // already-gone pointer, which would abort the handler mid-state-change.
+      try { handle.setPointerCapture(e.pointerId); } catch { /* capture is an optimization */ }
       e.preventDefault();
       e.stopPropagation();
     });
     handle.addEventListener("pointermove", (e) => {
-      if (!rz) return;
+      if (!rz || e.pointerId !== rz.pid) return;
+      if (!(e.buttons & 1)) { rz = null; return; } // owning press ended unseen — stop resizing
       this.userScale = Math.max(SKETCH_SCALE_MIN, Math.min(SKETCH_SCALE_MAX,(rz.w + (e.clientX - rz.x)) / this.w));
       this.layout();
       this.draw();
     });
-    const end = () => { rz = null; };
+    const end = (e) => { if (rz && e.pointerId === rz.pid) rz = null; };
     handle.addEventListener("pointerup", end);
     handle.addEventListener("pointercancel", end);
   }
@@ -2367,7 +2722,7 @@ class SketchView {
     setSelection(-1);          // clear any PDF selection
     const tool = activeTool();
     const [x, y] = this.coords(ev);
-    this.canvas.setPointerCapture?.(ev.pointerId);
+    try { this.canvas.setPointerCapture(ev.pointerId); } catch { /* pointer already gone — capture is an optimization */ }
     if (tool === "text") {
       ev.preventDefault();
       this.openText(ev, x, y, "", -1);
@@ -2377,27 +2732,29 @@ class SketchView {
       const h = this.handleAt(x, y);
       if (h >= 0 && app.begin_item_drag_sketch(this.note, this.selected, x, y)) {
         const bb = app.item_bbox_of_sketch(this.note, this.selected);
-        this.state = { mode: "resize", anchor: handlePoints(bb)[(h + 2) % 4], bb,
+        this.state = { mode: "resize", pid: ev.pointerId, anchor: handlePoints(bb)[(h + 2) % 4], bb,
                        uniform: app.item_kind_sketch(this.note, this.selected) !== "shape" };
         return;
       }
       const id = app.find_item_sketch(this.note, x, y);
       this.selected = id;
       if (id >= 0 && app.begin_item_drag_sketch(this.note, id, x, y)) {
-        this.state = { mode: "move", id, sx: x, sy: y, moved: false };
+        this.state = { mode: "move", pid: ev.pointerId, id, sx: x, sy: y, moved: false };
       }
       this.draw();
       return;
     }
     // drawing tools (snip is PDF-only and ignored on sketches)
     if (tool === "snip") return;
-    this.state = { mode: "draw" };
+    this.state = { mode: "draw", pid: ev.pointerId };
     app.pointer_down_sketch(this.note, x, y, ERASE_RADIUS_PX / this.scale);
     this.draw();
   }
 
   move(ev) {
     if (!this.state) return;
+    if (ev.pointerId !== this.state.pid) return; // only the arming contact drives the sketch gesture
+    if (!(ev.buttons & 1)) { this.cancel(); return; } // owning press ended unseen — cancel, don't keep inking
     const [x, y] = this.coords(ev);
     if (this.state.mode === "resize") {
       const [ax, ay] = this.state.anchor;
@@ -2567,6 +2924,10 @@ function buildClippingBlock(div, i) {
   img.src = b64ToBlobUrl(app.note_png(i));
   img.dataset.blob = "1";
   img.alt = "clipping";
+  // Render at the SOURCE on-screen size (stored disp width), not the 2-4x high-DPI raster's natural size,
+  // so a snipped line looks the size it was on the page. Absent (old files / -1) → natural size + the caps.
+  const dispW = app.note_disp_w(i);
+  if (dispW > 0) img.style.width = `${dispW}px`;
   const srcPage = app.note_source_page(i);
   img.style.cursor = "zoom-in";
   img.tabIndex = 0;
@@ -2597,7 +2958,22 @@ function buildClippingBlock(div, i) {
   copy.textContent = "Copy image";
   copy.title = "Copy this image to the clipboard";
   copy.addEventListener("click", () => copyImageToClipboard(img.src, copy));
-  div.append(img, cap, copy);
+  // Wrap the image so a small "×" can remove JUST the image (keeping the caption as a text note) — for when
+  // the student only wanted the recognised text, not the picture. Editable views only.
+  const imgWrap = document.createElement("div");
+  imgWrap.className = "clip-img-wrap";
+  imgWrap.appendChild(img);
+  if (!READONLY) {
+    const rmImg = document.createElement("button");
+    rmImg.type = "button";
+    rmImg.className = "clip-rm-img";
+    rmImg.textContent = "×"; // × glyph (UI text, never innerHTML)
+    rmImg.title = "Remove the image (keep the caption text)";
+    rmImg.setAttribute("aria-label", "Remove the image, keep the caption");
+    rmImg.addEventListener("click", () => { app.remove_clipping_image(i); renderNotes(); });
+    imgWrap.appendChild(rmImg);
+  }
+  div.append(imgWrap, cap, copy);
   queueMicrotask(() => autoGrow(cap));
 }
 
@@ -2661,12 +3037,19 @@ function toggleNotes(show) {
   els.btn.notes.classList.toggle("active", visible);
   syncAria();
   if (visible) {
+    if (isNotesCollapsed()) setNotesCollapsed(false); // re-opening from fully-hidden → expand, not to a strip
     renderNotes();
     if (isNotesFloating()) clampNotes(); // re-fit a restored floating window to the live stage
   }
 }
 
-els.btn.notes.addEventListener("click", () => toggleNotes());
+// The toolbar Notes button fully HIDES/SHOWS the pane (tuck it away while annotating; re-open it here —
+// it's labelled + shows an active state, so it's never lost). The notes header's own button does the
+// lighter minimise-to-a-strip. Re-showing restores the pane expanded at its last position.
+els.btn.notes.addEventListener("click", () => { toggleNotes(); savePrefs(); });
+// ✕ on the notes header: fully tuck the notes away (distinct from Minimise, which only collapses to a strip).
+// Reopens from the toolbar Notes button. Overlay-only affordance (hidden elsewhere via CSS).
+$("btn-notes-hide")?.addEventListener("click", () => { toggleNotes(false); savePrefs(); });
 els.btn.addNote.addEventListener("click", () => {
   try {
     app.add_text_note("");
@@ -2706,12 +3089,14 @@ let splitDrag = null;
 els.splitter.addEventListener("pointerdown", (ev) => {
   if (isNotesFloating()) return; // the splitter is inert while the notes float (it's display:none too)
   splitDrag = document.body.classList.contains("embedded")
-    ? { vertical: true, startY: ev.clientY, startH: els.notesPane.offsetHeight }
-    : { startX: ev.clientX, startW: els.notesPane.offsetWidth };
-  els.splitter.setPointerCapture(ev.pointerId);
+    ? { id: ev.pointerId, vertical: true, startY: ev.clientY, startH: els.notesPane.offsetHeight }
+    : { id: ev.pointerId, startX: ev.clientX, startW: els.notesPane.offsetWidth };
+  try { els.splitter.setPointerCapture(ev.pointerId); } catch { /* pointer already gone — drag still works while over the splitter */ }
+  ev.preventDefault(); // a touch-drag must resize, not select text / scroll (with touch-action:none in CSS)
 });
 els.splitter.addEventListener("pointermove", (ev) => {
-  if (!splitDrag) return;
+  if (!splitDrag || ev.pointerId !== splitDrag.id) return; // only the owning contact drives the resize
+  if (!(ev.buttons & 1)) { splitDrag = null; savePrefs(); return; } // press ended unseen — finish, don't chase
   if (splitDrag.vertical) {
     const h = splitDrag.startH + (splitDrag.startY - ev.clientY); // drag up → taller
     $("main").style.setProperty("--notes-h", `${Math.max(80, Math.min(window.innerHeight * 0.82, h))}px`);
@@ -2722,10 +3107,29 @@ els.splitter.addEventListener("pointermove", (ev) => {
   relayoutSketches();
 });
 els.splitter.addEventListener("pointerup", () => { splitDrag = null; savePrefs(); });
+els.splitter.addEventListener("pointercancel", () => { splitDrag = null; savePrefs(); });
 els.splitter.addEventListener("dblclick", () => {
   if (document.body.classList.contains("embedded")) $("main").style.removeProperty("--notes-h");
   else els.notesPane.style.width = "";
   savePrefs();
+});
+
+// A tab switch / OS overlay can swallow the pointerup for ANY in-progress canvas/sketch gesture or
+// the splitter drag — cancel so no zombie survives the return. (The floating panels register their
+// own equivalents in their modules.) BLUR needs care in the overlay: the "window" is the iframe, so
+// ANY tap on the parent PL page blurs it — but a gesture whose canvas still HOLDS pointer capture
+// keeps receiving events across a focus change, so it's alive and must not be killed. Only cancel
+// on blur when capture is gone; visibility:hidden is a real tab switch and cancels unconditionally.
+function cancelCanvasGestures(fromBlur) {
+  const held = (el, id) => fromBlur && id != null && el?.hasPointerCapture?.(id);
+  if (splitDrag && !held(els.splitter, splitDrag.id)) { splitDrag = null; savePrefs(); }
+  if ((drawing || snip || marquee || itemDrag || resizeDrag || groupDrag) &&
+      !held(gestureCaptureEl, gesturePointerId)) onAnnoPointerCancel(null);
+  for (const v of sketchViews) if (v.state && !held(v.canvas, v.state.pid)) v.cancel();
+}
+window.addEventListener("blur", () => cancelCanvasGestures(true));
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") cancelCanvasGestures(false);
 });
 
 // ---------- thumbnails sidebar ----------
@@ -2815,6 +3219,7 @@ els.btn.thumbs.addEventListener("click", async () => {
 
 function applyBig(on) {
   document.body.classList.toggle("big", on);
+  railHostEl?.classList.toggle("big", on); // mirror onto the reparented rail (chrome.css .scribble-chrome.big)
   els.btn.big.classList.toggle("active", on);
   syncAria();
   clampContextBar(); // larger controls shrink the toolbar gap → re-fit a docked bar
@@ -2841,7 +3246,7 @@ function applyPalette(safe, announce = false) {
   els.btn.palette.title = safe
     ? "Colour-blind-safe palette: on — click to return to standard colours"
     : "Colour-blind-safe palette: off — click to recolour (green→brown, red→vermillion)";
-  for (const s of document.querySelectorAll("#colors .swatch")) {
+  for (const s of railHostDoc.querySelectorAll("#colors .swatch")) {
     s.style.background = app.color_css(s.dataset.color);
     s.title = swatchTitle(s.dataset.color, safe);
   }
@@ -2872,7 +3277,9 @@ const helpOverlay = $("help-overlay");
 function toggleHelp(show) {
   const open = show ?? helpOverlay.hidden;
   helpOverlay.hidden = !open;
-  $("btn-help").classList.toggle("active", open);
+  // #btn-help rides inside the rail's More menu, which the overlay REPARENTS into the parent page —
+  // so look it up in the rail's realm ($() would search this iframe and return null there).
+  railHostDoc.getElementById("btn-help")?.classList.toggle("active", open);
   if (open) $("help-close").focus();
 }
 $("btn-help").addEventListener("click", () => toggleHelp());
@@ -2924,20 +3331,32 @@ function savePrefs() {
         top: !isCbarDocked() && cb.classList.contains("moved") ? cb.style.top : "",
         collapsed: cb.classList.contains("collapsed"),
       },
-      // Embed-only; in standalone carry the saved value forward untouched.
+      // Embed-only; in standalone carry the saved value forward untouched. While collapsed, the pane's
+      // inline width/height are cleared (stashed in dataset.expW/expH), so persist the EXPANDED size from
+      // there — else a collapse+reload would lose the student's chosen notes size to the default.
       notesFloat: embedded
         ? (isNotesFloating()
           ? { on: true, left: els.notesPane.style.left, top: els.notesPane.style.top,
-              width: els.notesPane.style.width, height: els.notesPane.style.height }
+              width: (isNotesCollapsed() ? els.notesPane.dataset.expW : els.notesPane.style.width)
+                || (prev.notesFloat && prev.notesFloat.width) || "",
+              height: (isNotesCollapsed() ? els.notesPane.dataset.expH : els.notesPane.style.height)
+                || (prev.notesFloat && prev.notesFloat.height) || "" }
           : { on: false })
         : (prev.notesFloat || { on: false }),
+      // (notesCollapsed/notesHidden were written here but never read back — the overlay boot always
+      // starts with the notes hidden by design. Dropped; the tolerant reader ignores stale fields.)
       // Overlay-only merged-toolbar layout; carry forward in every other mode (overlay ⊂ embedded,
       // so gate on !overlay, not !embedded — else an Option-B save would wipe the overlay layout).
       // (No topbarFloat: in overlay the topbar is merged into #rail, not a separate floating bar.)
-      railFloat: overlay
-        ? { left: $("rail").classList.contains("fp-moved") ? $("rail").style.left : "",
-            top: $("rail").classList.contains("fp-moved") ? $("rail").style.top : "",
-            collapsed: $("rail").classList.contains("fp-collapsed") }
+      // Look the rail up in ITS realm: the overlay reparents it into the parent page, where $() (getElementById
+      // on this iframe) returns null — which would silently stop the toolbar's position ever persisting.
+      railFloat: overlay && railHostDoc.getElementById("rail")
+        ? (() => {
+          const r = railHostDoc.getElementById("rail");
+          return { left: r.classList.contains("fp-moved") ? r.style.left : "",
+                   top: r.classList.contains("fp-moved") ? r.style.top : "",
+                   collapsed: r.classList.contains("fp-collapsed") };
+        })()
         : (prev.railFloat || {}),
     }));
   } catch { /* storage unavailable — non-fatal */ }
@@ -3042,10 +3461,17 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
     const prefs = applyPrefs();
     if (READONLY) document.body.classList.add("readonly"); // hides edit chrome (CSS) — JS gates already block edits
     updateContextBar(activeTool()); // hide the colour UI (and palette) until a doc opens
-    initEmbed({
-      app, els, status, toggleNotes, renderNotes, openHtml, openOverlay, resizeOverlay,
-      hydrateAnnotations, serializeAnnotations,
-    });
+    // NEVER let an embed-setup failure skip the toolbar merge + notes setup below (which would leave a raw,
+    // unresponsive bar). openOverlay/openHtml run first inside initEmbed, so by the time anything risky runs,
+    // the doc + body.overlay are already set and the merge can still build correctly.
+    try {
+      initEmbed({
+        app, els, status, toggleNotes, renderNotes, openHtml, openOverlay, resizeOverlay,
+        hydrateAnnotations, serializeAnnotations,
+      });
+    } catch (e) {
+      console.error("initEmbed failed (continuing to build the toolbar):", e);
+    }
     // Option B docks the colour bar in the toolbar. Overlay MERGES all three bars into ONE: the
     // colour/width strip and the Notes/Larger/Help actions fold into the tool rail, so only
     // [tool bar] + [notes] remain. The whole bar is one floating (grip) + hideable (collapse) unit.
@@ -3059,9 +3485,51 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         railEl.appendChild(els.contextBar); // colour/width strip now flows inside the rail
         const actions = document.createElement("div");
         actions.className = "rail-actions"; // pushed to the right edge via CSS margin-left:auto
-        actions.append(els.btn.notes, els.btn.big, $("btn-help")); // handlers survive (bound by id)
+        actions.append(els.btn.notes); // Notes stays on the bar (the primary action)
+        const aboutWrap = $("about-wrap"); // attribution "i" rides along (wrapper carries its popover)
+        if (aboutWrap) actions.append(aboutWrap);
+        // "More" menu: tuck the low-frequency controls (Larger / Help / colour-blind palette) behind a ⋯
+        // button so the main row breathes. The moved buttons keep their handlers (bound by id / listener).
+        const palette = $("btn-palette");
+        const paletteDiv = palette.previousElementSibling; // its leading divider would dangle once it moves
+        if (paletteDiv && paletteDiv.classList.contains("bar-divider")) paletteDiv.remove();
+        const menuLabel = (el, text) => { if (!el.querySelector("span")) { const s = document.createElement("span"); s.textContent = text; el.append(s); } };
+        menuLabel(els.btn.big, "Larger controls");
+        menuLabel($("btn-help"), "Keyboard shortcuts");
+        menuLabel(palette, "Colour-blind-safe palette"); // match #btn-palette's aria-label (WCAG 2.5.3)
+        const moreBtn = document.createElement("button");
+        moreBtn.id = "btn-more"; moreBtn.type = "button"; moreBtn.className = "btn labeled";
+        moreBtn.title = "More tools"; moreBtn.setAttribute("aria-haspopup", "true"); moreBtn.setAttribute("aria-expanded", "false");
+        moreBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>More';
+        const morePop = document.createElement("div");
+        // A labelled popover of plain buttons — NOT role="menu" (that would demand menuitem roles + a full
+        // arrow-key model, and it invalidates the children's aria-pressed / aria-haspopup).
+        morePop.id = "more-popover"; morePop.hidden = true;
+        morePop.append(els.btn.big, $("btn-help"), palette);
+        actions.append(moreBtn);
         railEl.appendChild(actions);
+        railEl.appendChild(morePop); // sibling of actions; CSS positions it under the More button
         railEl.appendChild($("rail-collapse")); // keep the collapse chevron LAST, after the appended children
+        const closeMore = () => {
+          if (morePop.hidden) return;
+          const hadFocus = morePop.contains(document.activeElement);
+          morePop.hidden = true; moreBtn.setAttribute("aria-expanded", "false");
+          if (hadFocus) moreBtn.focus(); // don't drop focus to <body> on Escape / item-activate
+        };
+        // No stopPropagation: letting the click reach the document closers means opening
+        // More auto-closes the About popover (the More closer excludes moreBtn itself).
+        moreBtn.addEventListener("click", () => {
+          const open = morePop.hidden;
+          morePop.hidden = !open;
+          moreBtn.setAttribute("aria-expanded", String(open));
+        });
+        // Activating any item (Larger / Help / palette) dismisses the menu — else Help's modal opens
+        // BEHIND the still-open popover (the popover is trapped in the rail's low stacking context).
+        morePop.addEventListener("click", (e) => { if (e.target.closest("button")) closeMore(); });
+        document.addEventListener("click", (e) => {
+          if (!morePop.hidden && !morePop.contains(e.target) && !moreBtn.contains(e.target)) closeMore();
+        });
+        document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMore(); });
         // U1: wrap tools+colours in a horizontally-scrollable middle so a narrow card can't clip the
         // grip/actions/collapse off-screen — those stay pinned; only the middle scrolls.
         const railScroll = document.createElement("div");
@@ -3074,12 +3542,113 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         // ONE grip + ONE collapse govern the whole merged bar — editable view only: a read-only submission's
         // toolbar is inert, and making it draggable would let a read-only view write layout prefs (R7).
         if (!READONLY) {
-          const railFP = makeFloating(railEl, { grip: railEl.querySelector(".fp-grip"), collapse: $("rail-collapse"), onChange: savePrefs });
+          // --- Phase 1 (step 1a): REPARENT the merged toolbar out to the PL PAGE so position:fixed follows the
+          //     real browser viewport (like the Done button already does), instead of the question-tall iframe
+          //     where "fixed" pins to the question and scrolls away. The srcdoc iframe is same-origin, so we can
+          //     move the #rail node into the parent + inject a SCOPED copy of its CSS (chrome.css, .scribble-chrome).
+          //     If not same-origin (host-demo embed), we leave it in the iframe (degrades to the old behaviour).
+          let railWin = window;
+          try {
+            const P = window.parent;
+            if (PHASE1_CHROME_REPARENT && P && P !== window && P.document && P.document.body) {
+              const pdoc = P.document;
+              if (!pdoc.getElementById("pl-scribble-chrome-css")) { // inject the scoped toolbar stylesheet once
+                const link = pdoc.createElement("link");
+                link.id = "pl-scribble-chrome-css"; link.rel = "stylesheet";
+                link.href = new URL(`chrome.css?v=${APP_VERSION}`, import.meta.url).href;
+                pdoc.head.appendChild(link);
+              }
+              let host = pdoc.querySelector(".pl-scribble-chrome-host");
+              if (!host) { // one host div (position:relative, near-max z) carries the scope class + the rail
+                host = pdoc.createElement("div");
+                host.className = "scribble-chrome pl-scribble-chrome-host";
+                host.style.cssText = "position:relative;z-index:2147483000;";
+                pdoc.body.appendChild(host);
+              }
+              host.appendChild(railEl); // #rail lives in the parent now; ".scribble-chrome #rail" styles it
+              railWin = P;
+              railHostDoc = pdoc;  // tool/colour/width queries must now search the PARENT document
+              railHostEl = host;   // for mirroring state classes (e.g. .big "Larger") onto the reparented rail
+              // MF-B: the More-popover's outside-click / Escape must ALSO be heard in the PARENT realm (the
+              // rail's clicks now fire there). The iframe-document listeners (set in the merge block) stay too,
+              // so a click on either side closes the popover.
+              pdoc.addEventListener("click", (e) => {
+                if (!morePop.hidden && !morePop.contains(e.target) && !moreBtn.contains(e.target)) closeMore();
+              });
+              pdoc.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMore(); });
+            }
+          } catch { /* cross-origin / no parent — keep the rail in the iframe */ }
+          // NB: query the grip/collapse THROUGH railEl, not $() — $() is getElementById on the IFRAME document,
+          // and the rail may have just been reparented into the parent (so $("rail-collapse") would be null).
+          const railFP = makeFloating(railEl, { grip: railEl.querySelector(".fp-grip"), collapse: railEl.querySelector("#rail-collapse"), onChange: savePrefs, win: railWin });
           const rp = (prefs && prefs.railFloat) || {};
           if (rp.left && rp.top) railFP.floatTo(parseFloat(rp.left), parseFloat(rp.top));
           if (rp.collapsed) railFP.setCollapsed(true);
-          clampFixed(railEl);
-          window.addEventListener("resize", () => clampFixed(railEl));
+          clampFixed(railEl, railWin);
+          railWin.addEventListener("resize", () => clampFixed(railEl, railWin));
+          // MF-F: the iframe's `display:none` annotate-gate (style.css) can't reach a reparented rail, so drive
+          // its visibility from HERE off the same annotate-active signal (the parent toggles that class on OUR
+          // iframe body). Hidden until the student clicks Annotate. No-op when the rail stayed in the iframe.
+          const syncRailVis = () => {
+            if (railWin !== window) railEl.style.display = document.body.classList.contains("annotate-active") ? "" : "none";
+          };
+          syncRailVis();
+          // The VISIBLE band of this (question-tall) iframe, in iframe coords. position:fixed here pins
+          // to the iframe box, not the browser screen, so a panel position restored from a taller
+          // question can be "in bounds" yet below the fold. One-shot, read-only, same-origin parent
+          // peek; falls back to the iframe box (host-demo / cross-origin / degenerate band).
+          const visibleBand = () => {
+            let top = 0, bottom = window.innerHeight;
+            try {
+              const fr = window.frameElement?.getBoundingClientRect();
+              const ph = window.parent?.innerHeight;
+              if (fr && ph) {
+                top = Math.max(0, -fr.top);
+                bottom = Math.min(window.innerHeight, ph - fr.top);
+              }
+            } catch { /* cross-origin parent — the iframe box is the best bound we have */ }
+            if (bottom - top < 120) { top = 0; bottom = window.innerHeight; }
+            return { top, bottom };
+          };
+          // On show (Annotate), pull a dragged/restored rail into the band the student can actually
+          // see. Only an fp-moved rail — the default full-width top pin is layout, not a position,
+          // and re-pinning it is Phase 1's job. One-shot on the transition, never scroll-coupled.
+          const clampRailOnShow = () => {
+            if (!railEl.classList.contains("fp-moved")) return;
+            clampFixed(railEl, railWin); // horizontal + iframe-box bounds (measurable: the gate just released)
+            const band = visibleBand();
+            const h = railEl.getBoundingClientRect().height;
+            const t = parseFloat(railEl.style.top) || 0;
+            const hi = Math.max(band.top + 4, band.bottom - h - 4);
+            railEl.style.top = `${Math.round(Math.max(band.top + 4, Math.min(hi, t)))}px`;
+          };
+          // "Done" (the parent's Annotate toggle) removes annotate-active from our body → drop the tool
+          // to Select (a clean click-through "finished" state) but REMEMBER the drawing tool: without a
+          // restore, every re-entry stayed in Select — off the toolbar the cursor read as a plain arrow
+          // and drags drew a marquee instead of ink (Lumetta's "cursor keeps disappearing").
+          const RESUME_TOOLS = new Set(["pen", "highlighter", "text"]); // eraser/snip/select never surprise-restore
+          let lastDrawTool = "pen";
+          let wasAnnotating = document.body.classList.contains("annotate-active");
+          new MutationObserver(() => {
+            const now = document.body.classList.contains("annotate-active");
+            if (wasAnnotating && !now) {
+              const cur = railHostDoc.querySelector(".tool.active")?.dataset.tool;
+              if (RESUME_TOOLS.has(cur)) lastDrawTool = cur;
+              railHostDoc.querySelector('.tool[data-tool="select"]')?.click();
+            } else if (!wasAnnotating && now) {
+              // Unconditional click — an offsetParent-style visibility guard would silently skip
+              // exactly when the rail is collapsed, and the Select trap would survive there.
+              railHostDoc.querySelector(`.tool[data-tool="${lastDrawTool}"]`)?.click();
+              clampRailOnShow();
+              clampNotes(); // the pane re-appears with the chrome — never at an off-frame position
+            }
+            syncRailVis(); // show/hide the reparented rail with annotate-active
+            wasAnnotating = now;
+          }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+          // If Annotate was pressed BEFORE wasm init finished, the ON transition already happened and
+          // the observer will never see it — run the show-clamps once for that first showing. (No
+          // Select trap in this path: pen is both the markup default and lastDrawTool's default.)
+          if (wasAnnotating) { clampRailOnShow(); clampNotes(); }
         }
       } else {
         dockCbar(12);
@@ -3096,13 +3665,35 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
       const stage = $("stage");
       const sw = stage.offsetWidth || 360, sh = stage.offsetHeight || 520;
       const nf = (prefs && prefs.notesFloat) || {};
-      if (nf.on && nf.left && nf.top) {
+      // Read-only ignores a saved DRAG position: a spot the student dragged to while editing can land the
+      // strip mid-prose in the graded view. Always anchor the read-only strip below the question instead.
+      if (!READONLY && nf.on && nf.left && nf.top) {
         floatNotes(parseFloat(nf.left), parseFloat(nf.top),
                    parseFloat(nf.width) || (sw - 16), parseFloat(nf.height) || 276);
       } else {
-        floatNotes(8, Math.max(8, sh - 284), Math.max(280, sw - 16), 276);
+        // Start the notes right below the question prose (measured on the parent host) instead of a
+        // fixed offset — reclaims the dead band between the text and the notes, and never overlaps a
+        // taller question. Stage-y aligns 1:1 with host-y (the iframe covers the host top-anchored).
+        let proseBottom = 0;
+        try {
+          const host = overlayHost();
+          if (host) {
+            const hb = host.getBoundingClientRect();
+            for (const c of host.children) {
+              const r = c.getBoundingClientRect();
+              if (r.height > 0) proseBottom = Math.max(proseBottom, r.bottom - hb.top);
+            }
+          }
+        } catch { /* not same-origin / no host — fall through to the fixed default */ }
+        let top = proseBottom > 0 ? proseBottom + 12 : Math.max(8, sh - 330);
+        top = Math.min(Math.max(8, top), sh - 160); // always leave room for the pane itself
+        floatNotes(8, top, Math.max(280, sw - 16), Math.max(150, sh - top - 8));
       }
-      toggleNotes(true);
+      // Notes default HIDDEN. They're SCRATCH (never saved), so there's nothing to restore, and popping them
+      // up on load — especially on a long, multi-screen question — was intrusive. The student opens them with
+      // the Notes button, and a snip auto-reveals them (revealNotes); the position is already staged above for
+      // when they do. Read-only submissions carry no saved notes, so there's nothing to show either.
+      toggleNotes(false);
     } else {
       const nf = (prefs && prefs.notesFloat) || {};
       if (nf.on && document.body.classList.contains("embedded")) {

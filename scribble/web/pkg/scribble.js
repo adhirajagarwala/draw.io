@@ -109,6 +109,27 @@ function getArrayF32FromWasm0(ptr, len) {
     return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
 
+let cachedFloat64ArrayMemory0 = null;
+
+function getFloat64ArrayMemory0() {
+    if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
+        cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
+    }
+    return cachedFloat64ArrayMemory0;
+}
+
+function passArrayF64ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 8, 8) >>> 0;
+    getFloat64ArrayMemory0().set(arg, ptr / 8);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+function getArrayF64FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
+}
+
 const AppFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_app_free(ptr >>> 0, 1));
@@ -125,6 +146,16 @@ export class App {
     free() {
         const ptr = this.__destroy_into_raw();
         wasm.__wbg_app_free(ptr, 0);
+    }
+    /**
+     * Move the whole group with the pointer. The translation is clamped once for
+     * the UNION box, so every item shifts by the same delta (the group stays
+     * rigid) and no member is pushed off the page independently.
+     * @param {number} x
+     * @param {number} y
+     */
+    drag_group(x, y) {
+        wasm.app_drag_group(this.__wbg_ptr, x, y);
     }
     /**
      * Re-mark unsaved. The autosave path calls this when an IndexedDB write
@@ -182,6 +213,23 @@ export class App {
     }
     /**
      * @param {number} i
+     * @returns {number}
+     */
+    note_disp_h(i) {
+        const ret = wasm.app_note_disp_h(this.__wbg_ptr, i);
+        return ret;
+    }
+    /**
+     * Stored on-screen size of a clipping in CSS px, or -1 if none (⇒ natural size).
+     * @param {number} i
+     * @returns {number}
+     */
+    note_disp_w(i) {
+        const ret = wasm.app_note_disp_w(this.__wbg_ptr, i);
+        return ret;
+    }
+    /**
+     * @param {number} i
      * @returns {boolean}
      */
     remove_note(i) {
@@ -226,22 +274,39 @@ export class App {
         }
     }
     /**
-     * Append a snipped clipping. Returns its index.
+     * Append a snipped clipping (came from a page in THIS document). `disp_w`/`disp_h`
+     * are the on-screen CSS px the region occupied when captured (<=0/non-finite ⇒
+     * natural size). Returns its index.
      * @param {string} png_b64
      * @param {number} source_page
      * @param {string} caption
+     * @param {number} disp_w
+     * @param {number} disp_h
      * @returns {number}
      */
-    add_clipping(png_b64, source_page, caption) {
+    add_clipping(png_b64, source_page, caption, disp_w, disp_h) {
         const ptr0 = passStringToWasm0(png_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(caption, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.app_add_clipping(this.__wbg_ptr, ptr0, len0, source_page, ptr1, len1);
+        const ret = wasm.app_add_clipping(this.__wbg_ptr, ptr0, len0, source_page, ptr1, len1, disp_w, disp_h);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
         return ret[0] >>> 0;
+    }
+    /**
+     * Delete several selected items at once, as ONE undoable step. Returns how
+     * many were removed (0 leaves history untouched).
+     * @param {number} page
+     * @param {Float64Array} ids
+     * @returns {number}
+     */
+    delete_items(page, ids) {
+        const ptr0 = passArrayF64ToWasm0(ids, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.app_delete_items(this.__wbg_ptr, page, ptr0, len0);
+        return ret >>> 0;
     }
     /**
      * @param {number} page
@@ -326,6 +391,22 @@ export class App {
         wasm.app_end_item_drag(this.__wbg_ptr);
     }
     /**
+     * Ids of every item whose bounding box intersects the given (unordered)
+     * rectangle — the marquee hit-test. Non-finite input yields an empty list.
+     * @param {number} page
+     * @param {number} x0
+     * @param {number} y0
+     * @param {number} x1
+     * @param {number} y1
+     * @returns {Float64Array}
+     */
+    items_in_rect(page, x0, y0, x1, y1) {
+        const ret = wasm.app_items_in_rect(this.__wbg_ptr, page, x0, y0, x1, y1);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
      * Draw all annotations for a sketch note onto the (cleared) canvas.
      * @param {CanvasRenderingContext2D} ctx
      * @param {number} note
@@ -344,6 +425,13 @@ export class App {
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.app_set_pen_width(this.__wbg_ptr, ptr0, len0);
         return ret !== 0;
+    }
+    /**
+     * Finish a group move, recording it as ONE undoable step (a batch of the
+     * individual item replacements). Unmoved members contribute nothing.
+     */
+    end_group_drag() {
+        wasm.app_end_group_drag(this.__wbg_ptr);
     }
     /**
      * Vector PDF content-stream operators for all annotations on `page`.
@@ -459,6 +547,22 @@ export class App {
         return v1;
     }
     /**
+     * Begin moving several selected items together. Snapshots each item's
+     * pre-drag state so `drag_group` stays drift-free. Returns false if none of
+     * the ids resolve to an item on the page.
+     * @param {number} page
+     * @param {Float64Array} ids
+     * @param {number} x
+     * @param {number} y
+     * @returns {boolean}
+     */
+    begin_group_drag(page, ids, x, y) {
+        const ptr0 = passArrayF64ToWasm0(ids, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.app_begin_group_drag(this.__wbg_ptr, page, ptr0, len0, x, y);
+        return ret !== 0;
+    }
+    /**
      * @param {number} note
      * @param {number} x
      * @param {number} y
@@ -555,6 +659,26 @@ export class App {
         }
     }
     /**
+     * Append a clipping with NO source page in this document — e.g. an image pasted
+     * from another tab (the reference sheet). Same validation as `add_clipping`.
+     * @param {string} png_b64
+     * @param {string} caption
+     * @param {number} disp_w
+     * @param {number} disp_h
+     * @returns {number}
+     */
+    add_pasted_clipping(png_b64, caption, disp_w, disp_h) {
+        const ptr0 = passStringToWasm0(png_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(caption, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.app_add_pasted_clipping(this.__wbg_ptr, ptr0, len0, ptr1, len1, disp_w, disp_h);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] >>> 0;
+    }
+    /**
      * @param {number} note
      * @param {number} id
      * @returns {Float32Array}
@@ -641,6 +765,17 @@ export class App {
         } finally {
             wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
+    }
+    /**
+     * Drop just the IMAGE of a clipping: with a caption it becomes a `Text` block in
+     * place (position kept); image-only, the whole block is removed. True if a
+     * clipping was found at `i`. (For "wanted only the captured text, not the image".)
+     * @param {number} i
+     * @returns {boolean}
+     */
+    remove_clipping_image(i) {
+        const ret = wasm.app_remove_clipping_image(this.__wbg_ptr, i);
+        return ret !== 0;
     }
     /**
      * @param {number} note
@@ -1026,6 +1161,7 @@ function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     __wbg_init.__wbindgen_wasm_module = module;
     cachedFloat32ArrayMemory0 = null;
+    cachedFloat64ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
 
 

@@ -32,8 +32,8 @@ export const idbGet = (key) => idbReq("readonly", (s) => s.get(key));
 export const idbPut = (key, val) => idbReq("readwrite", (s) => s.put(val, key));
 export const idbDelete = (key) => idbReq("readwrite", (s) => s.delete(key));
 
-// Enumerate every entry as {key, savedAt} (a snapshot can be ~MBs with clippings).
-export function idbEntries() {
+// Enumerate every entry as {key, savedAt} (a snapshot can be ~MBs with clippings). Internal to idbPrune.
+function idbEntries() {
   return idb().then((db) => new Promise((resolve, reject) => {
     const out = [];
     const req = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).openCursor();

@@ -228,8 +228,19 @@ pub enum NoteBlock {
     },
     Clipping {
         png_b64: String,
-        source_page: u32,
+        /// Page this was snipped from, for the "jump to source" affordance. `None`
+        /// when the clipping has no page in THIS document (e.g. pasted from another
+        /// tab). Old files store a bare number → deserializes to `Some`.
+        #[serde(default)]
+        source_page: Option<u32>,
         caption: String,
+        /// On-screen size (CSS px, at scale 1) the region occupied when captured, so
+        /// the note renders at source size instead of the 2–4× high-DPI raster.
+        /// `None` on files predating this field → fall back to natural image size.
+        #[serde(default)]
+        disp_w: Option<f32>,
+        #[serde(default)]
+        disp_h: Option<f32>,
     },
     Sketch {
         surface: Page,
@@ -367,17 +378,26 @@ pub fn validate(doc: &mut Document) -> Result<(), String> {
                 png_b64,
                 source_page,
                 caption,
+                disp_w,
+                disp_h,
             } => {
                 if !valid_b64_png(png_b64) {
                     return Err("invalid clipping image data".into());
                 }
-                if *source_page as usize >= MAX_PAGES {
-                    return Err("clipping source page out of range".into());
+                if let Some(p) = source_page {
+                    if *p as usize >= MAX_PAGES {
+                        return Err("clipping source page out of range".into());
+                    }
                 }
                 if caption.chars().count() > MAX_CAPTION_LEN
                     || caption.chars().any(is_forbidden_text_char)
                 {
                     return Err("invalid clipping caption".into());
+                }
+                for d in [disp_w, disp_h].into_iter().flatten() {
+                    if !d.is_finite() || *d < 0.0 || *d > MAX_PAGE_DIM {
+                        return Err("invalid clipping display size".into());
+                    }
                 }
             }
             // Sketch surfaces are validated in the surface loop below.
@@ -509,16 +529,41 @@ mod tests {
         });
         d.notes.push(NoteBlock::Clipping {
             png_b64: "iVBORw0KGgoAAAANSUhEUg==".into(),
-            source_page: 2,
+            source_page: Some(2),
             caption: "eq. 4".into(),
+            disp_w: Some(120.0),
+            disp_h: Some(40.0),
         });
         assert!(validate(&mut d).is_ok());
+
+        // a page-less pasted clipping with no display size is also valid
+        d.notes.push(NoteBlock::Clipping {
+            png_b64: "iVBORw0KGgoAAAANSUhEUg==".into(),
+            source_page: None,
+            caption: String::new(),
+            disp_w: None,
+            disp_h: None,
+        });
+        assert!(validate(&mut d).is_ok());
+
+        // a non-finite display size is rejected
+        d.notes.push(NoteBlock::Clipping {
+            png_b64: "iVBORw0KGgoAAAANSUhEUg==".into(),
+            source_page: None,
+            caption: String::new(),
+            disp_w: Some(f32::NAN),
+            disp_h: None,
+        });
+        assert!(validate(&mut d).is_err());
+        d.notes.pop();
 
         // hostile payloads rejected
         d.notes.push(NoteBlock::Clipping {
             png_b64: "<script>".into(),
-            source_page: 0,
+            source_page: Some(0),
             caption: String::new(),
+            disp_w: None,
+            disp_h: None,
         });
         assert!(validate(&mut d).is_err());
         d.notes.pop();
