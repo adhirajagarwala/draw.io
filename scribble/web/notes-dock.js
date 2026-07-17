@@ -49,10 +49,12 @@ function setDockBtn(floating) {
     const c = els.notesPane.classList.contains("notes-collapsed");
     b.textContent = c ? "Expand" : "Minimise";
     b.title = c ? "Expand the notes" : "Minimise the notes to a strip";
+    b.setAttribute("aria-expanded", String(!c)); // disclosure semantics, matching the rail/cbar controls (#8)
     return;
   }
   b.textContent = floating ? "Dock" : "Float";
   b.title = floating ? "Dock notes to the bottom" : "Float notes as a window";
+  b.removeAttribute("aria-expanded"); // Float/Dock is a mode toggle, not a disclosure
 }
 
 // Float the pane as an absolute window inside #stage, at STAGE-relative coords.

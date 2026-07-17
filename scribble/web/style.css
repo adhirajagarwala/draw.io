@@ -442,7 +442,7 @@ button { font: inherit; }
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background .12s, border-color .12s, color .12s, transform .15s ease;
+  transition: background .12s, border-color .12s, color .12s;
 }
 .cbar-collapse svg {
   width: 16px; height: 16px;
@@ -450,7 +450,12 @@ button { font: inherit; }
   stroke-linecap: round; stroke-linejoin: round;
 }
 .cbar-collapse:hover { background: var(--accent-soft); color: var(--accent); border-color: #c4d2f5; }
-#context-bar.collapsed .cbar-collapse { transform: rotate(-90deg); }
+/* #8 icon standard: glyph SWAP, not rotation — a rotated chevron never read as "expand", and the
+   transform was the realm-fragile bit the Phase-1 extraction kept mangling. Minimise "＿" while
+   expanded; diagonal expand arrows while collapsed. */
+.cbar-collapse .ico-expand { display: none; }
+#context-bar.collapsed .cbar-collapse .ico-min { display: none; }
+#context-bar.collapsed .cbar-collapse .ico-expand { display: block; }
 /* The colour-blind toggle: bordered white OFF; a solid accent fill with a white
    icon ON — an unmistakable, glanceable state. */
 #btn-palette { border-color: var(--line); background: #fff; color: var(--ink); }
@@ -759,7 +764,7 @@ body.overlay #rail .fp-grip:active, body.overlay #topbar .fp-grip:active { curso
 body.overlay #rail .fp-collapse, body.overlay #topbar .fp-collapse {
   display: flex; align-items: center; justify-content: center; flex: none;
   width: 30px; height: 30px; border: 1px solid var(--line); background: #fff;
-  border-radius: 8px; cursor: pointer; color: var(--ink); transition: transform .15s ease;
+  border-radius: 8px; cursor: pointer; color: var(--ink);
 }
 body.overlay #rail .fp-collapse svg, body.overlay #topbar .fp-collapse svg {
   width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2;
@@ -768,9 +773,12 @@ body.overlay #rail .fp-collapse svg, body.overlay #topbar .fp-collapse svg {
 body.overlay #rail .fp-collapse:hover, body.overlay #topbar .fp-collapse:hover {
   background: var(--accent-soft); color: var(--accent); border-color: #c4d2f5;
 }
-/* collapsed: rotate the chevron to read "expand" (mirror #context-bar.collapsed .cbar-collapse) */
-body.overlay #rail.fp-collapsed .fp-collapse,
-body.overlay #topbar.fp-collapsed .fp-collapse { transform: rotate(-90deg); }
+/* #8 icon standard: glyph swap (mirror .cbar-collapse) — "＿" minimises, diagonal arrows expand. */
+.fp-collapse .ico-expand { display: none; }
+body.overlay #rail.fp-collapsed .fp-collapse .ico-min,
+body.overlay #topbar.fp-collapsed .fp-collapse .ico-min { display: none; }
+body.overlay #rail.fp-collapsed .fp-collapse .ico-expand,
+body.overlay #topbar.fp-collapsed .fp-collapse .ico-expand { display: block; }
 
 /* fp-moved: inline left/top win over the base top:8/left:8 pin (already position:fixed). Also shrink to the
    content width so a dragged bar can actually move horizontally (else the full-bleed width == viewport and
@@ -1501,7 +1509,7 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
   .brand { display: none; }
 }
 
-/* ---------- About: the "i" popover + the always-visible overlay attribution ---------- */
+/* ---------- About: the "i" popover ---------- */
 /* The wrapper keeps the popover anchored to the button in BOTH homes (standalone #topbar and the
    overlay's merged rail — the whole wrapper is moved into .rail-actions there). */
 .about-wrap { position: relative; display: inline-flex; }
@@ -1513,18 +1521,5 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
 }
 #about-popover[hidden] { display: none; }
 
-/* Attribution rides the TOOLBAR, not the question: at the question's bottom edge it read as part of
-   the exam text (user-reported), so it's pinned under the floating rail's corner instead — visually
-   glued to the tool's own chrome and it follows the bar when dragged. app.js moves the element into
-   #rail in overlay, so the annotate gate and readonly hiding come free (both hide the whole rail).
-   pointer-events:none — it hangs over the live question and must never eat a click. Hidden while the
-   rail is collapsed to a handle. */
-#about-line { display: none; }
-body.overlay #rail #about-line {
-  display: block; position: absolute; top: calc(100% + 3px); right: 6px;
-  pointer-events: none; user-select: none; white-space: nowrap;
-  font-size: 10.5px; color: var(--muted);
-  background: rgba(255, 255, 255, 0.9); border-radius: 6px; padding: 1px 7px;
-  box-shadow: 0 1px 3px rgba(20, 24, 28, 0.10);
-}
-body.overlay #rail.fp-collapsed #about-line { display: none; }
+/* (Attribution lives in the ⓘ popover + the Help-modal footer — the user retired the always-visible
+   chip: at the question's bottom it read as exam text, and under the toolbar it was still clutter.) */

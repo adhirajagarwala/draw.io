@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "156";
+const APP_VERSION = "158";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=156";
+import init, { App } from "./pkg/scribble.js?v=158";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,16 +17,16 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=156";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=156";
-import { initEmbed } from "./embed.js?v=156";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=156";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=156";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip } from "./modals.js?v=156";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=156";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=156";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=156";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=156";
+} from "./utils.js?v=158";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=158";
+import { initEmbed } from "./embed.js?v=158";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=158";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=158";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip } from "./modals.js?v=158";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=158";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=158";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=158";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=158";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -1247,11 +1247,14 @@ function moveGroup(ev) {
 els.annoCanvas.addEventListener("pointermove", onAnnoPointerMove);
 
 function endStroke(ev) {
+  // Contact bookkeeping runs for EVERY pointer unconditionally — palm-rejection accounting
+  // breaks if a filtered-out pointer skips it (keep these lines above any gesture filter).
   activePointers.delete(ev.pointerId);
   if (ev.pointerType === "pen") penActive = false;
-  // An up from a contact that wasn't the one drawing (e.g. a rejected palm, or the
-  // second finger of a pinch) must not end the active stroke.
+  // An up from a contact that didn't arm the gesture (a rejected palm, the second finger
+  // of a pinch, a bumped mouse) must not end/commit it — any kind, not just drawing.
   if (drawing && ev.pointerId !== drawingPointerId) return;
+  if ((snip || marquee || itemDrag || resizeDrag || groupDrag) && ev.pointerId !== gesturePointerId) return;
   if (ev.pointerId !== undefined && ev.currentTarget.hasPointerCapture?.(ev.pointerId)) {
     ev.currentTarget.releasePointerCapture(ev.pointerId);
   }
@@ -2340,7 +2343,14 @@ for (const b of document.querySelectorAll(".tool")) {
     document.addEventListener("click", (e) => {
       if (!aboutPop.hidden && !aboutPop.contains(e.target) && !aboutBtn.contains(e.target)) closeAbout();
     });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAbout(); });
+    // Consume the Escape that closes the popover (this listener registers before the main keydown
+    // handler): dismissing About must not ALSO clear the selection / cancel an armed snip (C10).
+    // helpOverlay.hidden guard: with the Help modal OPEN above a forgotten popover, Esc must close
+    // the modal (main's branch), not invisibly eat the keypress here. (helpOverlay is declared later
+    // in the module — fine: this body only runs on keypresses, long after module evaluation.)
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !aboutPop.hidden && helpOverlay.hidden) { closeAbout(); e.stopImmediatePropagation(); }
+    });
   }
 }
 
@@ -2521,7 +2531,13 @@ document.addEventListener("keydown", (ev) => {
   // When the shortcuts overlay is open, it captures Esc / ? and suppresses the
   // rest so nothing fires behind the modal.
   if (!helpOverlay.hidden) {
-    if (ev.key === "Escape" || ev.key === "?") { ev.preventDefault(); toggleHelp(false); }
+    if (ev.key === "Escape" || ev.key === "?") {
+      ev.preventDefault();
+      // Consume: the later-registered More closers would otherwise ALSO close their popover on the
+      // same press when Help was opened via "?" over an open menu — one layer per Escape (C10).
+      ev.stopImmediatePropagation();
+      toggleHelp(false);
+    }
     return;
   }
   // A pop-up dialog (clipping lightbox, unsaved-work prompt) owns the keyboard
@@ -2560,6 +2576,11 @@ document.addEventListener("keydown", (ev) => {
       activeSketch.remove();
     }
   } else if (ev.key === "Escape") {
+    // An open More popover owns this Escape — its closer (registered after this handler) will
+    // dismiss it; acting here too would also clear the selection / cancel an armed snip (C10).
+    // (railHostDoc: the popover lives in the parent document once Phase 1 reparents the rail.)
+    const morePop = railHostDoc.getElementById("more-popover");
+    if (morePop && !morePop.hidden) return;
     if (snip) { snip = null; redrawAnnotations(); } // cancel an in-progress snip
     if (marquee) { marquee = null; redrawAnnotations(); } // cancel an in-progress marquee
     if (selectedIds.size > 0) setSelection(-1);
@@ -2647,7 +2668,8 @@ class SketchView {
     canvas.addEventListener("pointerdown", (e) => this.down(e));
     canvas.addEventListener("pointermove", (e) => this.move(e));
     canvas.addEventListener("pointerup", (e) => this.up(e));
-    canvas.addEventListener("pointercancel", () => this.cancel());
+    // Filtered like down/up: a rejected second contact's cancel must not revert the owner's stroke.
+    canvas.addEventListener("pointercancel", (e) => { if (!this.state || e.pointerId === this.state.pid) this.cancel(); });
     this.wireResize(canvas.parentElement.querySelector(".sketch-resize"));
     this.draw();
   }
@@ -2720,6 +2742,10 @@ class SketchView {
 
   down(ev) {
     if (ev.button !== 0 || READONLY) return; // read-only: sketch notes are not editable either
+    // Palm rejection, mirroring the main canvas (app.js onAnnoPointerDown): without it a palm that
+    // lands FIRST arms the gesture and the one-at-a-time guard below then blocks the pen entirely.
+    if (ev.pointerType === "touch" && (penActive || Math.max(ev.width || 0, ev.height || 0) > PALM_MAX_PX)) return;
+    if (this.state) return; // one gesture at a time — a second contact must not reassign it mid-stroke
     activeSketch = this;       // Delete/Escape route here
     setSelection(-1);          // clear any PDF selection
     const tool = activeTool();
@@ -2773,6 +2799,7 @@ class SketchView {
 
   up(ev) {
     this.canvas.releasePointerCapture?.(ev.pointerId);
+    if (this.state && ev.pointerId !== this.state.pid) return; // only the arming contact ends the gesture
     const s = this.state;
     this.state = null;
     if (!s) return;
@@ -3512,8 +3539,6 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         railEl.appendChild(actions);
         railEl.appendChild(morePop); // sibling of actions; CSS positions it under the More button
         railEl.appendChild($("rail-collapse")); // keep the collapse chevron LAST, after the appended children
-        const aboutLine = $("about-line"); // attribution chip rides the toolbar (CSS pins it under the bar's corner)
-        if (aboutLine) railEl.appendChild(aboutLine);
         const closeMore = () => {
           if (morePop.hidden) return;
           const hadFocus = morePop.contains(document.activeElement);
@@ -3586,7 +3611,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // and the rail may have just been reparented into the parent (so $("rail-collapse") would be null).
           // onChange also nudges the bar out of an active calculator hole (a drag can park it under
           // the drawer, where it would render half-clipped — the irrecoverable-panel class of bug).
-          const railFP = makeFloating(railEl, { grip: railEl.querySelector(".fp-grip"), collapse: railEl.querySelector("#rail-collapse"), onChange: () => { savePrefs(); calcDodgeNudge(); }, win: railWin });
+          const railFP = makeFloating(railEl, { collapse: railEl.querySelector("#rail-collapse"), onChange: () => { savePrefs(); calcDodgeNudge(); }, win: railWin });
           const rp = (prefs && prefs.railFloat) || {};
           if (rp.left && rp.top) railFP.floatTo(parseFloat(rp.left), parseFloat(rp.top));
           if (rp.collapsed) railFP.setCollapsed(true);

@@ -386,3 +386,7 @@ grep -n 'classList.contains("overlay")' scribble/web/app.js scribble/web/colorba
   re-observation — fixed via syncNow re-attach), C3 (clip-support read-back + annotate-aware
   pointer-events restore — fixed), C4 (`frame.isConnected` teardown — fixed), C6 (multi-hole
   candidate filter — fixed). Full report: session 26903fa6 task wluabw83r.
+- **Batch B review F2 (C15 ledger):** chrome.css never received the #8 glyph swap — port style.css's
+  .ico-min/.ico-expand swap rules (cbar + rail variants) re-scoped `.scribble-chrome`, add the
+  `.fp-collapse svg` sizing rule, DELETE the stale rotate (chrome.css:229) and the `transform` term
+  in its transition (chrome.css:221). Without this a Phase-1-reparented rail shows BOTH glyphs unsized.

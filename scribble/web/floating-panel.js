@@ -24,8 +24,8 @@ export function clampFixed(el, win = window) {
 }
 
 // el          : the panel (#rail / #topbar). Already position:fixed in body.overlay.
-// opts.grip   : the ⠿ handle — VESTIGIAL (kept for API compat): the whole bar is the
-//               drag surface now, minus the DRAG_EXCLUDE interactive parts below.
+//               The whole bar is the drag surface, minus the DRAG_EXCLUDE interactive
+//               parts below (the ⠿ grip is a visual affordance only).
 // opts.collapse : the collapse/restore toggle button.
 // opts.onChange : savePrefs-style callback after any committed move/collapse.
 // Interactive parts that a pointerdown must NOT turn into a drag (tool/action buttons, the colour+width bar,
@@ -36,7 +36,7 @@ const DRAG_EXCLUDE = "button, input, select, textarea, a, #context-bar, [content
 // opts.win : the realm whose viewport the drop-clamp measures against — the iframe's
 //            own window by default, or `window.parent` when `el` is reparented into the
 //            PL page (so a dropped bar is clamped to the REAL screen, not the tall iframe).
-export function makeFloating(el, { grip, collapse, onChange, win = window }) {
+export function makeFloating(el, { collapse, onChange, win = window }) {
   let drag = null, raf = 0;
 
   el.addEventListener("pointerdown", (ev) => {
@@ -111,7 +111,8 @@ export function makeFloating(el, { grip, collapse, onChange, win = window }) {
   // reader announce "Hide" on a button that now Shows).
   const labelCollapse = (on) => {
     if (!collapse) return;
-    const t = on ? "Show the toolbar" : "Hide the toolbar";
+    // "Minimise", not "Hide": the bar collapses to a visible handle, it never disappears (#8).
+    const t = on ? "Expand the toolbar" : "Minimise the toolbar";
     collapse.title = t;
     collapse.setAttribute("aria-label", t);
     collapse.setAttribute("aria-expanded", String(!on));

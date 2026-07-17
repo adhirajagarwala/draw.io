@@ -11,7 +11,8 @@ let els, $, status, savePrefs, topbarEl;
 function setCbarCollapsed(on) {
   els.contextBar.classList.toggle("collapsed", on);
   const btn = $("cbar-collapse");
-  const t = on ? "Show the colour bar" : "Hide the colour bar";
+  // "Minimise", not "Hide": the bar collapses to a handle, it never disappears (#8).
+  const t = on ? "Expand the colour bar" : "Minimise the colour bar";
   btn.setAttribute("aria-expanded", String(!on));
   btn.title = t;
   btn.setAttribute("aria-label", t); // keep the accessible name in sync (aria-label wins over title)
