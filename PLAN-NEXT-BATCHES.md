@@ -390,3 +390,23 @@ grep -n 'classList.contains("overlay")' scribble/web/app.js scribble/web/colorba
   .ico-min/.ico-expand swap rules (cbar + rail variants) re-scoped `.scribble-chrome`, add the
   `.fp-collapse svg` sizing rule, DELETE the stale rotate (chrome.css:229) and the `transform` term
   in its transition (chrome.css:221). Without this a Phase-1-reparented rail shows BOTH glyphs unsized.
+
+---
+
+# ADDENDUM 2 (2026-07-17, user sign-off session) — BINDING user decisions + state for the C2/C3 chat
+
+**User decisions (supersede the plan/SDM where they differ):**
+1. **C1 lock scope — hide EVERYTHING: Open, Resume, Save AND Export.** The locked reference tool is
+   "merely a reference sheet": students scribble on it (ALL tools incl. shapes + snip) and **copy an
+   image via snip** (snip→clipboard already ships) to paste into the PL question's notes (Batch D).
+   No file actions at all. (Supersedes the SDM's Save/Export-visible split.) Notes pane in the
+   reference tool: untouched (not a file action). Snip MUST stay visible — it is the copy path.
+2. Affordance-only lock re-confirmed OK (bypassable by bare index.html).
+3. C3 FOUC: ship the tiny 'self' sync script (SDM-recommended) — decided, do not re-ask.
+4. Chat split: C1+D+E land in the sign-off session; **C2+C3 go to a FRESH chat** (this file is the
+   contract); the deep audit (UI/UX, bugs, clean code, performance, etc.) is another fresh chat.
+
+**Execution state as of this addendum:** v158 live-verified on hosted (icons, chip removal, Esc,
+tool-restore OK). #13 calculator PARKED by the user: the clip mechanism + scroll-trigger work live;
+the drawer class-flip MutationObserver and a synthetic parent-resize dispatch stay silent on hosted —
+diagnostic notes in memory (scribble-vnext-15point-plan.md); debug it in the C2/C3 chat or its own.
