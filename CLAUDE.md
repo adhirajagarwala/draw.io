@@ -29,14 +29,20 @@ class site), the user requires this exact process:
    reasoning effort. Adversarially verify every finding. Reviewers are
    **READ-ONLY** — never let a review agent edit the shared working tree (a
    Cycle-2 agent once reverted `lib.rs`); the main loop applies the fixes.
-2. **Deploy to the LOCAL PL course first** — `prairielearn/example-course` (what
-   local Docker at :3000 serves). Bump the cache version, verify live.
-3. **STOP and wait for the user to confirm it works on the local copy.**
-4. **Only after the user confirms, push to the actual class site** — the
-   `pl-uiuc-ece498sl` repo → prairielearn.com. Commit as the user (sole author,
-   **no** co-author trailer); the user does the final push/merge to `main`.
+2. **Deploy the bundle to BOTH course copies** (`prairielearn/example-course` via
+   `./prairielearn/deploy.sh`, then the same rsync — with `--exclude 'chrome.css'` —
+   into `pl-uiuc-ece498sl/clientFilesCourse/scribble/`). Bump the cache version.
+   (The old "local Docker at :3000 first" stage is DEAD — Colima + macOS TCC on
+   `~/Desktop`; hosted PrairieLearn instructor Preview replaces it.)
+3. **Commit in both repos** (short one-line message, sole author, **no** co-author
+   trailer). `git fetch` the class repo FIRST — the prof pushes to the same `main`.
+4. **STOP — the USER runs `git push` and clicks the course Sync.** Never push.
+5. **Live-verify on hosted PL in the user's Chrome** (`mcp__claude-in-chrome__*`),
+   iframe clearly <900px wide, and ALWAYS confirm the loaded `APP_VERSION` before
+   asserting anything. The user then confirms.
 
-Never jump straight to the class site. Local-verify → user confirms → production.
+Never claim verified without the hosted pass. Implement → review → deploy → user
+pushes/syncs → live-verify → user confirms.
 
 ## Mistakes log — read before testing/shipping (do NOT repeat)
 
@@ -251,3 +257,7 @@ listeners + rAF for scroll.
   (built wasm), `vendor/pdfjs/` (pinned, local).
 - `scribble/web/embed/host-demo.html` — embedded-mode test harness.
 - `SECURITY.md` — threat model. `ROADMAP.md`, `PROGRESS.md` — direction/status.
+- **`PLAN-NEXT-BATCHES.md` — THE master plan for all remaining work** (SDM-ruled,
+  with binding user decisions in its addenda). A new session picking up Batch
+  C2/C3, the calculator debug, Phase 1, or the deep audit MUST read it first —
+  together with the memory file `scribble-vnext-15point-plan.md`.
