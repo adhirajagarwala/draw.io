@@ -2673,8 +2673,11 @@ const TOOL_KEYS = {
 // fire there when focus is on a parent-side rail button). Events don't cross the iframe boundary, so the
 // two registrations never double-fire. The typing-field early-return below also ignores PL's own inputs.
 const mainKeydown = (ev) => {
-  // Never hijack keys while the user is typing in any field (incl. notes).
-  if (ev.target instanceof Element &&
+  // Never hijack keys while the user is typing in any field (incl. notes). DUCK-TYPE, not `instanceof
+  // Element` (review R-1): this handler is mirrored onto the PARENT document (B3-5), where a PL input's
+  // target is a parent-realm Element that fails the iframe's `instanceof Element` — which would silently
+  // skip this guard and hijack PL's own answer fields (Ctrl+Z, "?", Backspace, tool-letter keys).
+  if (ev.target && typeof ev.target.matches === "function" &&
       ev.target.matches("input, textarea, select, [contenteditable]")) {
     return;
   }
@@ -3224,8 +3227,8 @@ document.addEventListener("paste", (e) => {
   if (document.querySelector(".modal-overlay:not([hidden])")) return; // a dialog owns the keyboard
   const items = [...(e.clipboardData?.items || [])];
   const imgItem = items.find((it) => it.kind === "file" && /^image\//.test(it.type));
-  const inTextField = e.target instanceof Element &&
-    e.target.matches("input, textarea, select, [contenteditable]");
+  const inTextField = e.target && typeof e.target.matches === "function" &&
+    e.target.matches("input, textarea, select, [contenteditable]"); // duck-type (review R-1, realm-safe)
   if (inTextField && items.some((it) => it.kind === "string" && it.type === "text/plain")) return;
   if (!imgItem) return;
   e.preventDefault();
@@ -3930,11 +3933,15 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               // click on either side closes them. Named handlers → removable on teardown (B3-6).
               const pMoreClick = (e) => { if (!morePop.hidden && !morePop.contains(e.target) && !moreBtn.contains(e.target)) closeMore(); };
               const pMoreKey = (e) => { if (e.key === "Escape") closeMore(); };
-              pdoc.addEventListener("click", pMoreClick);
-              pdoc.addEventListener("keydown", pMoreKey);
+              // Match the IFRAME listener order so Escape layering (C10) is identical in the parent realm:
+              // About-closer (consuming) → mainKeydown (defers to an open More) → More-closer. mainKeydown MUST
+              // precede pMoreKey (review R-2), else pMoreKey closes More first and mainKeydown then also clears
+              // the selection on the same Escape.
               pdoc.addEventListener("click", closeAboutOnOutsideClick);
+              pdoc.addEventListener("click", pMoreClick);
               pdoc.addEventListener("keydown", closeAboutOnEscape);
               pdoc.addEventListener("keydown", mainKeydown); // B3-5: tool/undo/save/Escape shortcuts in the parent realm
+              pdoc.addEventListener("keydown", pMoreKey);
               railTeardowns.push(
                 () => pdoc.removeEventListener("click", pMoreClick),
                 () => pdoc.removeEventListener("keydown", pMoreKey),
@@ -3951,7 +3958,10 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // onChange also nudges the bar out of an active calculator hole (a drag can park it under
           // the drawer, where it would render half-clipped — the irrecoverable-panel class of bug).
           const railFP = makeFloating(railEl, { collapse: railEl.querySelector("#rail-collapse"), onChange: () => { savePrefs(); calcDodgeNudge(); }, win: railWin });
-          const rp = (prefs && prefs.railFloat2) || {}; // B3-7: parent-realm-safe key (legacy railFloat ignored post-flip)
+          // B3-7 + review L-1: prefer railFloat2, but when NOT reparented fall back to the legacy railFloat —
+          // gate-off coords are still iframe-realm (same realm v160 saved them in), so a v160 student who dragged
+          // their toolbar isn't reset. Only the parent-realm (post-flip) path ignores the legacy key.
+          const rp = (prefs && (prefs.railFloat2 || (railWin === window && prefs.railFloat))) || {};
           if (rp.left && rp.top) railFP.floatTo(parseFloat(rp.left), parseFloat(rp.top));
           if (rp.collapsed) railFP.setCollapsed(true);
           // Card-aligned geometry (Decision 1): the reparented bar spans the QUESTION CARD's horizontal
@@ -3974,6 +3984,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           if (railWin !== window) {
             // Parent-realm listeners → tear down on the iframe swap (B3-6). Re-align on parent scroll / iframe
             // grow (resizeOverlay), rAF-coalesced (CLAUDE.md §10 — no layout work directly in the handler).
+            railTeardowns.push(() => railFP.dispose()); // review N-1: remove makeFloating's parent-window blur listener
             railTeardowns.push(() => railWin.removeEventListener("resize", onRailResize));
             let alignRaf = 0;
             const scheduleAlign = () => { if (alignRaf) return; alignRaf = railWin.requestAnimationFrame(() => { alignRaf = 0; alignRailToCard(); }); };

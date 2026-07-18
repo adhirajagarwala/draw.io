@@ -47,7 +47,7 @@ export function makeFloating(el, { collapse, onChange, win = window }) {
     // pointerId and the pre-lift state so a cancelled drag can restore it exactly.
     drag = { id: ev.pointerId, dx: ev.clientX - r.left, dy: ev.clientY - r.top, fx: r.left, fy: r.top,
              sx: ev.clientX, sy: ev.clientY, lifted: false,
-             preMoved: el.classList.contains("fp-moved"), preL: el.style.left, preT: el.style.top };
+             preMoved: el.classList.contains("fp-moved"), preL: el.style.left, preT: el.style.top, preW: el.style.width };
     try { el.setPointerCapture(ev.pointerId); } catch { /* pointer already gone */ }
     ev.preventDefault();
   });
@@ -62,6 +62,9 @@ export function makeFloating(el, { collapse, onChange, win = window }) {
       const r = el.getBoundingClientRect();
       // fp-moved drops the CSS top/left pin; lift in place (no reparent, no jump).
       el.classList.add("fp-moved", "fp-dragging");
+      // review R-3: drop any card-aligned inline width (set by alignRailToCard) so .fp-moved{width:max-content}
+      // governs — else a dragged bar keeps full card width and the live clamp pins it, unrepositionable.
+      el.style.width = "";
       el.style.left = `${Math.round(r.left)}px`;
       el.style.top = `${Math.round(r.top)}px`;
       // Cache the LIFTED size for the live clamp: fp-moved shrinks the bar to max-content
@@ -90,6 +93,7 @@ export function makeFloating(el, { collapse, onChange, win = window }) {
     if (cancelled) {
       // A cancel is not a drop intent — restore the exact pre-lift state (position or CSS pin),
       // then re-clamp: the window may have shrunk while the drag was in flight.
+      el.style.width = d.preW; // review R-3: restore the pre-lift width (a card-aligned inline width, or "")
       if (d.preMoved) { el.style.left = d.preL; el.style.top = d.preT; }
       else { el.classList.remove("fp-moved"); el.style.left = ""; el.style.top = ""; }
       clampFixed(el, win);
@@ -104,7 +108,8 @@ export function makeFloating(el, { collapse, onChange, win = window }) {
   // is the iframe, so ANY tap on the parent PL page fires blur — a drag whose element still HOLDS
   // pointer capture keeps receiving events across that and must not be killed. Only cancel on blur
   // when capture is gone; visibility:hidden is a real tab switch and cancels unconditionally.
-  win.addEventListener("blur", () => { if (drag && !el.hasPointerCapture?.(drag.id)) end(true); });
+  const onWinBlur = () => { if (drag && !el.hasPointerCapture?.(drag.id)) end(true); };
+  win.addEventListener("blur", onWinBlur);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") end(true); });
 
   // Keep title AND aria-label in sync (aria-label wins as the accessible name — a stale one makes a screen
@@ -133,5 +138,6 @@ export function makeFloating(el, { collapse, onChange, win = window }) {
     setCollapsed(o) { el.classList.toggle("fp-collapsed", o); labelCollapse(o); },
     isCollapsed: () => el.classList.contains("fp-collapsed"),
     isMoved: () => el.classList.contains("fp-moved"),
+    dispose() { win.removeEventListener("blur", onWinBlur); }, // review N-1: teardown the parent-realm blur listener on iframe swap
   };
 }
