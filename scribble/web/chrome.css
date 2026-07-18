@@ -111,7 +111,6 @@
 .scribble-chrome .btn:active:not(:disabled) { background: #e9ecf1; }
 .scribble-chrome .btn:disabled { opacity: 0.35; cursor: default; }
 .scribble-chrome .btn[hidden] { display: none; }
-.scribble-chrome .swatch:focus-visible { outline-offset: 3px; }
 .scribble-chrome #btn-thumbs.active, .scribble-chrome #btn-notes.active, .scribble-chrome #btn-big.active, .scribble-chrome #btn-palette.active {
   background: var(--accent-soft);
   color: var(--accent);
@@ -218,7 +217,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background .12s, border-color .12s, color .12s, transform .15s ease;
+  transition: background .12s, border-color .12s, color .12s;
 }
 .scribble-chrome .cbar-collapse svg {
   width: 16px; height: 16px;
@@ -226,7 +225,12 @@
   stroke-linecap: round; stroke-linejoin: round;
 }
 .scribble-chrome .cbar-collapse:hover { background: var(--accent-soft); color: var(--accent); border-color: #c4d2f5; }
-.scribble-chrome #context-bar.collapsed .cbar-collapse { transform: rotate(-90deg); }
+/* #8 glyph swap (mirror style.css:456-458): minus glyph when open, expand glyph when collapsed. The
+   rotate() is retired (realm-fragile). Cosmetically moot in the merged bar (.cbar-collapse is display:none
+   at :305) — ported for faithfulness + to kill the rotate artifact. */
+.scribble-chrome .cbar-collapse .ico-expand { display: none; }
+.scribble-chrome #context-bar.collapsed .cbar-collapse .ico-min { display: none; }
+.scribble-chrome #context-bar.collapsed .cbar-collapse .ico-expand { display: block; }
 .scribble-chrome #btn-palette { border-color: var(--line); background: #fff; color: var(--ink); }
 .scribble-chrome #btn-palette:not(.active):hover { background: var(--accent-soft); border-color: #c4d2f5; color: var(--accent); }
 .scribble-chrome #btn-palette.active {
@@ -258,8 +262,9 @@
   box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14); /* override the base 0 10px 28px blur (drag lag) */
 }
 .scribble-chrome #context-bar.cbar-dragging { z-index: 80; }
-.scribble-chrome #rail.fp-moved { width: max-content; max-width: calc(100vw - 8px); }
-.scribble-chrome #rail.fp-collapsed :is(.rail-group, .scribble-chrome #context-bar, .scribble-chrome .rail-actions) { display: none; }
+.scribble-chrome #rail.fp-moved { width: max-content; max-width: calc(100vw - 8px); top: auto; left: auto; right: auto; }
+.scribble-chrome #rail.fp-dragging { z-index: 80; cursor: grabbing; box-shadow: 0 6px 20px rgba(20, 24, 28, 0.22); }
+.scribble-chrome #rail.fp-collapsed :is(.rail-group, #context-bar, .rail-actions) { display: none; }
 .scribble-chrome #rail.fp-collapsed { width: auto; }
 .scribble-chrome #rail {
   gap: 6px; padding: 5px 7px; height: 52px;
@@ -294,6 +299,11 @@
 .scribble-chrome #rail .tool.active span, .scribble-chrome #rail .tool.active span::after { color: var(--accent); font-weight: 600; }
 .scribble-chrome #rail .tool:disabled { opacity: .34; }
 .scribble-chrome #rail .tool:disabled span { color: var(--muted); }
+/* fp-grip BASE (mirror style.css:766-773) — display + svg sizing + grab cursor; the Hairline+ override
+   below only tweaks padding/colour, so without this base the drag grip renders invisible/unsized. */
+.scribble-chrome #rail .fp-grip { display: flex; align-items: center; flex: none; cursor: grab; color: var(--muted); padding: 0 4px; border-radius: 6px; user-select: none; -webkit-user-select: none; touch-action: none; }
+.scribble-chrome #rail .fp-grip svg { width: 6px; height: 15px; fill: currentColor; }
+.scribble-chrome #rail .fp-grip:active { cursor: grabbing; }
 .scribble-chrome #rail .fp-grip { padding: 0 3px; color: #aab0b7; }
 .scribble-chrome #rail .fp-grip:hover { color: var(--muted); background: transparent; }
 .scribble-chrome #context-bar {
@@ -353,19 +363,49 @@
 .scribble-chrome #rail #more-popover .btn:hover { background: #f5f6f8; }
 .scribble-chrome #rail #more-popover .btn.active, .scribble-chrome #rail #more-popover .btn[aria-pressed="true"] { background: var(--accent-soft); }
 .scribble-chrome #rail #more-popover .btn.active span, .scribble-chrome #rail #more-popover .btn[aria-pressed="true"] span { color: var(--accent); }
-.scribble-chrome #rail .fp-collapse { width: 30px; height: 30px; border: 1px solid var(--line); background: #fff; border-radius: 8px; color: var(--muted); }
+.scribble-chrome #rail .fp-collapse { display: flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px; border: 1px solid var(--line); background: #fff; border-radius: 8px; color: var(--muted); }
 .scribble-chrome #rail .fp-collapse:hover { background: #f5f6f8; color: var(--ink); border-color: var(--line); }
+/* #8 glyph swap + SVG sizing (mirror style.css:775-792, drop #topbar variants): minimise glyph when open,
+   expand-arrows glyph when collapsed to a handle. */
+.scribble-chrome #rail .fp-collapse svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.scribble-chrome #rail .fp-collapse .ico-expand { display: none; }
+.scribble-chrome #rail.fp-collapsed .fp-collapse .ico-min { display: none; }
+.scribble-chrome #rail.fp-collapsed .fp-collapse .ico-expand { display: block; }
 .scribble-chrome #rail .rail-scroll { display: flex; align-items: center; gap: 0; min-width: 0; flex: 1 1 auto; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; padding: 2px 0; margin: -2px 0; }
 .scribble-chrome #rail .fp-grip, .scribble-chrome #rail .rail-actions, .scribble-chrome #rail #rail-collapse { flex: none; }
 .scribble-chrome #rail .tool, .scribble-chrome .swatch { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* Touch (mirror style.css:810/814-815): the bar itself is grab-draggable (no native pan swallowing it),
+   but the scroller inside keeps horizontal pan so an overflowing tool row is still reachable by finger. */
+.scribble-chrome #rail { cursor: grab; touch-action: none; }
+.scribble-chrome #rail .rail-scroll { touch-action: pan-x; }
 .scribble-chrome .embed-actions .btn { border: 1px solid var(--line); background: #fff; }
 .scribble-chrome .embed-actions .btn.active { background: var(--accent-soft); border-color: #b9cbf5; color: var(--accent); }
 .scribble-chrome.big .btn { height: 42px; min-width: 42px; font-size: 16px; }
 .scribble-chrome.big .btn svg { width: 22px; height: 22px; }
-.scribble-chrome.big #rail { width: 140px; }
+/* NO 140px crush here — the parent-realm rail is the horizontal merged bar (the crush was the ungated bug
+   Batch-1 gated in style.css). Enlarge the real overlay targets instead (mirror style.css:1231-1242,
+   body.overlay.big -> .scribble-chrome.big). CRITICAL: in chrome.css .scribble-chrome plays BOTH the overlay
+   and big role, so the E6 rules and the base-big rules collapse to equal specificity — SOURCE ORDER decides,
+   so the E6 block MUST come after base-big, else tools regress to 42px. */
 .scribble-chrome.big #rail .tool { height: 42px; font-size: 15px; }
 .scribble-chrome.big #rail .tool svg { width: 21px; height: 21px; }
 .scribble-chrome.big .swatch { width: 28px; height: 28px; }
+.scribble-chrome.big #rail { height: 60px; }
+.scribble-chrome.big #rail .tool, .scribble-chrome.big #rail .rail-actions .btn { height: 46px; padding: 0 9px; }
+.scribble-chrome.big #rail .tool svg, .scribble-chrome.big #rail .rail-actions .btn svg { width: 22px; height: 22px; }
+.scribble-chrome.big #rail .tool:not([data-tool="text"]) span, .scribble-chrome.big #rail .rail-actions .btn span { font-size: 12px; }
+.scribble-chrome.big #rail .tool[data-tool="text"] span::after { font-size: 12px; }
+.scribble-chrome.big #context-bar .btn.width { min-width: 38px; height: 36px; }
+.scribble-chrome.big #context-bar .swatch { width: 26px; height: 26px; }
+/* About "ⓘ" popover (mirror style.css:1582-1589; v158 retired the #about-line chip — do NOT port it). */
+.scribble-chrome .about-wrap { position: relative; display: inline-flex; }
+.scribble-chrome #about-popover {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 90;
+  min-width: 200px; background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(20, 24, 28, 0.18); padding: 9px 12px;
+  font-size: 12.5px; color: var(--ink); line-height: 1.55; white-space: nowrap;
+}
+.scribble-chrome #about-popover[hidden] { display: none; }
 .scribble-chrome .modal-actions .btn {
   justify-content: center;
   border: 1px solid var(--line);
@@ -373,3 +413,6 @@
 }
 .scribble-chrome .modal-actions .btn.primary { border-color: var(--ink); }
 .scribble-chrome .btn:focus-visible, .scribble-chrome #rail .tool:focus-visible, .scribble-chrome .swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Swatch focus ring is 3px offset — MUST come after the general 2px rule above (equal specificity, source
+   order wins), or the swatch regresses to 2px. Mirrors style.css:183-193 ordering. */
+.scribble-chrome .swatch:focus-visible { outline-offset: 3px; }
