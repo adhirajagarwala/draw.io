@@ -240,7 +240,7 @@
 }
 .scribble-chrome #btn-palette.active:hover { background: #2550c8; border-color: #2550c8; }
 .scribble-chrome #rail {
-  position: fixed; top: 4px; left: 4px; z-index: 9;
+  position: fixed; top: 4px; left: 4px; z-index: 10; /* net 10 (mirror style.css:687→804): rests above the cbar */
   flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 4px;
   width: calc(100% - 8px);            /* the ONE merged bar spans the card so actions can sit at the far edge */
   background: #fff;
@@ -363,7 +363,7 @@
 .scribble-chrome #rail #more-popover .btn:hover { background: #f5f6f8; }
 .scribble-chrome #rail #more-popover .btn.active, .scribble-chrome #rail #more-popover .btn[aria-pressed="true"] { background: var(--accent-soft); }
 .scribble-chrome #rail #more-popover .btn.active span, .scribble-chrome #rail #more-popover .btn[aria-pressed="true"] span { color: var(--accent); }
-.scribble-chrome #rail .fp-collapse { display: flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px; border: 1px solid var(--line); background: #fff; border-radius: 8px; color: var(--muted); }
+.scribble-chrome #rail .fp-collapse { display: flex; align-items: center; justify-content: center; flex: none; cursor: pointer; width: 30px; height: 30px; border: 1px solid var(--line); background: #fff; border-radius: 8px; color: var(--muted); }
 .scribble-chrome #rail .fp-collapse:hover { background: #f5f6f8; color: var(--ink); border-color: var(--line); }
 /* #8 glyph swap + SVG sizing (mirror style.css:775-792, drop #topbar variants): minimise glyph when open,
    expand-arrows glyph when collapsed to a handle. */

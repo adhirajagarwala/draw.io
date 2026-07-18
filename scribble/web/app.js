@@ -119,8 +119,13 @@ const PHASE1_CHROME_REPARENT = false;
 // `document.querySelector` would search the now-empty iframe. Set by the reparent; defaults to the iframe.
 let railHostDoc = document;
 let railHostEl = null; // the parent-realm .scribble-chrome host (for state classes like .big); null if not reparented
+// SCOPED root for rail-NODE queries (B3-3). When reparented it is the per-instance host ELEMENT, so a page
+// with two overlay questions never cross-matches the other's duplicated #rail/#colors/#more-popover ids;
+// when NOT reparented it is `document` (the iframe), byte-identical to the old railHostDoc behaviour.
+// railHostDoc stays the realm DOCUMENT (activeElement, parent-doc listeners); railRoot is the query root.
+let railRoot = document;
 const activeTool = () =>
-  railHostDoc.querySelector(".tool.active")?.dataset.tool;
+  railRoot.querySelector(".tool.active")?.dataset.tool;
 
 let app;            // WASM App
 let pdfDoc = null;  // PDF.js document
@@ -2424,9 +2429,9 @@ els.fileJson.addEventListener("change", () => {
 // any change to the toolbar / view toggles / segmented control.
 function syncAria() {
   const set = (el, on) => el && el.setAttribute("aria-pressed", on ? "true" : "false");
-  railHostDoc.querySelectorAll(".tool").forEach((t) => set(t, t.classList.contains("active")));
-  railHostDoc.querySelectorAll("#colors .swatch").forEach((s) => set(s, s.classList.contains("active")));
-  railHostDoc.querySelectorAll("#widths .width").forEach((w) => set(w, w.classList.contains("active")));
+  railRoot.querySelectorAll(".tool").forEach((t) => set(t, t.classList.contains("active")));
+  railRoot.querySelectorAll("#colors .swatch").forEach((s) => set(s, s.classList.contains("active")));
+  railRoot.querySelectorAll("#widths .width").forEach((w) => set(w, w.classList.contains("active")));
   set(els.btn.palette, els.btn.palette.classList.contains("active"));
   set(els.btn.big, document.body.classList.contains("big"));
   set(els.btn.thumbs, !els.thumbs.hidden);
@@ -2445,7 +2450,7 @@ for (const b of document.querySelectorAll(".tool")) {
     } else if (!app.set_tool(name)) {
       return;
     }
-    railHostDoc.querySelectorAll(".tool").forEach((x) => x.classList.remove("active"));
+    railRoot.querySelectorAll(".tool").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     hideRegionButton();
     if (name !== "select") setSelection(-1);
@@ -2455,14 +2460,20 @@ for (const b of document.querySelectorAll(".tool")) {
   });
 }
 
+// About closers exposed at MODULE scope so the Phase-1 reparent (B3-4) can ALSO register them in the
+// PARENT realm — post-flip, About clicks/keys fire on the parent document, not the iframe. No-ops until
+// the block below assigns them.
+let closeAbout = () => {};
+let closeAboutOnOutsideClick = () => {};
+let closeAboutOnEscape = () => {};
 // ---- About ("i"): a small anchored disclosure, NOT the Help modal — the modal centres in the full
 // (question-tall) iframe and can open below the fold on a long overlay question. Plain aria-expanded
 // (no aria-haspopup, which would announce a menu); outside-click + Escape close, focus returns.
 {
   const aboutBtn = $("btn-about"), aboutPop = $("about-popover");
-  const closeAbout = () => {
+  closeAbout = () => {
     if (!aboutPop || aboutPop.hidden) return;
-    const hadFocus = aboutPop.contains(document.activeElement);
+    const hadFocus = aboutPop.contains(railHostDoc.activeElement); // B3-4: realm-correct (iframe OR parent post-flip)
     aboutPop.hidden = true;
     aboutBtn.setAttribute("aria-expanded", "false");
     if (hadFocus) aboutBtn.focus();
@@ -2475,17 +2486,19 @@ for (const b of document.querySelectorAll(".tool")) {
       aboutPop.hidden = !open;
       aboutBtn.setAttribute("aria-expanded", String(open));
     });
-    document.addEventListener("click", (e) => {
+    closeAboutOnOutsideClick = (e) => {
       if (!aboutPop.hidden && !aboutPop.contains(e.target) && !aboutBtn.contains(e.target)) closeAbout();
-    });
+    };
     // Consume the Escape that closes the popover (this listener registers before the main keydown
     // handler): dismissing About must not ALSO clear the selection / cancel an armed snip (C10).
     // helpOverlay.hidden guard: with the Help modal OPEN above a forgotten popover, Esc must close
     // the modal (main's branch), not invisibly eat the keypress here. (helpOverlay is declared later
     // in the module — fine: this body only runs on keypresses, long after module evaluation.)
-    document.addEventListener("keydown", (e) => {
+    closeAboutOnEscape = (e) => {
       if (e.key === "Escape" && !aboutPop.hidden && helpOverlay.hidden) { closeAbout(); e.stopImmediatePropagation(); }
-    });
+    };
+    document.addEventListener("click", closeAboutOnOutsideClick);
+    document.addEventListener("keydown", closeAboutOnEscape);
   }
 }
 
@@ -2517,7 +2530,7 @@ function updateContextBar(tool) {
 for (const b of document.querySelectorAll("#widths .width")) {
   b.addEventListener("click", () => {
     if (!app.set_pen_width(b.dataset.width)) return;
-    railHostDoc.querySelectorAll("#widths .width").forEach((x) => x.classList.remove("active"));
+    railRoot.querySelectorAll("#widths .width").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     syncAria();
   });
@@ -2526,7 +2539,7 @@ for (const b of document.querySelectorAll("#widths .width")) {
 for (const s of document.querySelectorAll("#colors .swatch")) {
   s.addEventListener("click", () => {
     if (!app.set_color(s.dataset.color)) return;
-    railHostDoc.querySelectorAll("#colors .swatch").forEach((x) => x.classList.remove("active"));
+    railRoot.querySelectorAll("#colors .swatch").forEach((x) => x.classList.remove("active"));
     s.classList.add("active");
     syncAria();
   });
@@ -2656,7 +2669,10 @@ const TOOL_KEYS = {
   s: "snip",
 };
 
-document.addEventListener("keydown", (ev) => {
+// B3-5: named so the Phase-1 reparent can mirror it onto the PARENT document (post-flip, shortcut keys
+// fire there when focus is on a parent-side rail button). Events don't cross the iframe boundary, so the
+// two registrations never double-fire. The typing-field early-return below also ignores PL's own inputs.
+const mainKeydown = (ev) => {
   // Never hijack keys while the user is typing in any field (incl. notes).
   if (ev.target instanceof Element &&
       ev.target.matches("input, textarea, select, [contenteditable]")) {
@@ -2720,7 +2736,7 @@ document.addEventListener("keydown", (ev) => {
     // An open More popover owns this Escape — its closer (registered after this handler) will
     // dismiss it; acting here too would also clear the selection / cancel an armed snip (C10).
     // (railHostDoc: the popover lives in the parent document once Phase 1 reparents the rail.)
-    const morePop = railHostDoc.getElementById("more-popover");
+    const morePop = railRoot.querySelector("#more-popover");
     if (morePop && !morePop.hidden) return;
     if (snip) { snip = null; redrawAnnotations(); } // cancel an in-progress snip
     if (marquee) { marquee = null; redrawAnnotations(); } // cancel an in-progress marquee
@@ -2733,7 +2749,7 @@ document.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     toggleHelp(true);
   } else if (!mod && TOOL_KEYS[key]) {
-    const btn = railHostDoc.querySelector(`[data-tool="${TOOL_KEYS[key]}"]`);
+    const btn = railRoot.querySelector(`[data-tool="${TOOL_KEYS[key]}"]`);
     if (btn && btn.offsetParent !== null) btn.click(); // skip tools hidden in this mode (e.g. Snip in overlay)
   } else if (ev.key === "PageDown" || ev.key === "PageUp") {
     if (!pdfDoc || isContinuous()) return; // continuous: let the browser scroll
@@ -2754,7 +2770,8 @@ document.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     goToPage(pdfDoc.numPages - 1);
   }
-});
+};
+document.addEventListener("keydown", mainKeydown);
 
 window.addEventListener("beforeunload", (ev) => {
   // Warn only about un-serialized changes. Standalone: unsaved drawing (is_dirty) or unsaved-to-file
@@ -3557,7 +3574,7 @@ function applyPalette(safe, announce = false) {
   els.btn.palette.title = safe
     ? "Colour-blind-safe palette: on — click to return to standard colours"
     : "Colour-blind-safe palette: off — click to recolour (green→brown, red→vermillion)";
-  for (const s of railHostDoc.querySelectorAll("#colors .swatch")) {
+  for (const s of railRoot.querySelectorAll("#colors .swatch")) {
     s.style.background = app.color_css(s.dataset.color);
     s.title = swatchTitle(s.dataset.color, safe);
   }
@@ -3590,7 +3607,7 @@ function toggleHelp(show) {
   helpOverlay.hidden = !open;
   // #btn-help rides inside the rail's More menu, which the overlay REPARENTS into the parent page —
   // so look it up in the rail's realm ($() would search this iframe and return null there).
-  railHostDoc.getElementById("btn-help")?.classList.toggle("active", open);
+  railRoot.querySelector("#btn-help")?.classList.toggle("active", open);
   if (open) $("help-close").focus();
 }
 $("btn-help").addEventListener("click", () => toggleHelp());
@@ -3669,14 +3686,19 @@ function savePrefs() {
       // (No topbarFloat: in overlay the topbar is merged into #rail, not a separate floating bar.)
       // Look the rail up in ITS realm: the overlay reparents it into the parent page, where $() (getElementById
       // on this iframe) returns null — which would silently stop the toolbar's position ever persisting.
-      railFloat: overlay && railHostDoc.getElementById("rail")
+      // B3-7: railFloat2 — position:fixed coords whose ORIGIN differs by realm (iframe-viewport today,
+      // parent-viewport post-flip). Version the sub-key so a v160 iframe-realm railFloat isn't restored as
+      // parent-realm coords post-flip (which could strand the rail off-viewport). Old railFloat carried
+      // forward untouched below for rollback. (Query via railRoot — scoped to this instance's rail. B3-3.)
+      railFloat2: overlay && railRoot.querySelector("#rail")
         ? (() => {
-          const r = railHostDoc.getElementById("rail");
+          const r = railRoot.querySelector("#rail");
           return { left: r.classList.contains("fp-moved") ? r.style.left : "",
                    top: r.classList.contains("fp-moved") ? r.style.top : "",
                    collapsed: r.classList.contains("fp-collapsed") };
         })()
-        : (prev.railFloat || {}),
+        : (prev.railFloat2 || {}),
+      railFloat: prev.railFloat || {}, // carry the legacy iframe-realm key forward untouched (rollback safety)
     }));
   } catch { /* storage unavailable — non-fatal */ }
 }
@@ -3831,7 +3853,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         railEl.appendChild($("rail-collapse")); // keep the collapse chevron LAST, after the appended children
         const closeMore = () => {
           if (morePop.hidden) return;
-          const hadFocus = morePop.contains(document.activeElement);
+          const hadFocus = morePop.contains(railHostDoc.activeElement); // B3-4: realm-correct (iframe OR parent post-flip)
           morePop.hidden = true; moreBtn.setAttribute("aria-expanded", "false");
           if (hadFocus) moreBtn.focus(); // don't drop focus to <body> on Escape / item-activate
         };
@@ -3867,6 +3889,9 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           //     move the #rail node into the parent + inject a SCOPED copy of its CSS (chrome.css, .scribble-chrome).
           //     If not same-origin (host-demo embed), we leave it in the iframe (degrades to the old behaviour).
           let railWin = window;
+          // B3-6: parent-realm cleanups, run on `pagehide` so a PL Save&Grade iframe swap doesn't orphan the
+          // reparented host/listeners in the parent doc (only populated when we actually reparent).
+          const railTeardowns = [];
           try {
             const P = window.parent;
             if (PHASE1_CHROME_REPARENT && P && P !== window && P.document && P.document.body) {
@@ -3877,24 +3902,48 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
                 link.href = new URL(`chrome.css?v=${APP_VERSION}`, import.meta.url).href;
                 pdoc.head.appendChild(link);
               }
-              let host = pdoc.querySelector(".pl-scribble-chrome-host");
-              if (!host) { // one host div (position:relative, near-max z) carries the scope class + the rail
+              // B3-3: per-instance host id (qid+name, like PREFS_KEY) so a page with TWO overlay questions
+              // doesn't append the 2nd rail into the 1st's host — that would duplicate #rail/#colors/
+              // #more-popover/#about-* ids in the parent doc. The .pl-scribble-chrome-host CLASS stays (the
+              // teardown gates the shared <link> removal on "no host of that class remains").
+              const plCfg = window.__SCRIBBLE_PL || {};
+              const hostSuffix = [plCfg.qid, plCfg.name].filter(Boolean).join("-").replace(/[^A-Za-z0-9_-]/g, "-");
+              const hostId = "pl-scribble-chrome-host" + (hostSuffix ? "-" + hostSuffix : "");
+              let host = pdoc.getElementById(hostId);
+              if (!host) { // one host div (position:relative) carries the scope class + the rail
                 host = pdoc.createElement("div");
+                host.id = hostId;
                 host.className = "scribble-chrome pl-scribble-chrome-host";
-                host.style.cssText = "position:relative;z-index:2147483000;";
-                pdoc.body.appendChild(host);
+                // B3-8: z BELOW the Done FAB (2147483000, py:142) so the rail never covers the exit affordance;
+                // ABOVE the overlay frame/calc (2147482000) and the Annotate launch pill (2147482500).
+                host.style.cssText = "position:relative;z-index:2147482900;";
+                pdoc.body.appendChild(host); // B3-9: plain body child (a transformed card ancestor re-pins fixed)
               }
               host.appendChild(railEl); // #rail lives in the parent now; ".scribble-chrome #rail" styles it
               railWin = P;
-              railHostDoc = pdoc;  // tool/colour/width queries must now search the PARENT document
+              railHostDoc = pdoc;  // realm document (activeElement, parent-doc listeners)
               railHostEl = host;   // for mirroring state classes (e.g. .big "Larger") onto the reparented rail
-              // MF-B: the More-popover's outside-click / Escape must ALSO be heard in the PARENT realm (the
-              // rail's clicks now fire there). The iframe-document listeners (set in the merge block) stay too,
-              // so a click on either side closes the popover.
-              pdoc.addEventListener("click", (e) => {
-                if (!morePop.hidden && !morePop.contains(e.target) && !moreBtn.contains(e.target)) closeMore();
-              });
-              pdoc.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMore(); });
+              railRoot = host;     // B3-3: scope rail-node queries to THIS instance's host
+              host.classList.toggle("big", document.body.classList.contains("big")); // B3-2: applyBig ran pre-reparent
+              // MF-B / B3-4: the More AND About popovers' outside-click / Escape must ALSO be heard in the
+              // PARENT realm now (the rail's clicks fire there). The iframe-document listeners stay too, so a
+              // click on either side closes them. Named handlers → removable on teardown (B3-6).
+              const pMoreClick = (e) => { if (!morePop.hidden && !morePop.contains(e.target) && !moreBtn.contains(e.target)) closeMore(); };
+              const pMoreKey = (e) => { if (e.key === "Escape") closeMore(); };
+              pdoc.addEventListener("click", pMoreClick);
+              pdoc.addEventListener("keydown", pMoreKey);
+              pdoc.addEventListener("click", closeAboutOnOutsideClick);
+              pdoc.addEventListener("keydown", closeAboutOnEscape);
+              pdoc.addEventListener("keydown", mainKeydown); // B3-5: tool/undo/save/Escape shortcuts in the parent realm
+              railTeardowns.push(
+                () => pdoc.removeEventListener("click", pMoreClick),
+                () => pdoc.removeEventListener("keydown", pMoreKey),
+                () => pdoc.removeEventListener("click", closeAboutOnOutsideClick),
+                () => pdoc.removeEventListener("keydown", closeAboutOnEscape),
+                () => pdoc.removeEventListener("keydown", mainKeydown),
+                () => { host.remove(); // gate the shared <link> removal on "no other host remains" (2nd question)
+                        if (!pdoc.querySelector(".pl-scribble-chrome-host")) pdoc.getElementById("pl-scribble-chrome-css")?.remove(); },
+              );
             }
           } catch { /* cross-origin / no parent — keep the rail in the iframe */ }
           // NB: query the grip/collapse THROUGH railEl, not $() — $() is getElementById on the IFRAME document,
@@ -3902,11 +3951,41 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // onChange also nudges the bar out of an active calculator hole (a drag can park it under
           // the drawer, where it would render half-clipped — the irrecoverable-panel class of bug).
           const railFP = makeFloating(railEl, { collapse: railEl.querySelector("#rail-collapse"), onChange: () => { savePrefs(); calcDodgeNudge(); }, win: railWin });
-          const rp = (prefs && prefs.railFloat) || {};
+          const rp = (prefs && prefs.railFloat2) || {}; // B3-7: parent-realm-safe key (legacy railFloat ignored post-flip)
           if (rp.left && rp.top) railFP.floatTo(parseFloat(rp.left), parseFloat(rp.top));
           if (rp.collapsed) railFP.setCollapsed(true);
+          // Card-aligned geometry (Decision 1): the reparented bar spans the QUESTION CARD's horizontal
+          // extent (the overlay iframe), viewport-fixed vertically — NOT the full browser width over PL's
+          // own header. Applies only to the DEFAULT (un-dragged) bar; a dragged (fp-moved) bar keeps its spot.
+          // No-op (chrome.css full-width fallback) if the frame rect is unreadable, or when not reparented.
+          const alignRailToCard = () => {
+            if (railWin === window || railEl.classList.contains("fp-moved")) return;
+            try {
+              const fr = window.frameElement.getBoundingClientRect(); // iframe position in the parent viewport
+              railEl.style.left = `${Math.round(fr.left + 4)}px`;
+              railEl.style.width = `${Math.round(Math.max(0, fr.width - 8))}px`;
+              railEl.style.top = "4px";
+            } catch { /* cross-frame — leave the chrome.css full-width fallback */ }
+          };
+          alignRailToCard();
           clampFixed(railEl, railWin);
-          railWin.addEventListener("resize", () => clampFixed(railEl, railWin));
+          const onRailResize = () => { alignRailToCard(); clampFixed(railEl, railWin); };
+          railWin.addEventListener("resize", onRailResize);
+          if (railWin !== window) {
+            // Parent-realm listeners → tear down on the iframe swap (B3-6). Re-align on parent scroll / iframe
+            // grow (resizeOverlay), rAF-coalesced (CLAUDE.md §10 — no layout work directly in the handler).
+            railTeardowns.push(() => railWin.removeEventListener("resize", onRailResize));
+            let alignRaf = 0;
+            const scheduleAlign = () => { if (alignRaf) return; alignRaf = railWin.requestAnimationFrame(() => { alignRaf = 0; alignRailToCard(); }); };
+            railWin.addEventListener("scroll", scheduleAlign, { passive: true });
+            railTeardowns.push(() => railWin.removeEventListener("scroll", scheduleAlign));
+            if (railWin.ResizeObserver && window.frameElement) {
+              const ro = new railWin.ResizeObserver(scheduleAlign);
+              ro.observe(window.frameElement);
+              railTeardowns.push(() => { try { ro.disconnect(); } catch { /* ignore */ } if (alignRaf) railWin.cancelAnimationFrame(alignRaf); });
+            }
+            window.addEventListener("pagehide", () => { for (const t of railTeardowns) { try { t(); } catch { /* ignore */ } } }, { once: true });
+          }
           // MF-F: the iframe's `display:none` annotate-gate (style.css) can't reach a reparented rail, so drive
           // its visibility from HERE off the same annotate-active signal (the parent toggles that class on OUR
           // iframe body). Hidden until the student clicks Annotate. No-op when the rail stayed in the iframe.
@@ -3936,7 +4015,10 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // and re-pinning it is Phase 1's job. One-shot on the transition, never scroll-coupled.
           const clampRailOnShow = () => {
             if (!railEl.classList.contains("fp-moved")) return;
-            clampFixed(railEl, railWin); // horizontal + iframe-box bounds (measurable: the gate just released)
+            clampFixed(railEl, railWin); // horizontal + box bounds against railWin (measurable: gate just released)
+            // Reparented (parent realm): position:fixed already pins to the browser viewport, so the rail is
+            // always on-screen — and visibleBand() below is IFRAME-realm coords (wrong space here). Skip it.
+            if (railWin !== window) return;
             const band = visibleBand();
             const h = railEl.getBoundingClientRect().height;
             const t = parseFloat(railEl.style.top) || 0;
@@ -3953,18 +4035,21 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           new MutationObserver(() => {
             const now = document.body.classList.contains("annotate-active");
             if (wasAnnotating && !now) {
-              const cur = railHostDoc.querySelector(".tool.active")?.dataset.tool;
+              const cur = railRoot.querySelector(".tool.active")?.dataset.tool;
               if (RESUME_TOOLS.has(cur)) lastDrawTool = cur;
-              railHostDoc.querySelector('.tool[data-tool="select"]')?.click();
+              railRoot.querySelector('.tool[data-tool="select"]')?.click();
             } else if (!wasAnnotating && now) {
+              // C14: make the reparented rail displayable BEFORE clampRailOnShow measures it — a
+              // display:none rail reports height 0 and the band-clamp garbage-places its top.
+              syncRailVis();
               // Unconditional click — an offsetParent-style visibility guard would silently skip
               // exactly when the rail is collapsed, and the Select trap would survive there.
-              railHostDoc.querySelector(`.tool[data-tool="${lastDrawTool}"]`)?.click();
+              railRoot.querySelector(`.tool[data-tool="${lastDrawTool}"]`)?.click();
               clampRailOnShow();
               clampNotes(); // the pane re-appears with the chrome — never at an off-frame position
               calcDodgeNudge(); // the chrome may be re-appearing straight under an open calculator
             }
-            syncRailVis(); // show/hide the reparented rail with annotate-active
+            syncRailVis(); // show/hide the reparented rail with annotate-active (hide branch; idempotent on show)
             wasAnnotating = now;
           }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
           // If Annotate was pressed BEFORE wasm init finished, the ON transition already happened and
@@ -3984,20 +4069,29 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           };
           // Move el to the nearest clear spot beside the hole (inside the visible band); >50%
           // covered triggers, nowhere-to-go leaves it (the clip wins and the panel stays reachable).
+          // B3-8/C5: calcHoles() are FRAME-relative. A reparented rail lives in the PARENT doc (its rect is in
+          // parent-viewport coords) and ESCAPES the iframe clip, so translate holes into parent coords (add the
+          // frame's rect, read FRESH each call — it grows via resizeOverlay) and clamp against the parent
+          // viewport. The notes pane stays in the iframe → identical iframe-realm behaviour as before. The realm
+          // is derived from el.ownerDocument, so this needs no railWin in scope.
           const dodgeEl = (el, apply) => {
             const r = el.getBoundingClientRect();
             if (!(r.width > 0)) return;
-            for (const h of calcHoles()) {
+            const parentRealm = el.ownerDocument !== document;
+            const win = parentRealm ? window.parent : window;
+            const fo = parentRealm ? (window.frameElement?.getBoundingClientRect() || { left: 0, top: 0 }) : { left: 0, top: 0 };
+            const xlate = (h) => ({ left: h.left + fo.left, top: h.top + fo.top, width: h.width, height: h.height });
+            const band = parentRealm ? { top: 0, bottom: win.innerHeight } : visibleBand();
+            for (const h of calcHoles().map(xlate)) {
               if (holeOverlap(r.left, r.top, r.width, r.height, h) <= r.width * r.height * 0.5) continue;
-              const band = visibleBand();
-              const cx = (x) => Math.max(4, Math.min(window.innerWidth - r.width - 4, x));
+              const cx = (x) => Math.max(4, Math.min(win.innerWidth - r.width - 4, x));
               const cy = (y) => Math.max(band.top + 4, Math.min(Math.max(band.top + 4, band.bottom - r.height - 4), y));
               const cands = [
                 [cx(r.left), cy(h.top - r.height - 8)],
                 [cx(r.left), cy(h.top + h.height + 8)],
                 [cx(h.left - r.width - 8), cy(r.top)],
                 [cx(h.left + h.width + 8), cy(r.top)],
-              ].filter(([x, y]) => calcHoles().every((hh) => holeOverlap(x, y, r.width, r.height, hh) <= r.width * r.height * 0.5));
+              ].filter(([x, y]) => calcHoles().map(xlate).every((hh) => holeOverlap(x, y, r.width, r.height, hh) <= r.width * r.height * 0.5));
               if (!cands.length) return;
               const [bx, by] = cands.reduce((a, c) =>
                 Math.hypot(c[0] - r.left, c[1] - r.top) < Math.hypot(a[0] - r.left, a[1] - r.top) ? c : a);
