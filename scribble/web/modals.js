@@ -96,6 +96,60 @@ export function confirmSnip(imgUrl, text) {
   });
 }
 
+// A generic confirm. Resolves true (confirmed) / false (cancelled). For a DESTRUCTIVE action pass
+// danger:true — the confirm button is styled destructive and initial focus + the visual primary go to
+// CANCEL, so a reflexive Enter/Space never triggers the irreversible action. Band-placed for the tall
+// overlay iframe (like confirmSnip) so Cancel/Confirm never land below the fold in the embed notes pane.
+export function confirmDialog({ title, body, confirmLabel = "OK", danger = false } = {}) {
+  return new Promise((resolve) => {
+    const opener = document.activeElement;
+    const ov = document.createElement("div");
+    ov.className = "modal-overlay";
+    const card = document.createElement("div");
+    card.className = "modal-card";
+    const h = document.createElement("h3");
+    h.textContent = title || "Are you sure?";
+    card.append(h);
+    if (body) { const p = document.createElement("p"); p.textContent = body; card.append(p); }
+    const row = document.createElement("div");
+    row.className = "modal-actions";
+    const cleanup = () => { ov.remove(); document.removeEventListener("keydown", onKey); opener?.focus?.(); };
+    // Cancel first: leftmost, first in tab order, and focused — the safe default for a destructive dialog.
+    const cancel = document.createElement("button");
+    cancel.className = "btn labeled primary";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => { cleanup(); resolve(false); });
+    const confirm = document.createElement("button");
+    confirm.className = "btn labeled" + (danger ? " danger" : "");
+    confirm.textContent = confirmLabel;
+    confirm.addEventListener("click", () => { cleanup(); resolve(true); });
+    row.append(cancel, confirm);
+    card.append(row);
+    ov.append(card);
+    const onKey = (e) => { if (e.key === "Escape") { cleanup(); resolve(false); } };
+    ov.addEventListener("click", (e) => { if (e.target === ov) { cleanup(); resolve(false); } });
+    trapModalFocus(ov, title || "Confirm");
+    document.addEventListener("keydown", onKey);
+    document.body.append(ov);
+    // Band-place in the VISIBLE part of the (possibly multi-screen-tall) overlay iframe — else the buttons
+    // land below the fold. No async image here, so the card height is known immediately (one measure).
+    try {
+      const fr = window.frameElement && window.frameElement.getBoundingClientRect();
+      const pvh = window.parent && window.parent.innerHeight;
+      if (fr && pvh) {
+        const visTop = Math.max(0, -fr.top);
+        const band = Math.min(pvh - fr.top, fr.height) - visTop;
+        if (band > 160) {
+          ov.style.alignItems = "flex-start";
+          card.style.maxHeight = `${Math.round(band - 32)}px`;
+          card.style.marginTop = `${Math.max(8, Math.round(visTop + band / 2 - card.offsetHeight / 2 - 20))}px`;
+        }
+      }
+    } catch { /* cross-frame — keep the centred layout */ }
+    cancel.focus();
+  });
+}
+
 // A small modal that asks what to do with unsaved work before opening a file.
 // Resolves to "save" | "newtab" | "discard" | "cancel".
 export function confirmOpenDialog() {

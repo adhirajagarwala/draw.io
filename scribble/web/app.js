@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "159";
+const APP_VERSION = "160";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=159";
+import init, { App } from "./pkg/scribble.js?v=160";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,16 +17,16 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=159";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=159";
-import { initEmbed } from "./embed.js?v=159";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=159";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=159";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip } from "./modals.js?v=159";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=159";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=159";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=159";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=159";
+} from "./utils.js?v=160";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=160";
+import { initEmbed } from "./embed.js?v=160";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=160";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=160";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=160";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=160";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=160";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=160";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=160";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -89,6 +89,7 @@ const els = {
   widths: $("widths"),
   widthDivider: $("width-divider"),
   status: $("status"),
+  persistAlert: $("persist-alert"),
   btn: {
     open: $("btn-open"), save: $("btn-save"), load: $("btn-load"),
     undo: $("btn-undo"), redo: $("btn-redo"),
@@ -222,6 +223,60 @@ function status(msg) {
   els.status.classList.add("show");
   clearTimeout(statusTimer);
   statusTimer = setTimeout(() => els.status.classList.remove("show"), 4000);
+}
+
+// Persistent, high-attention alerts that must NOT auto-clear (unlike status()'s 4s toast) and must
+// not be re-announced every tick. Keyed so independent conditions don't clobber each other; the
+// highest-priority active message is shown. textContent only (§7). Rendered in a role="alert" node
+// pinned near the top of the frame (the bottom-fixed #status is the WORST spot in a tall overlay).
+const PERSIST_ALERTS = { "save-fail": { pri: 2, cls: "error" }, "cap": { pri: 1, cls: "warn" } };
+const activePersistAlerts = new Map();
+function setPersistAlert(key, message) {
+  const el = els.persistAlert;
+  if (!el) return; // null-safe: never throw out of the autosave flush
+  if (message == null) activePersistAlerts.delete(key);
+  else activePersistAlerts.set(key, message);
+  let bestKey = null, bestPri = -1;
+  for (const k of activePersistAlerts.keys()) {
+    const p = (PERSIST_ALERTS[k] && PERSIST_ALERTS[k].pri) || 0;
+    if (p > bestPri) { bestPri = p; bestKey = k; }
+  }
+  if (bestKey == null) { el.hidden = true; el.textContent = ""; el.className = "persist-alert"; return; }
+  el.textContent = activePersistAlerts.get(bestKey); // fixed constant strings only — never interpolate errors
+  el.className = "persist-alert " + ((PERSIST_ALERTS[bestKey] && PERSIST_ALERTS[bestKey].cls) || "");
+  el.hidden = false;
+}
+
+// Client mirror of the server's parse() caps (pl-scribble.py MAX_ANNOTATION_BYTES / MAX_JSON_NODES). If a
+// student builds a document past these, PrairieLearn's parse() rejects the WHOLE submission (nulls it) with
+// only an out-of-iframe error — total silent loss. So we refuse to write an over-cap blob into the form input
+// and keep the last-good value instead. The NODE axis is the binding constraint (dense strokes reach ~500k
+// nodes well under the 16 MiB byte cap), so we count nodes, not just bytes. Headroom kept below the ceilings.
+const SAVE_CAP_BYTES = 15_500_000;       // server nulls at 16 MiB decoded
+const SAVE_CAP_NODES = 480_000;          // server nulls at 500k structural nodes
+const SAVE_NODE_WALK_MIN_BYTES = 2_000_000; // light docs can't approach the cap — skip the walk
+
+// Mirror of pl-scribble.py _within_structural_bounds: a small scalar tuple ([x,y], a rect) counts as ONE
+// node; a large flat scalar array (a stroke's points) is counted by length; nested containers descend.
+// Early-outs once over cap — the exact count past the ceiling doesn't matter.
+function estimateJsonNodes(obj) {
+  let n = 0;
+  const stack = [obj];
+  while (stack.length) {
+    const cur = stack.pop();
+    n++;
+    if (n > SAVE_CAP_NODES) return n;
+    if (Array.isArray(cur)) {
+      let hasContainer = false;
+      for (const v of cur) {
+        if (v && typeof v === "object") { hasContainer = true; stack.push(v); }
+      }
+      if (!hasContainer && cur.length > 8) n += cur.length;
+    } else if (cur && typeof cur === "object") {
+      for (const k in cur) if (Object.prototype.hasOwnProperty.call(cur, k)) stack.push(cur[k]);
+    }
+  }
+  return n;
 }
 
 // ---------- selection ----------
@@ -1794,17 +1849,30 @@ async function loadJsonFile(file) {
 // Returns base64(save_json()) when there are unsaved edits, else null. MUST resolve the
 // CURRENT `app` — openHtml → newDocument reassigns it, so embed.js calls this instead of
 // holding its own (soon-stale) app reference. save_json clears the Rust dirty flag.
+// Returns { b64, decodedBytes, nodes } when there are unsaved edits, else null. The caller (embed.js flush)
+// applies the cap policy — it must NOT write an over-cap blob into the form input (see SAVE_CAP_*). Parses the
+// save_json output ONCE: to strip notes and to estimate the node count the server will see.
 function serializeAnnotations() {
   if (!app || !app.is_dirty()) return null;
   // Notes are SCRATCH: the PL submission persists ONLY the annotations drawn on the question, never the
   // notes/clippings. Strip the notes array from the blob before it lands in the form input. (save_json clears
   // the Rust dirty flag; the app keeps its notes in-session — only what's SAVED drops them.)
-  let json = app.save_json();
+  const raw = app.save_json();
+  let json = raw, parsed = null;
   try {
-    const o = JSON.parse(json);
-    if (Array.isArray(o.notes) && o.notes.length) { o.notes = []; json = JSON.stringify(o); }
-  } catch { /* unparseable — save as-is rather than lose the annotations */ }
-  return bytesToB64(new TextEncoder().encode(json));
+    parsed = JSON.parse(raw);
+    if (Array.isArray(parsed.notes) && parsed.notes.length) { parsed.notes = []; json = JSON.stringify(parsed); }
+  } catch { parsed = null; /* unparseable — save as-is rather than lose the annotations */ }
+  const bytes = new TextEncoder().encode(json);
+  // Count nodes on the notes-STRIPPED object (what the server actually receives). Skip for light docs.
+  let nodes = 0;
+  if (parsed && bytes.length > SAVE_NODE_WALK_MIN_BYTES) {
+    try { nodes = estimateJsonNodes(parsed); } catch { nodes = 0; }
+  }
+  // Decide over-cap HERE, against the single source of truth (SAVE_CAP_*), so the caller never
+  // re-derives ceilings (a duplicated cap in embed.js could drift and silently disable the guard).
+  const overCap = bytes.length > SAVE_CAP_BYTES || nodes > SAVE_CAP_NODES;
+  return { b64: bytesToB64(bytes), decodedBytes: bytes.length, nodes, overCap };
 }
 
 // Restore a base64-encoded annotation document over the already-open question (the
@@ -2274,8 +2342,9 @@ els.filePdf.addEventListener("change", () => {
 // copied to a course-wide-readable location). The lock is AFFORDANCE-ONLY by accepted design:
 // typing the bare index.html URL yields the normal tool; PL still gates the file itself. The
 // locked tool is a pure reference sheet (user decision): every drawing tool + snip-to-clipboard
-// work, but Open/Resume/Save/Export are all hidden — pasting a snip into the PL question's notes
-// is the one export path.
+// work, but Open/Resume/Save/Export are all hidden — snip-to-clipboard, then paste into the PL
+// question's notes, carries reference material across as IN-SESSION scratch (notes are NOT saved
+// with the answer — serializeAnnotations strips them; true note-persistence is a separate batch).
 function refFileRequest() {
   const raw = new URLSearchParams(location.search).get("file");
   if (!raw) return null;
@@ -2626,13 +2695,13 @@ document.addEventListener("keydown", (ev) => {
     // In embed mode the work saves with the PL submission, not to a downloaded file.
     // Intercept the reflexive Cmd/Ctrl+S so it doesn't litter Downloads with a junk .json.
     if (document.body.classList.contains("embedded")) {
-      status("Scratch work is included when you click Save.");
+      status("Your marks on the question are saved with your answer; notes are scratch and aren't saved.");
     } else if (document.body.classList.contains("locked")) {
       // Only PDF references autosave (by sha, restored on reopen); HTML has no stable identity, so
       // don't promise persistence there — point the student at snipping into their answer instead.
       status(docMode === "pdf"
         ? "This reference sheet keeps your scribbles automatically — nothing to save."
-        : "Scribble here as scratch — snip a region into your answer's notes to keep it.");
+        : "Scribble here as scratch — snip a region to copy it, then paste into your answer's notes.");
     } else if (!els.btn.save.disabled) {
       downloadJson();
     }
@@ -2718,8 +2787,32 @@ function blockActions(i, total) {
   };
   mk("↑", "Move up", () => { app.move_note(i, -1); renderNotes(); }, i === 0);
   mk("↓", "Move down", () => { app.move_note(i, 1); renderNotes(); }, i === total - 1);
-  mk("✕", "Delete block", () => { app.remove_note(i); renderNotes(); }, false);
+  // E5: deleting a whole block is outside the undo stack (and clears sketch history) — unrecoverable.
+  // Confirm before removing a NON-EMPTY block; empty blocks delete with no nag.
+  mk("✕", "Delete block", async () => {
+    if (noteDeleteNeedsConfirm(i)) {
+      const ok = await confirmDialog({
+        title: "Delete this note block?",
+        body: "This removes the block and can't be undone.",
+        confirmLabel: "Delete",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    app.remove_note(i);
+    renderNotes();
+  }, false);
   return wrap;
+}
+
+// A note block is worth a delete confirm only when it actually holds work: a clipping (has an image),
+// a sketch with any drawn item (sketch_export_ops is empty for a blank sketch), or non-empty text.
+function noteDeleteNeedsConfirm(i) {
+  const kind = app.note_kind(i);
+  if (kind === "clipping") return true;
+  if (kind === "sketch") return app.sketch_export_ops(i) !== "";
+  if (kind === "text") return app.note_text(i).trim() !== "";
+  return false;
 }
 
 // A self-contained drawing surface for a sketch note. It reuses the SAME
@@ -3173,7 +3266,22 @@ function buildClippingBlock(div, i) {
     rmImg.textContent = "×"; // × glyph (UI text, never innerHTML)
     rmImg.title = "Remove the image (keep the caption text)";
     rmImg.setAttribute("aria-label", "Remove the image, keep the caption");
-    rmImg.addEventListener("click", () => { app.remove_clipping_image(i); renderNotes(); });
+    rmImg.addEventListener("click", async () => {
+      // With a caption, remove_clipping_image converts the block to a text note in place (keeps the
+      // caption) — non-destructive, no confirm. With NO caption it removes the WHOLE block one-click
+      // and can't be undone (like remove_note) — confirm that case (E5).
+      if (app.note_caption(i).trim() === "") {
+        const ok = await confirmDialog({
+          title: "Remove this image?",
+          body: "This removes the image block and can't be undone.",
+          confirmLabel: "Remove",
+          danger: true,
+        });
+        if (!ok) return;
+      }
+      app.remove_clipping_image(i);
+      renderNotes();
+    });
     imgWrap.appendChild(rmImg);
   }
   div.append(imgWrap, cap, copy);
@@ -3678,7 +3786,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
     try {
       initEmbed({
         app, els, status, toggleNotes, renderNotes, openHtml, openOverlay, resizeOverlay,
-        hydrateAnnotations, serializeAnnotations,
+        hydrateAnnotations, serializeAnnotations, setPersistAlert,
       });
     } catch (e) {
       console.error("initEmbed failed (continuing to build the toolbar):", e);

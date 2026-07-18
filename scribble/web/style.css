@@ -747,6 +747,16 @@ body.notes-floating #notes-pane.notes-collapsed .notes-resize { display: none; }
 #notes-pane.notes-collapsed > header { border-bottom: 0; cursor: pointer; border-radius: inherit; }
 #notes-pane.notes-collapsed > header:hover { background: var(--accent-soft); }
 
+/* E-NOTES: a standing, honest reminder that notes are IN-SESSION scratch — the save path strips them
+   (serializeAnnotations). Shown only in embed (there's an "answer" to contrast with), never in the
+   readonly submission view, and not in the collapsed strip. Static sibling of #notes-list so renderNotes
+   (which clears #notes-list) never wipes it. textContent only. */
+.notes-scratch-note { display: none; }
+body.embedded:not(.readonly) #notes-pane:not(.notes-collapsed) .notes-scratch-note {
+  display: block; padding: 4px 10px; font-size: 11px; line-height: 1.35;
+  color: var(--muted); white-space: normal; border-bottom: 1px solid var(--line);
+}
+
 /* ---- Floating + hideable panels: the tool rail and the actions bar (overlay only) ----
    Each gets a drag grip (the ONLY drag target, so tool clicks survive) + a collapse chevron.
    The colour bar (#context-bar) and notes already float/collapse via colorbar.js/notes-dock.js. */
@@ -1204,11 +1214,32 @@ body.html-doc #scroll-mode { display: none; }
 /* larger-controls accessibility toggle */
 body.big .btn { height: 42px; min-width: 42px; font-size: 16px; }
 body.big .btn svg { width: 22px; height: 22px; }
-body.big #rail { width: 140px; }
+/* The 140px vertical rail is the STANDALONE/Option-B "Larger" layout. It must NOT reach the overlay,
+   where #rail is one horizontal bar spanning the card (body.overlay #rail width:calc(100%-8px)) — an
+   ungated body.big #rail crushed it to a 140px column with tools spilling out (overflow:visible). Gate it. */
+body.big:not(.overlay) #rail { width: 140px; }
 body.big #rail .tool { height: 42px; font-size: 15px; }
 body.big #rail .tool svg { width: 21px; height: 21px; }
 body.big .swatch { width: 28px; height: 28px; }
 body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px; }
+
+/* "Larger controls" in the OVERLAY: enlarge the actual targets while keeping the ONE horizontal row
+   (never the 140px vertical crush — gated above). Each selector adds .big over its base body.overlay
+   rule so it wins on specificity; set NO width (leave it to the calc/fp-moved/fp-collapsed rules) and
+   NO !important. The rail-actions .btn, the width picker, and the swatches are the controls the leaking
+   body.big rules can't reach in overlay — enlarge those, not just .tool. */
+body.overlay.big #rail { height: 60px; }
+body.overlay.big #rail .tool,
+body.overlay.big #rail .rail-actions .btn { height: 46px; padding: 0 9px; }
+body.overlay.big #rail .tool svg,
+body.overlay.big #rail .rail-actions .btn svg { width: 22px; height: 22px; }
+/* Exclude the Text tool's real span — it is deliberately font-size:0 (a "Text" ::after stands in);
+   enlarging .tool span unconditionally would un-hide "Text on page" and collide with the ::after. */
+body.overlay.big #rail .tool:not([data-tool="text"]) span,
+body.overlay.big #rail .rail-actions .btn span { font-size: 12px; }
+body.overlay.big #rail .tool[data-tool="text"] span::after { font-size: 12px; }
+body.overlay.big #context-bar .btn.width { min-width: 38px; height: 36px; }
+body.overlay.big #context-bar .swatch { width: 26px; height: 26px; }
 
 #placeholder { color: var(--muted); margin-top: 15vh; }
 
@@ -1360,6 +1391,8 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
   height: 38px;
 }
 .modal-actions .btn.primary { border-color: var(--ink); }
+.modal-actions .btn.danger { background: #b3261e; color: #fff; border-color: #8c1d18; }
+.modal-actions .btn.danger:hover:not(:disabled) { background: #8c1d18; }
 
 /* Chrome text is NOT selectable — dragging across the toolbar shouldn't highlight button labels ("Pen",
    "Highlight", …). Notes CONTENT (textareas, captions) stays selectable so students can copy their own work. */
@@ -1501,6 +1534,28 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
 }
 
 #status.show { opacity: 1; }
+
+/* Persistent alert (autosave failure / scratchpad nearly full). Pinned near the TOP-center so it is
+   visible when the student is reading the question top (the bottom-fixed #status is the worst spot in a
+   tall overlay iframe). Does not auto-clear. High z so it sits above the toolbar. */
+.persist-alert {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483001; /* above the overlay toolbar and the Done FAB */
+  max-width: min(92vw, 560px);
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  box-shadow: 0 6px 22px rgba(20, 24, 28, 0.28);
+}
+.persist-alert[hidden] { display: none; }
+.persist-alert.error { background: #b3261e; color: #fff; border: 1px solid #8c1d18; }
+.persist-alert.warn { background: #fff4d6; color: #6b4e00; border: 1px solid #e6c34a; }
 
 /* small screens: hide TOOLBAR button labels, keep icons. Scoped to #topbar/#rail on purpose — a bare
    `.btn.labeled` would also blank the text of body-level modal buttons (confirmSnip / confirmOpenDialog),

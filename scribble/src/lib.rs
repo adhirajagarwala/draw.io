@@ -207,6 +207,17 @@ impl App {
         self.pointer_down_on(Surface::Sketch(note), x, y, erase_radius);
     }
 
+    /// Reserve a globally-unique item id at construction time (pointer-down), so an
+    /// item created *between* another item's pointer-down and its commit cannot reuse
+    /// the same id. A duplicate id makes `validate()` reject the whole document on the
+    /// next load (autosave restore / graded reopen), silently discarding the student's
+    /// work. `commit()`'s lazy `next_id = max(..)` stays as a defensive load-time floor.
+    fn alloc_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+        id
+    }
+
     fn pointer_down_on(&mut self, surface: Surface, x: f32, y: f32, erase_radius: f32) {
         if !self.surface_exists(surface) || !x.is_finite() || !y.is_finite() {
             return;
@@ -222,7 +233,7 @@ impl App {
                 self.current = Some((
                     surface,
                     Stroke {
-                        id: self.next_id,
+                        id: self.alloc_id(),
                         kind,
                         color: self.color,
                         width,
@@ -235,7 +246,7 @@ impl App {
                 self.current_shape = Some((
                     surface,
                     Shape {
-                        id: self.next_id,
+                        id: self.alloc_id(),
                         kind,
                         color: self.color,
                         width: self.pen_width,
@@ -369,13 +380,12 @@ impl App {
         }
         let (px, py) = self.clamp_to_page(surface, x, y);
         let item = Item::Text(Text {
-            id: self.next_id,
+            id: self.alloc_id(),
             pos: [px, py],
             content,
             color: self.color,
             size: self.text_size,
         });
-        self.next_id += 1;
         self.commit(surface, item);
         Ok(())
     }
@@ -2341,6 +2351,32 @@ mod tests {
         assert!(b.find_item_sketch(n, 30.0, 30.0) >= 0.0);
         // ids stay globally unique after load (next_id past the max)
         b.add_sketch_note(100.0, 100.0).unwrap();
+    }
+
+    #[test]
+    fn interleaved_item_creation_keeps_ids_unique() {
+        // E2 regression: an item created BETWEEN a stroke/shape's pointer-down and its
+        // commit must not reuse the reserved id. A duplicate id makes load_json reject
+        // the whole document (validate() sees a repeated id), silently discarding work.
+        let mut a = app_with_page();
+        let n = a.add_sketch_note(400.0, 300.0).unwrap();
+        // Stroke interleave: down (reserves an id) -> add_text (must take the NEXT id) -> up.
+        a.set_tool("pen");
+        a.pointer_down_sketch(n, 10.0, 10.0, 8.0);
+        a.add_text_sketch(n, 20.0, 20.0, "label").unwrap();
+        a.pointer_move(50.0, 50.0, 8.0);
+        a.pointer_up();
+        // Shape interleave: same pattern with a shape tool.
+        a.set_tool("rect");
+        a.pointer_down_sketch(n, 30.0, 30.0, 8.0);
+        a.add_text_sketch(n, 40.0, 40.0, "label2").unwrap();
+        a.pointer_move(60.0, 60.0, 8.0);
+        a.pointer_up();
+        // Duplicate ids would make this load fail; uniqueness lets it round-trip.
+        let json = a.save_json().unwrap();
+        let mut b = App::new();
+        b.load_json(&json)
+            .expect("interleaved item ids must be globally unique");
     }
 
     #[test]

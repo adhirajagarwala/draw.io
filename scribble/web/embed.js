@@ -6,7 +6,9 @@
 // degrades gracefully). Dependencies are injected so the module holds no app
 // state. Bump embed.js's ?v= import in app.js together with APP_VERSION.
 export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml, openOverlay, resizeOverlay,
-  hydrateAnnotations, serializeAnnotations }) {
+  hydrateAnnotations, serializeAnnotations, setPersistAlert }) {
+  // No-op fallback so a missing dep can never throw out of the save loop.
+  const persistAlert = typeof setPersistAlert === "function" ? setPersistAlert : () => {};
   // PrairieLearn frames Scribble via a srcdoc iframe (no ?embed query), flagged by
   // window.__SCRIBBLE_EMBED; the host-demo uses ?embed. Either enters embed mode.
   const plMode = !!window.__SCRIBBLE_EMBED;
@@ -20,25 +22,53 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
   // and fire input/change so PrairieLearn marks the form dirty + persists on its Save. The
   // Rust dirty flag is the debounce (cleared by save_json). Shared by Option B and C.
   function wireSaveLoop(input) {
-    const flush = () => {
+    // E-SEED: a save failure MUST be visible. The old bare `catch {}` swallowed every error, so a
+    // deterministically-throwing serialize failed permanently and invisibly. Count consecutive failures;
+    // surface a persistent (non-auto-clearing) banner + a distinctive console.error for staff.
+    let saveFailures = 0;
+    // `terminal` = a last-chance flush (unload/hide/blur/PL Save click) — surface a failure immediately then.
+    const flush = (terminal) => {
+      let res;
       try {
-        const v = serializeAnnotations(); // null when nothing changed; resolves the CURRENT app
-        if (v == null) return;
-        input.value = v;
+        res = serializeAnnotations(); // null when nothing changed; { b64, decodedBytes, nodes } otherwise
+      } catch (e) {
+        console.error("Scribble autosave: serialize failed", e);
+        saveFailures++;
+        if (saveFailures >= 2 || terminal) persistAlert("save-fail", "Couldn't save your work — please tell a proctor.");
+        return;
+      }
+      if (res == null) return; // nothing changed
+      // E1: refuse to write an over-cap blob — the server would reject the WHOLE submission (null it).
+      // Keep the last-good input.value so a PL Save still persists prior work; tell the student to simplify.
+      // (This is a deliberate refusal, NOT a save failure — do not touch saveFailures. Cap decided in app.js.)
+      if (res.overCap) {
+        persistAlert("cap", "Your scratchpad is nearly full — simplify your marks so they can be saved.");
+        return;
+      }
+      try {
+        input.value = res.b64;
         // Firing input+change makes PrairieLearn mark its form dirty → PL's own unsaved-changes
         // warning covers navigation; we don't add a second iframe-level one.
         input.dispatchEvent(new Event("input", { bubbles: true }));
         input.dispatchEvent(new Event("change", { bubbles: true }));
-      } catch { /* keep the dirty flag set; the next tick retries */ }
+        // A successful, under-cap write clears both banners and resets the failure counter.
+        persistAlert("cap", null);
+        persistAlert("save-fail", null);
+        saveFailures = 0;
+      } catch (e) {
+        console.error("Scribble autosave: write failed", e);
+        saveFailures++;
+        if (saveFailures >= 2 || terminal) persistAlert("save-fail", "Couldn't save your work — please tell a proctor.");
+      }
     };
-    let timer = setInterval(flush, 1500);
-    window.addEventListener("beforeunload", flush);
-    window.addEventListener("pagehide", flush);
+    let timer = setInterval(() => flush(false), 1500);
+    window.addEventListener("beforeunload", () => flush(true));
+    window.addEventListener("pagehide", () => flush(true));
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") { flush(); clearInterval(timer); timer = null; }
-      else if (!timer) { timer = setInterval(flush, 1500); }
+      if (document.visibilityState === "hidden") { flush(true); clearInterval(timer); timer = null; }
+      else if (!timer) { timer = setInterval(() => flush(false), 1500); }
     });
-    window.addEventListener("blur", flush); // best-effort: focus leaving the iframe (e.g. clicking Save)
+    window.addEventListener("blur", () => flush(true)); // best-effort: focus leaving the iframe (e.g. clicking Save)
   }
 
   // Option C (transparent overlay): the question is rendered LIVE in the PARENT page; we set
