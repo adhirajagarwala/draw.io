@@ -5,7 +5,8 @@
 // (no reparent, no jump), tracks the cursor, drops them clamped to the VIEWPORT,
 // and toggles a collapsed state. Bump this module's ?v= import with APP_VERSION.
 
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
+import { visibleBand, clampIntoBand } from "./visible-band.js?v=163";
+
 const DRAG_SLOP = 4; // px before a lift commits — a press-without-move is a no-op
 
 // Keep a moved panel on-screen after a window/iframe resize. Clamp to the
@@ -19,8 +20,11 @@ export function clampFixed(el, win = window) {
   // element's rect is 0×0, so the clamp bound would be innerWidth-0 and under-clamp a restored position.
   if (!el.classList.contains("fp-moved") || el.classList.contains("fp-dragging") || !el.getClientRects().length) return;
   const r = el.getBoundingClientRect();
-  el.style.left = `${Math.round(clamp(parseFloat(el.style.left) || 0, 4, win.innerWidth - r.width - 4))}px`;
-  el.style.top = `${Math.round(clamp(parseFloat(el.style.top) || 0, 4, win.innerHeight - r.height - 4))}px`;
+  const band = visibleBand(win); // the on-screen band (iframe realm) or the whole viewport (standalone/reparented)
+  const { left, top } = clampIntoBand(parseFloat(el.style.left) || 0, parseFloat(el.style.top) || 0,
+                                      r.width, r.height, r.height, band); // the whole bar is the handle -> handleH = height
+  el.style.left = `${Math.round(left)}px`;
+  el.style.top = `${Math.round(top)}px`;
 }
 
 // el          : the panel (#rail / #topbar). Already position:fixed in body.overlay.
@@ -36,7 +40,7 @@ const DRAG_EXCLUDE = "button, input, select, textarea, a, #context-bar, [content
 // opts.win : the realm whose viewport the drop-clamp measures against — the iframe's
 //            own window by default, or `window.parent` when `el` is reparented into the
 //            PL page (so a dropped bar is clamped to the REAL screen, not the tall iframe).
-export function makeFloating(el, { collapse, onChange, win = window }) {
+export function makeFloating(el, { collapse, onChange, onSettle, win = window }) {
   let drag = null, raf = 0;
 
   el.addEventListener("pointerdown", (ev) => {
@@ -71,16 +75,18 @@ export function makeFloating(el, { collapse, onChange, win = window }) {
       // (the pre-lift rect is the full-width bar and would over-clamp left to ~4px).
       const lr = el.getBoundingClientRect();
       drag.pw = lr.width; drag.ph = lr.height;
+      drag.band = visibleBand(win); // cache the band at lift — a per-frame cross-realm frameElement read would thrash layout
     }
     drag.fx = ev.clientX - drag.dx;
     drag.fy = ev.clientY - drag.dy;
     if (!raf) raf = requestAnimationFrame(() => {
       raf = 0;
-      // Live clamp: the bar can never leave the viewport even mid-drag. Clamp only the
-      // APPLIED values (never drag.dx/dy) — sticky-edge, and the grab offset re-attaches
-      // when the pointer comes back. clampFixed can't do this (it skips .fp-dragging).
-      el.style.left = `${Math.round(clamp(drag.fx, 4, win.innerWidth - drag.pw - 4))}px`;
-      el.style.top = `${Math.round(clamp(drag.fy, 4, win.innerHeight - drag.ph - 4))}px`;
+      // Live clamp against the VISIBLE BAND (cached at lift — no per-frame layout flush): the bar can never be
+      // dragged below the fold. Clamp only the APPLIED values (never drag.dx/dy) — sticky-edge, and the grab
+      // offset re-attaches when the pointer comes back.
+      const { left, top } = clampIntoBand(drag.fx, drag.fy, drag.pw, drag.ph, drag.ph, drag.band);
+      el.style.left = `${Math.round(left)}px`;
+      el.style.top = `${Math.round(top)}px`;
     });
   });
 
@@ -97,10 +103,12 @@ export function makeFloating(el, { collapse, onChange, win = window }) {
       if (d.preMoved) { el.style.left = d.preL; el.style.top = d.preT; }
       else { el.classList.remove("fp-moved"); el.style.left = ""; el.style.top = ""; }
       clampFixed(el, win);
+      onSettle?.(); // a cancelled FIRST drag reverts to the default (non-moved) bar — re-stick it to the band top
       return;
     }
     clampFixed(el, win);              // clamp the drop into the (possibly parent) viewport
     onChange?.();
+    onSettle?.();                     // a MOVED drop is left as-is (restickRail no-ops on fp-moved); harmless here
   };
   el.addEventListener("pointerup", (ev) => { if (drag && ev.pointerId === drag.id) end(false); });
   el.addEventListener("pointercancel", (ev) => { if (drag && ev.pointerId === drag.id) end(true); });

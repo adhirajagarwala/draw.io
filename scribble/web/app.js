@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "162";
+const APP_VERSION = "163";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=162";
+import init, { App } from "./pkg/scribble.js?v=163";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,16 +17,17 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=162";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=162";
-import { initEmbed } from "./embed.js?v=162";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=162";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=162";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=162";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=162";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=162";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=162";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=162";
+} from "./utils.js?v=163";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=163";
+import { initEmbed } from "./embed.js?v=163";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=163";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=163";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=163";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=163";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=163";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=163";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=163";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=163";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -1596,9 +1597,28 @@ function regionHasBrokenImage(x0, y0, x1, y1) {
 
 // Surface the notes after a snip: show it if hidden, and expand it if it's minimised to a strip (overlay)
 // — otherwise a clip lands out of sight in the collapsed strip.
+// R1: float the notes pane at the TOP of the visible band (just below the toolbar) — never below the fold in
+// the question-tall overlay iframe. Preserves the student's chosen size; only the position resets to band-top.
+function placeNotesAtBandTop() {
+  const stage = $("stage"), sr = stage.getBoundingClientRect(), b = visibleBand();
+  const CLEAR = 64; // clear the top toolbar (rail ~52 + a gap)
+  const left = Math.max(8, Math.round(b.left - sr.left + 8));
+  const top = Math.round(b.top - sr.top + CLEAR);
+  const pane = els.notesPane;
+  const w = Math.round(parseFloat(pane.style.width) || Math.max(280, sr.width - 16));
+  const h = Math.max(150, Math.min(Math.round(parseFloat(pane.style.height) || 276), Math.round(b.bottom - b.top - CLEAR - 16)));
+  floatNotes(left, top, w, h); // floatNotes -> clampNotes keeps it in-band
+}
+
 function revealNotes() {
-  if (els.notesPane.hidden) { toggleNotes(true); return; }
-  if (document.body.classList.contains("overlay") && isNotesCollapsed()) { setNotesCollapsed(false); savePrefs(); }
+  if (els.notesPane.hidden) { toggleNotes(true); return; } // hidden → toggleNotes brings it to the band top (R1)
+  if (!document.body.classList.contains("overlay")) return;
+  if (isNotesCollapsed()) { setNotesCollapsed(false); savePrefs(); } // expand a strip, then fall through to the band check
+  // Visible + expanded (incl. a just-expanded low strip whose body now extends below the fold): a snip must
+  // never reveal the pane off-screen — if its header is out of the band OR its body runs past the bottom,
+  // bring it to the band top so the new clip is on-screen.
+  const pane = els.notesPane, pr = pane.getBoundingClientRect(), b = visibleBand();
+  if (pr.top < b.top || pr.top > b.bottom - 36 || pr.bottom > b.bottom) { placeNotesAtBandTop(); savePrefs(); }
 }
 
 async function finishSnip(r) {
@@ -3370,7 +3390,15 @@ function toggleNotes(show) {
   if (visible) {
     if (isNotesCollapsed()) setNotesCollapsed(false); // re-opening from fully-hidden → expand, not to a strip
     renderNotes();
-    if (isNotesFloating()) clampNotes(); // re-fit a restored floating window to the live stage
+    if (isNotesFloating()) {
+      if (document.body.classList.contains("overlay")) {
+        // R1: if the pane would open above OR below the visible band, bring it to the band top; otherwise keep
+        // the student's in-band position. Either way it opens fully on-screen — never needing a scroll to find.
+        const pr = els.notesPane.getBoundingClientRect(), b = visibleBand();
+        if (pr.top < b.top || pr.top > b.bottom - 36) placeNotesAtBandTop();
+        else clampNotes();
+      } else clampNotes(); // non-overlay: re-fit a restored floating window to the live stage
+    }
   }
 }
 
@@ -3976,13 +4004,16 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // and the rail may have just been reparented into the parent (so $("rail-collapse") would be null).
           // onChange also nudges the bar out of an active calculator hole (a drag can park it under
           // the drawer, where it would render half-clipped — the irrecoverable-panel class of bug).
-          const railFP = makeFloating(railEl, { collapse: railEl.querySelector("#rail-collapse"), onChange: () => { savePrefs(); calcDodgeNudge(); }, win: railWin });
+          const railFP = makeFloating(railEl, { collapse: railEl.querySelector("#rail-collapse"), onChange: () => { savePrefs(); calcDodgeNudge(); }, onSettle: () => restickRail(), win: railWin });
           // B3-7 + review L-1: prefer railFloat2, but when NOT reparented fall back to the legacy railFloat —
           // gate-off coords are still iframe-realm (same realm v160 saved them in), so a v160 student who dragged
           // their toolbar isn't reset. Only the parent-realm (post-flip) path ignores the legacy key.
           const rp = (prefs && (prefs.railFloat2 || (railWin === window && prefs.railFloat))) || {};
           if (rp.left && rp.top) railFP.floatTo(parseFloat(rp.left), parseFloat(rp.top));
-          if (rp.collapsed) railFP.setCollapsed(true);
+          // R4: the toolbar always loads EXPANDED. A persisted collapsed state is kept live within the
+          // session (the collapse button still works + saves), but NOT re-applied on reload — a bar that
+          // reloaded collapsed-and-off-screen was un-findable. A restored MOVED position (above) is pulled
+          // into the visible band by clampFixed below, so it can never load off-screen either.
           // Card-aligned geometry (Decision 1): the reparented bar spans the QUESTION CARD's horizontal
           // extent (the overlay iframe), viewport-fixed vertically — NOT the full browser width over PL's
           // own header. Applies only to the DEFAULT (un-dragged) bar; a dragged (fp-moved) bar keeps its spot.
@@ -4000,7 +4031,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           };
           alignRailToCard();
           clampFixed(railEl, railWin);
-          const onRailResize = () => { alignRailToCard(); clampFixed(railEl, railWin); };
+          const onRailResize = () => { alignRailToCard(); clampFixed(railEl, railWin); restickRail(); };
           railWin.addEventListener("resize", onRailResize);
           if (railWin !== window) {
             // Parent-realm listeners → tear down on the iframe swap (B3-6). Re-align on parent scroll / iframe
@@ -4025,38 +4056,50 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
             if (railWin !== window) railEl.style.display = document.body.classList.contains("annotate-active") ? "" : "none";
           };
           syncRailVis();
-          // The VISIBLE band of this (question-tall) iframe, in iframe coords. position:fixed here pins
-          // to the iframe box, not the browser screen, so a panel position restored from a taller
-          // question can be "in bounds" yet below the fold. One-shot, read-only, same-origin parent
-          // peek; falls back to the iframe box (host-demo / cross-origin / degenerate band).
-          const visibleBand = () => {
-            let top = 0, bottom = window.innerHeight;
+          // The VISIBLE band of this (possibly question-tall) iframe, in the rail's realm. visibleBand /
+          // clampIntoBand now live in visible-band.js (shared with the rail engine + notes). railBand() keys
+          // it on railWin, so it's the iframe band today and the whole parent viewport once reparented.
+          const railBand = () => visibleBand(railWin);
+          // On show (Annotate), pull a dragged/restored rail into the band the student can actually see.
+          // clampFixed is now band-aware on BOTH axes and no-ops a non-moved bar, so this is a thin call;
+          // the reparented realm is handled by visibleBand(window.parent) inside clampFixed.
+          const clampRailOnShow = () => { clampFixed(railEl, railWin); };
+          // R1/R4: keep the DEFAULT (un-dragged, in-iframe) toolbar glued to the top of the visible band as the
+          // parent scrolls, so a tall question's tools never scroll off-screen exactly when they're needed. A
+          // MOVED bar is left to clampFixed (it may drift on scroll but stays recoverable); a reparented bar is
+          // already viewport-fixed. Gated: RAIL_VIEWPORT_STICKY=false leaves pure band-clamp (still meets R1-R4).
+          const RAIL_VIEWPORT_STICKY = true;
+          const restickRail = () => {
+            if (railWin !== window || !RAIL_VIEWPORT_STICKY) return;                 // reparented is already viewport-fixed
+            if (railEl.classList.contains("fp-moved") || railEl.classList.contains("fp-dragging")) return; // moved/drag own their bounds
+            if (!document.body.classList.contains("annotate-active") || !railEl.getClientRects().length) return; // hidden
+            const band = railBand();
+            const r = railEl.getBoundingClientRect();
+            const { top } = clampIntoBand(parseFloat(railEl.style.left) || r.left, band.top + MARGIN,
+                                          r.width, r.height, r.height, band); // default bar: CSS owns left/width; we own top
+            const t = `${Math.round(top)}px`;
+            if (railEl.style.top !== t) railEl.style.top = t;                        // write only on change (no restyle churn)
+          };
+          // Realm-proven trigger (the calc-dodge mechanism, verified live): capture-phase passive scroll on the
+          // PARENT document (hears PL's inner scroller too) + parent resize, coalesced into OUR-realm rAF (a
+          // parent rAF with an iframe callback is the v155/#13 failure mode). Torn down on the PL iframe swap.
+          if (RAIL_VIEWPORT_STICKY && railWin === window) {
             try {
-              const fr = window.frameElement?.getBoundingClientRect();
-              const ph = window.parent?.innerHeight;
-              if (fr && ph) {
-                top = Math.max(0, -fr.top);
-                bottom = Math.min(window.innerHeight, ph - fr.top);
+              const pwin = window.parent;
+              if (pwin && pwin !== window && pwin.document) {
+                let sraf = 0;
+                const onStickScroll = () => { if (sraf) return; sraf = requestAnimationFrame(() => { sraf = 0; restickRail(); }); };
+                const stickOpts = { capture: true, passive: true };
+                pwin.document.addEventListener("scroll", onStickScroll, stickOpts);
+                pwin.addEventListener("resize", onStickScroll, { passive: true });
+                window.addEventListener("pagehide", () => {
+                  pwin.document.removeEventListener("scroll", onStickScroll, stickOpts);
+                  pwin.removeEventListener("resize", onStickScroll);
+                  if (sraf) cancelAnimationFrame(sraf);
+                }, { once: true });
               }
-            } catch { /* cross-origin parent — the iframe box is the best bound we have */ }
-            if (bottom - top < 120) { top = 0; bottom = window.innerHeight; }
-            return { top, bottom };
-          };
-          // On show (Annotate), pull a dragged/restored rail into the band the student can actually
-          // see. Only an fp-moved rail — the default full-width top pin is layout, not a position,
-          // and re-pinning it is Phase 1's job. One-shot on the transition, never scroll-coupled.
-          const clampRailOnShow = () => {
-            if (!railEl.classList.contains("fp-moved")) return;
-            clampFixed(railEl, railWin); // horizontal + box bounds against railWin (measurable: gate just released)
-            // Reparented (parent realm): position:fixed already pins to the browser viewport, so the rail is
-            // always on-screen — and visibleBand() below is IFRAME-realm coords (wrong space here). Skip it.
-            if (railWin !== window) return;
-            const band = visibleBand();
-            const h = railEl.getBoundingClientRect().height;
-            const t = parseFloat(railEl.style.top) || 0;
-            const hi = Math.max(band.top + 4, band.bottom - h - 4);
-            railEl.style.top = `${Math.round(Math.max(band.top + 4, Math.min(hi, t)))}px`;
-          };
+            } catch { /* cross-origin parent — no sticky; the on-show band clamp still holds */ }
+          }
           // "Done" (the parent's Annotate toggle) removes annotate-active from our body → drop the tool
           // to Select (a clean click-through "finished" state) but REMEMBER the drawing tool: without a
           // restore, every re-entry stayed in Select — off the toolbar the cursor read as a plain arrow
@@ -4078,6 +4121,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               // exactly when the rail is collapsed, and the Select trap would survive there.
               railRoot.querySelector(`.tool[data-tool="${lastDrawTool}"]`)?.click();
               clampRailOnShow();
+              restickRail(); // land the default bar at the band top even if the page was scrolled at Annotate-time
               clampNotes(); // the pane re-appears with the chrome — never at an off-frame position
               calcDodgeNudge(); // the chrome may be re-appearing straight under an open calculator
             }
@@ -4087,7 +4131,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // If Annotate was pressed BEFORE wasm init finished, the ON transition already happened and
           // the observer will never see it — run the show-clamps once for that first showing. (No
           // Select trap in this path: pen is both the markup default and lastDrawTool's default.)
-          if (wasAnnotating) { clampRailOnShow(); clampNotes(); calcDodgeNudge(); }
+          if (wasAnnotating) { clampRailOnShow(); restickRail(); clampNotes(); calcDodgeNudge(); }
 
           // ---- #13: PL's Calculator drawer must win its own clicks. calc-dodge punches a clip-path
           // hole in the overlay frame wherever the OPEN drawer overlaps it (clicks fall through, ink
@@ -4165,16 +4209,15 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
       // student last left it at (persisted via savePrefs on drag/resize); else the full-width default.
       const stage = $("stage");
       const sw = stage.offsetWidth || 360, sh = stage.offsetHeight || 520;
-      const nf = (prefs && prefs.notesFloat) || {};
-      // Read-only ignores a saved DRAG position: a spot the student dragged to while editing can land the
-      // strip mid-prose in the graded view. Always anchor the read-only strip below the question instead.
-      if (!READONLY && nf.on && nf.left && nf.top) {
-        floatNotes(parseFloat(nf.left), parseFloat(nf.top),
-                   parseFloat(nf.width) || (sw - 16), parseFloat(nf.height) || 276);
+      if (!READONLY) {
+        // R1/R4: editable notes always stage at the TOP of the visible band. A saved DRAG position is
+        // intentionally NOT restored — a spot saved under a taller/scrolled question loaded off-screen (the
+        // reported bug). Notes are scratch, so nothing needs to persist; they open at the band top anyway, and
+        // toggleNotes re-verifies the band on every open. This is just the staged geometry for that first open.
+        placeNotesAtBandTop();
       } else {
-        // Start the notes right below the question prose (measured on the parent host) instead of a
-        // fixed offset — reclaims the dead band between the text and the notes, and never overlaps a
-        // taller question. Stage-y aligns 1:1 with host-y (the iframe covers the host top-anchored).
+        // READONLY (graded inline view): anchor the strip below the question prose (measured on the parent
+        // host) — a saved editing-drag spot could land it mid-prose. Stage-y aligns 1:1 with host-y.
         let proseBottom = 0;
         try {
           const host = overlayHost();
