@@ -81,6 +81,11 @@ function syncNow() {
     const d = pdoc.getElementById("calculatorDrawer") || pdoc.querySelector("section.calculator-drawer");
     if (d && d !== observedDrawer) {
       observedDrawer = d;
+      // Narrow: drop the boot-time page-wide body-subtree fallback (and any dead prior drawer node) before
+      // re-observing just this drawer — else, now that the parent-realm MO actually fires, a lazy-drawer PL
+      // page would keep a subtree observer running page-wide for the iframe's life (review low). No-op on the
+      // hosted target (drawer present at boot → the body-subtree branch was never armed).
+      mo?.disconnect();
       mo?.observe(d, { attributes: true, attributeFilter: ["class", "style"] });
       if (d.parentElement) mo?.observe(d.parentElement, { childList: true });
       ro?.observe(d);
@@ -157,12 +162,14 @@ export function initCalcDodge(deps) {
     pdoc = pw.document;
     if (!frame || !pdoc || !pdoc.body) return false;
 
-    // Open/close is a class flip on the drawer; PL page swaps can add/remove/replace the node.
-    // syncNow() re-attaches these observers whenever the live drawer node changes, so a drawer
-    // that arrives late or gets node-replaced keeps its class flips heard. Constructed in OUR
-    // realm (observing parent nodes is fine; parent-realm constructors with iframe-realm
-    // callbacks proved unreliable on hosted PL — see sync()).
-    mo = new MutationObserver(sync);
+    // Open/close is a class flip on the drawer (verified live 2026-07-19: #calculatorDrawer is a PERSISTENT
+    // node whose `open` class toggles — NOT node re-creation). REFINED REALM LESSON: a DOM observer must be
+    // constructed in the realm of the node it OBSERVES. An IFRAME-realm MutationObserver watching a PARENT
+    // node silently never fired on hosted PL (the parked #13 bug); a PARENT-realm one does. So build it with
+    // `pw.*`. The callback stays our-realm `sync`, whose only job is to schedule OUR rAF — that rAF must stay
+    // our-realm (a PARENT rAF with an iframe callback is the DIFFERENT mechanism that failed at v155; observers
+    // are microtask-driven, not tied to the parent's paint). syncNow() still re-attaches on a node change.
+    mo = new pw.MutationObserver(sync);
     const drawer = pdoc.getElementById("calculatorDrawer") || pdoc.querySelector("section.calculator-drawer");
     if (!drawer) {
       // No drawer yet (older PL / different page): watch the body subtree for one arriving;
@@ -180,11 +187,22 @@ export function initCalcDodge(deps) {
     pw.addEventListener("resize", sync, { passive: true });
     cleanupFns.push(() => pw.removeEventListener("resize", sync));
 
+    // Belt-and-suspenders for the drawer open/close, using the REALM-PROVEN mechanism (a capture-phase
+    // parent-doc listener + our rAF, exactly like the scroll listener above — which fires on hosted). Capture
+    // hears the drawer toggles (#calculatorFab / #calculatorDrawerToggle / #calculatorDrawerclose) even if PL
+    // stops propagation, and Escape hears a keyboard close. The click fires BEFORE PL flips the `open` class,
+    // but sync's rAF defers syncNow to the next frame — after the flip settles — so findPanels() reads it right.
+    pdoc.addEventListener("click", sync, scrollOpts);
+    cleanupFns.push(() => pdoc.removeEventListener("click", sync, scrollOpts));
+    const onKey = (e) => { if (e.key === "Escape") sync(); };
+    pdoc.addEventListener("keydown", onKey, scrollOpts);
+    cleanupFns.push(() => pdoc.removeEventListener("keydown", onKey, scrollOpts));
+
     // Panel or frame resizing (resizeOverlay grows the frame with the prose) moves the hole.
-    if (window.ResizeObserver) {
-      ro = new ResizeObserver(sync); // our realm, same reasoning as the MutationObserver above
+    if (pw.ResizeObserver) {
+      ro = new pw.ResizeObserver(sync); // PARENT realm (frame is a parent node) — same lesson as the MO above
       ro.observe(frame);
-      cleanupFns.push(() => { ro.disconnect(); ro = null; });
+      cleanupFns.push(() => { try { ro.disconnect(); } catch { /* parent gone */ } ro = null; });
     }
 
     // PL panel swaps tear the iframe down — leave the parent clean (no stale clip).

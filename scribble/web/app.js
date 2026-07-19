@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "160";
+const APP_VERSION = "161";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=160";
+import init, { App } from "./pkg/scribble.js?v=161";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,16 +17,16 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=160";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=160";
-import { initEmbed } from "./embed.js?v=160";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=160";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=160";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=160";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=160";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=160";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=160";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=160";
+} from "./utils.js?v=161";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=161";
+import { initEmbed } from "./embed.js?v=161";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=161";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=161";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=161";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=161";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=161";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=161";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=161";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
