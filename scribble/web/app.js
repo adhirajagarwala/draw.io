@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "161";
+const APP_VERSION = "162";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=161";
+import init, { App } from "./pkg/scribble.js?v=162";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,16 +17,16 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=161";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=161";
-import { initEmbed } from "./embed.js?v=161";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=161";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=161";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=161";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=161";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=161";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=161";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=161";
+} from "./utils.js?v=162";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=162";
+import { initEmbed } from "./embed.js?v=162";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=162";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=162";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=162";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=162";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=162";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=162";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=162";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -3611,7 +3611,26 @@ function toggleHelp(show) {
   // #btn-help rides inside the rail's More menu, which the overlay REPARENTS into the parent page —
   // so look it up in the rail's realm ($() would search this iframe and return null there).
   railRoot.querySelector("#btn-help")?.classList.toggle("active", open);
-  if (open) $("help-close").focus();
+  if (!open) return;
+  // Band-place the card in the VISIBLE part of the (possibly question-tall) overlay iframe — else the flex
+  // centring lands it in the middle of the full iframe height, off-screen below the fold (the reported bug).
+  // Standalone: window.frameElement is null → the try is skipped → the CSS-centred layout stays (correct).
+  const card = $("help-card");
+  helpOverlay.style.alignItems = ""; card.style.marginTop = ""; card.style.maxHeight = ""; // reset to centred, then re-measure
+  try {
+    const fr = window.frameElement && window.frameElement.getBoundingClientRect();
+    const pvh = window.parent && window.parent.innerHeight;
+    if (fr && pvh) {
+      const visTop = Math.max(0, -fr.top);
+      const band = Math.min(pvh - fr.top, fr.height) - visTop;
+      if (band > 160) {
+        helpOverlay.style.alignItems = "flex-start";
+        card.style.maxHeight = `${Math.round(band - 32)}px`;
+        card.style.marginTop = `${Math.max(8, Math.round(visTop + band / 2 - card.offsetHeight / 2 - 20))}px`;
+      }
+    }
+  } catch { /* cross-frame — keep the centred layout */ }
+  $("help-close").focus();
 }
 $("btn-help").addEventListener("click", () => toggleHelp());
 $("help-close").addEventListener("click", () => toggleHelp(false));
@@ -3969,7 +3988,9 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // own header. Applies only to the DEFAULT (un-dragged) bar; a dragged (fp-moved) bar keeps its spot.
           // No-op (chrome.css full-width fallback) if the frame rect is unreadable, or when not reparented.
           const alignRailToCard = () => {
-            if (railWin === window || railEl.classList.contains("fp-moved")) return;
+            // A collapsed bar shrinks to its right-anchored handle (chrome.css .fp-collapsed:not(.fp-moved));
+            // re-applying inline left/width here would defeat that, so bail while collapsed too.
+            if (railWin === window || railEl.classList.contains("fp-moved") || railEl.classList.contains("fp-collapsed")) return;
             try {
               const fr = window.frameElement.getBoundingClientRect(); // iframe position in the parent viewport
               railEl.style.left = `${Math.round(fr.left + 4)}px`;

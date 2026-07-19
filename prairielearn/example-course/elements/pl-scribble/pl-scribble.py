@@ -139,7 +139,7 @@ _OVERLAY_SIZER = (
     # can't find "Done". Reparent it to <body> (outside any transformed ancestor) so fixed == viewport, and
     # make it large/prominent. INACTIVE: the compact launch pill back at the question's top-right corner.
     "if(on){if(b.parentNode!==document.body)document.body.appendChild(b);"
-    "b.style.position='fixed';b.style.left='auto';b.style.top='auto';b.style.bottom='24px';b.style.right='24px';b.style.zIndex='2147483000';"
+    "b.style.position='fixed';b.style.left='auto';b.style.bottom='auto';b.style.top='12px';b.style.right='12px';b.style.zIndex='2147483000';"
     "b.style.padding='14px 26px';b.style.fontSize='17px';b.style.fontWeight='700';"
     "b.style.background='#2f5fde';b.style.color='#fff';b.style.borderColor='#2f5fde';b.style.borderRadius='999px';"
     "b.style.boxShadow='0 6px 22px rgba(47,95,222,.45)';b.style.cursor='move';b.style.touchAction='none';"

@@ -817,6 +817,9 @@ body.embedded #notes-pane > header { touch-action: none; }
 /* collapsed → minimise to just the grip + chevron (a small handle to restore from) */
 body.overlay #rail.fp-collapsed :is(.rail-group, #context-bar, .rail-actions) { display: none; }
 body.overlay #rail.fp-collapsed { width: auto; } /* shrink to the handle — don't leave a full-width empty bar */
+/* Collapse the DEFAULT (un-dragged) bar toward the RIGHT — where the minimise button is — so the handle stays
+   under your cursor, not way over at the bar's left edge. A dragged (fp-moved) bar keeps its own position. */
+body.overlay #rail.fp-collapsed:not(.fp-moved) { left: auto; right: 4px; }
 body.overlay #topbar.fp-collapsed :is(.brand, #btn-open, .topbar-right) { display: none; }
 
 /* ============================================================================

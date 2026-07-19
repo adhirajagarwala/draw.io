@@ -266,6 +266,8 @@
 .scribble-chrome #rail.fp-dragging { z-index: 80; cursor: grabbing; box-shadow: 0 6px 20px rgba(20, 24, 28, 0.22); }
 .scribble-chrome #rail.fp-collapsed :is(.rail-group, #context-bar, .rail-actions) { display: none; }
 .scribble-chrome #rail.fp-collapsed { width: auto; }
+/* Collapse the DEFAULT (un-dragged) bar toward the RIGHT — where the minimise button is (mirror style.css). */
+.scribble-chrome #rail.fp-collapsed:not(.fp-moved) { left: auto; right: 4px; }
 .scribble-chrome #rail {
   gap: 6px; padding: 5px 7px; height: 52px;
   border-radius: 12px; border: 1px solid var(--line); background: #fff;

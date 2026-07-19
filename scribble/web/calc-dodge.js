@@ -165,8 +165,10 @@ export function initCalcDodge(deps) {
     // Open/close is a class flip on the drawer (verified live 2026-07-19: #calculatorDrawer is a PERSISTENT
     // node whose `open` class toggles — NOT node re-creation). REFINED REALM LESSON: a DOM observer must be
     // constructed in the realm of the node it OBSERVES. An IFRAME-realm MutationObserver watching a PARENT
-    // node silently never fired on hosted PL (the parked #13 bug); a PARENT-realm one does. So build it with
-    // `pw.*`. The callback stays our-realm `sync`, whose only job is to schedule OUR rAF — that rAF must stay
+    // node silently never fired on hosted PL (the parked #13 bug); a PARENT-realm one is the correct
+    // construction, so build it with `pw.*` — but on hosted PL even the parent MO proved UNRELIABLE for the
+    // async open/close (see the settle window below, which is the load-bearing fix; the MO is a best-effort
+    // fast path). The callback stays our-realm `sync`, whose only job is to schedule OUR rAF — that rAF must stay
     // our-realm (a PARENT rAF with an iframe callback is the DIFFERENT mechanism that failed at v155; observers
     // are microtask-driven, not tied to the parent's paint). syncNow() still re-attaches on a node change.
     mo = new pw.MutationObserver(sync);
@@ -192,11 +194,21 @@ export function initCalcDodge(deps) {
     // hears the drawer toggles (#calculatorFab / #calculatorDrawerToggle / #calculatorDrawerclose) even if PL
     // stops propagation, and Escape hears a keyboard close. The click fires BEFORE PL flips the `open` class,
     // but sync's rAF defers syncNow to the next frame — after the flip settles — so findPanels() reads it right.
-    pdoc.addEventListener("click", sync, scrollOpts);
-    cleanupFns.push(() => pdoc.removeEventListener("click", sync, scrollOpts));
-    const onKey = (e) => { if (e.key === "Escape") sync(); };
+    // A calc toggle flips the drawer's `open` class ASYNCHRONOUSLY (verified live: after a close click the
+    // class was already removed but the clip stayed — the single click-triggered sync ran BEFORE the flip
+    // settled, and the parent MutationObserver did not reliably catch it on hosted PL, per the realm note
+    // above). So re-sync over a short window
+    // after each parent click / Escape to catch the SETTLED class. Bounded (a few frames over ~650ms),
+    // rAF-coalesced — NOT continuous polling. syncNow is cheap (a few getBoundingClientRect) and clears fast
+    // when the drawer is closed.
+    let settleTimers = [];
+    const settleSync = () => { sync(); settleTimers.forEach(clearTimeout); settleTimers = [120, 320, 650].map((ms) => setTimeout(sync, ms)); };
+    pdoc.addEventListener("click", settleSync, scrollOpts);
+    cleanupFns.push(() => pdoc.removeEventListener("click", settleSync, scrollOpts));
+    const onKey = (e) => { if (e.key === "Escape") settleSync(); };
     pdoc.addEventListener("keydown", onKey, scrollOpts);
     cleanupFns.push(() => pdoc.removeEventListener("keydown", onKey, scrollOpts));
+    cleanupFns.push(() => { settleTimers.forEach(clearTimeout); settleTimers = []; });
 
     // Panel or frame resizing (resizeOverlay grows the frame with the prose) moves the hole.
     if (pw.ResizeObserver) {
