@@ -5,7 +5,7 @@
 // (no reparent, no jump), tracks the cursor, drops them clamped to the VIEWPORT,
 // and toggles a collapsed state. Bump this module's ?v= import with APP_VERSION.
 
-import { visibleBand, clampIntoBand } from "./visible-band.js?v=165";
+import { visibleBand, clampIntoBand, GRAB } from "./visible-band.js?v=166";
 
 const DRAG_SLOP = 4; // px before a lift commits — a press-without-move is a no-op
 
@@ -21,8 +21,11 @@ export function clampFixed(el, win = window) {
   if (!el.classList.contains("fp-moved") || el.classList.contains("fp-dragging") || !el.getClientRects().length) return;
   const r = el.getBoundingClientRect();
   const band = visibleBand(win); // the on-screen band (iframe realm) or the whole viewport (standalone/reparented)
+  // handleH is capped at GRAB: clampIntoBand assumes the grab handle is a TOP STRIP no taller than GRAB, which
+  // is what pins top_min at the band top. A WRAPPED (2-row, ~100px) bar would otherwise get top_min = by0 - 44
+  // and could hide its first tool row above the fold. At today's 52px bar min(52,56)=52 — byte-identical.
   const { left, top } = clampIntoBand(parseFloat(el.style.left) || 0, parseFloat(el.style.top) || 0,
-                                      r.width, r.height, r.height, band); // the whole bar is the handle -> handleH = height
+                                      r.width, r.height, Math.min(r.height, GRAB), band);
   el.style.left = `${Math.round(left)}px`;
   el.style.top = `${Math.round(top)}px`;
 }
@@ -84,7 +87,7 @@ export function makeFloating(el, { collapse, onChange, onSettle, win = window })
       // Live clamp against the VISIBLE BAND (cached at lift — no per-frame layout flush): the bar can never be
       // dragged below the fold. Clamp only the APPLIED values (never drag.dx/dy) — sticky-edge, and the grab
       // offset re-attaches when the pointer comes back.
-      const { left, top } = clampIntoBand(drag.fx, drag.fy, drag.pw, drag.ph, drag.ph, drag.band);
+      const { left, top } = clampIntoBand(drag.fx, drag.fy, drag.pw, drag.ph, Math.min(drag.ph, GRAB), drag.band);
       el.style.left = `${Math.round(left)}px`;
       el.style.top = `${Math.round(top)}px`;
     });

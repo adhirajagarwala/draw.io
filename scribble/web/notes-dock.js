@@ -9,11 +9,16 @@
 // floatNotes / dockNotes / clampNotes back from prefs + boot + the splitter guard.
 // Bump this module's ?v= import in app.js together with APP_VERSION.
 
-import { visibleBand, clampIntoBand } from "./visible-band.js?v=165";
+import { visibleBand, clampIntoBand } from "./visible-band.js?v=166";
 
 let els, $, savePrefs, relayoutSketches, stageEl;
 const MIN_W = 318, MIN_H = 140, DOCK_BAND = 72; // MIN_W fits the header (grip + title + +Text/+Draw/Minimise/✕) without collision
-const RAIL_CLEAR = 64; // px reserved at the visible-band TOP so the notes header can't be placed/dragged behind the sticky toolbar (matches placeNotesAtBandTop's CLEAR)
+// px reserved at the visible-band TOP so the notes header can't be placed/dragged behind the sticky toolbar.
+// PUSHED (not measured) from app.js whenever the bar's height changes — a WRAPPED 2-row toolbar is taller than
+// the old hardcoded 64, and notes parked behind it is exactly the occlusion this reserve exists to prevent.
+// Kept a plain module variable so the per-frame drag clamp never measures (no layout flush, no cross-realm read).
+let railClear = 64;
+export function setRailClear(px) { railClear = Math.max(64, px | 0); }
 const DRAG_SLOP = 4; // px the pointer must travel before a header press becomes a lift (a click is a no-op)
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
 const embedded = () => document.body.classList.contains("embedded");
@@ -105,10 +110,10 @@ export function clampNotes(relaxed = false) {
     // measured size passed in (R2). Replaces the strict fully-inside-the-TALL-stage math below, which let the
     // pane sit far below the fold. The non-overlay branch (standalone / Option-B) keeps that math untouched.
     const b = visibleBand(window);
-    // Reserve RAIL_CLEAR at the band TOP: the sticky toolbar pins to band.top, and a header dragged/placed
+    // Reserve railClear at the band TOP: the sticky toolbar pins to band.top, and a header dragged/placed
     // fully behind it is occluded (opaque, higher z-index) — the "grabbable slice stays on-screen" rule can't
     // catch occlusion, only off-screen. So the notes band starts below the toolbar.
-    const bandStage = { left: b.left - sr.left, right: b.right - sr.left, top: b.top - sr.top + RAIL_CLEAR, bottom: b.bottom - sr.top };
+    const bandStage = { left: b.left - sr.left, right: b.right - sr.left, top: b.top - sr.top + railClear, bottom: b.bottom - sr.top };
     const headH = pane.querySelector("header").offsetHeight || 36; // measured fresh (survives .big "Larger")
     if (pane.classList.contains("notes-collapsed")) { // strip: clamp POSITION only, never write w/h
       const c = clampIntoBand(parseFloat(pane.style.left) || 0, parseFloat(pane.style.top) || 0,
@@ -210,10 +215,10 @@ export function initNotesDock(deps) {
       // Non-overlay keeps free drag (the relaxed shove-aside drop is a designed affordance there).
       let L = drag.fx, T = drag.fy;
       if (overlay()) {
-        // Cached band (no per-frame parent layout flush) with RAIL_CLEAR reserved at the top so the header
+        // Cached band (no per-frame parent layout flush) with railClear reserved at the top so the header
         // can't be dragged behind the sticky toolbar. iframe-fixed coords (the pane is position:fixed while
         // lifted, so NO stage conversion): a notes drag can no longer be stranded below the fold.
-        const b = { ...drag.band, top: drag.band.top + RAIL_CLEAR };
+        const b = { ...drag.band, top: drag.band.top + railClear };
         const pw = drag.collapsed ? pane.offsetWidth : drag.w, ph = drag.collapsed ? pane.offsetHeight : drag.h;
         const handleH = drag.collapsed ? pane.offsetHeight : drag.headerH;
         ({ left: L, top: T } = clampIntoBand(drag.fx, drag.fy, pw, ph, handleH, b));

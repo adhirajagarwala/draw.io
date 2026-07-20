@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "165";
+const APP_VERSION = "166";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=165";
+import init, { App } from "./pkg/scribble.js?v=166";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,17 +17,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=165";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=165";
-import { initEmbed } from "./embed.js?v=165";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=165";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=165";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=165";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=165";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=165";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=165";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=165";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=165";
+} from "./utils.js?v=166";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=166";
+import { initEmbed } from "./embed.js?v=166";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=166";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=166";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=166";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=166";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=166";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=166";
+import { makeResizable } from "./rail-resize.js?v=166";
+import { makeOverflow } from "./rail-overflow.js?v=166";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=166";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=166";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -115,6 +117,11 @@ const JS_TOOLS = new Set(["snip"]);
 // every Phase-1 addition is inert: railHostDoc stays this document (identical to the old behaviour), chrome.css
 // is never injected, and floating-panel's `win` defaults to this window. See memory: scribble-vnext-15point-plan.
 const PHASE1_CHROME_REPARENT = false;
+// v166 toolbar-overflow TRIAL: ship BOTH behaviours behind a live toggle so the overflow style can be judged on
+// the real question, then flip TRIAL false and let DEFAULT fix the winner (deleting the loser is then a contained
+// diff). "more" = demote groups into the More popover (bar stays one 52px row); "wrap" = wrap to a 2nd row.
+const RAIL_OVERFLOW_TRIAL = true;
+const RAIL_OVERFLOW_DEFAULT = "more";
 // The realm the tool rail lives in. Normally this iframe's document; when the Phase-1 reparent is enabled the
 // rail lives in the parent page, so every tool/colour/width query must search THAT document — a plain
 // `document.querySelector` would search the now-empty iframe. Set by the reparent; defaults to the iframe.
@@ -140,6 +147,9 @@ let drawingPointerId = null;      // which contact owns the in-progress stroke
 let gesturePointerId = null;      // the ONE contact that owns ANY armed canvas gesture (draw/snip/marquee/drag)
 let gestureCaptureEl = null;      // the canvas that captured it — a blur with capture still held is benign
 let calcDodgeNudge = () => {};    // overlay boot swaps in the calc-hole dodge; no-op everywhere else
+// v166: re-derive the toolbar fit after anything that changes tool sizes (e.g. "Larger controls").
+// Module-scope hook because applyBig() is module-scope while railLayout lives in the rail-init closure.
+let railRefit = () => {};
 // Backstop: the canvas-bound pointerup/cancel handlers only fire when a pointer ends ON the canvas. A
 // rejected 2nd touch (or a stroke ending over a floating panel) would otherwise leave its id in
 // activePointers forever — and once >=2 stale ids accumulate, EVERY later stroke is rejected and the
@@ -3583,6 +3593,7 @@ function applyBig(on) {
   els.btn.big.classList.toggle("active", on);
   syncAria();
   clampContextBar(); // larger controls shrink the toolbar gap → re-fit a docked bar
+  railRefit(); // tool widths + bar height changed → preset derivation and the overflow fit are stale
 }
 els.btn.big.addEventListener("click", () => {
   applyBig(!document.body.classList.contains("big"));
@@ -3746,7 +3757,11 @@ function savePrefs() {
           const r = railRoot.querySelector("#rail");
           return { left: r.classList.contains("fp-moved") ? r.style.left : "",
                    top: r.classList.contains("fp-moved") ? r.style.top : "",
-                   collapsed: r.classList.contains("fp-collapsed") };
+                   collapsed: r.classList.contains("fp-collapsed"),
+                   // v166: chosen bar width ("" = full span) + overflow mode. Same versioned sub-key, so a v165
+                   // pref object still loads here and a v166 one still loads on v165 (unknown fields ignored).
+                   width: r.style.getPropertyValue("--rail-w") || "",
+                   ovMode: r.classList.contains("ov-wrap") ? "wrap" : "more" };
         })()
         : (prev.railFloat2 || {}),
       railFloat: prev.railFloat || {}, // carry the legacy iframe-realm key forward untouched (rollback safety)
@@ -3898,6 +3913,34 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         // arrow-key model, and it invalidates the children's aria-pressed / aria-haspopup).
         morePop.id = "more-popover"; morePop.hidden = true;
         morePop.append(els.btn.big, $("btn-help"), palette);
+        // ---- v166: toolbar width + overflow controls, PREPENDED above Larger/Help/palette ----
+        // All labels via textContent (never innerHTML of anything but the static moreBtn SVG above).
+        const mkSegBtn = (label, title) => {
+          const b = document.createElement("button");
+          b.type = "button"; b.textContent = label; b.title = title || label;
+          b.setAttribute("aria-pressed", "false");
+          return b;
+        };
+        const railBay = document.createElement("div");   // .ov-more parks demoted groups in here
+        railBay.id = "more-overflow";
+        railBay.setAttribute("role", "group"); railBay.setAttribute("aria-label", "Tools moved here");
+        const railSecHead = document.createElement("div");
+        railSecHead.className = "more-sec-head"; railSecHead.textContent = "Toolbar";
+        const widthGroup = document.createElement("div");
+        widthGroup.id = "rail-width-group";
+        widthGroup.setAttribute("role", "group"); widthGroup.setAttribute("aria-label", "Toolbar width");
+        const wCompactBtn = mkSegBtn("Compact", "Narrow toolbar");
+        const wMediumBtn = mkSegBtn("Medium", "Medium-width toolbar");
+        const wFullBtn = mkSegBtn("Full", "Full-width toolbar");
+        widthGroup.append(wCompactBtn, wMediumBtn, wFullBtn);
+        const ovGroup = document.createElement("div");
+        ovGroup.id = "rail-ovmode-group";
+        ovGroup.setAttribute("role", "group"); ovGroup.setAttribute("aria-label", "When the toolbar is too narrow");
+        const ovWrapBtn = mkSegBtn("Wrap to a 2nd row", "Overflowing tools wrap onto a second row");
+        const ovMoreBtn = mkSegBtn("Hide extras in More", "Overflowing tools move into this More menu");
+        ovGroup.append(ovWrapBtn, ovMoreBtn);
+        morePop.prepend(railBay, railSecHead, widthGroup);
+        if (RAIL_OVERFLOW_TRIAL) widthGroup.after(ovGroup); // the A/B toggle; hidden once a winner is picked
         actions.append(moreBtn);
         railEl.appendChild(actions);
         railEl.appendChild(morePop); // sibling of actions; CSS positions it under the More button
@@ -3917,7 +3960,13 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         });
         // Activating any item (Larger / Help / palette) dismisses the menu — else Help's modal opens
         // BEHIND the still-open popover (the popover is trapped in the rail's low stacking context).
-        morePop.addEventListener("click", (e) => { if (e.target.closest("button")) closeMore(); });
+        // Any button closes the menu — EXCEPT the toolbar width/overflow controls and the parked-tools bay.
+        // Without the exemption the popover shuts on every preset click and the width / wrap-vs-More A/B is
+        // unusable. Help still closes it (it is outside all three groups), which is why the rule exists.
+        morePop.addEventListener("click", (e) => {
+          if (e.target.closest("button") &&
+              !e.target.closest("#rail-width-group, #rail-ovmode-group, #more-overflow")) closeMore();
+        });
         document.addEventListener("click", (e) => {
           if (!morePop.hidden && !morePop.contains(e.target) && !moreBtn.contains(e.target)) closeMore();
         });
@@ -4011,6 +4060,62 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // their toolbar isn't reset. Only the parent-realm (post-flip) path ignores the legacy key.
           const rp = (prefs && (prefs.railFloat2 || (railWin === window && prefs.railFloat))) || {};
           if (rp.left && rp.top) railFP.floatTo(parseFloat(rp.left), parseFloat(rp.top));
+          // ---- v166: toolbar WIDTH (drag handle + presets) and OVERFLOW mode (wrap vs More) ----
+          // The notes reserve a strip at the band top so their header can't hide behind the bar; a WRAPPED
+          // 2-row bar is taller than the old hardcoded 64, so push the real measured height instead.
+          const pushRailClear = () => {
+            if (!railEl.getClientRects().length) return;   // display:none via the annotate gate measures 0
+            setRailClear(Math.round(railEl.getBoundingClientRect().height) + 12);
+          };
+          // Wrap mode makes the bar taller than the server-rendered 52px host padding, so row 2 would cover the
+          // question's first line. Pad the live host to the real height (default bar only — a moved bar floats free).
+          const syncHostPad = () => {
+            try {
+              const host = overlayHost();
+              if (!host) return;
+              const wrapMode = railEl.classList.contains("ov-wrap");
+              host.style.paddingTop = (wrapMode && !railEl.classList.contains("fp-moved") && railEl.getClientRects().length)
+                ? `${Math.max(52, Math.round(railEl.getBoundingClientRect().height) + 4)}px` : "";
+            } catch { /* cross-frame / no host — leave the server padding */ }
+          };
+          const railLayout = makeOverflow({
+            rail: railEl, scroll: railEl.querySelector(".rail-scroll"), popover: morePop,
+            bay: railBay, moreBtn, win: railWin, announce: (t) => status(t),
+          });
+          const railResize = makeResizable(railEl, {
+            handle: railEl.querySelector("#rail-resize"), win: railWin,
+            // narrowest useful bar = the shell chrome (grip + actions + collapse + resize) plus one tool group
+            getMinW: () => Math.round(railLayout.measureContent().shell + 150),
+            onLive: () => { railLayout.reflow(); pushRailClear(); syncHostPad(); },
+            onChange: () => { clampFixed(railEl, railWin); savePrefs(); calcDodgeNudge(); },
+            announce: (t) => status(t),
+          });
+          railRefit = () => { railLayout.invalidate(); pushRailClear(); syncHostPad(); };
+          const setPressed = (grp, btn) => [...grp.children].forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+          // Presets are DERIVED from the measured content width, never hardcoded px: a fixed 360/560 can fail to
+          // overflow at all on a wide card, which would make the whole wrap-vs-More comparison unrunnable.
+          const applyPreset = (which) => {
+            const m = railLayout.measureContent();
+            if (which === "full") { railResize.setWidth(null); setPressed(widthGroup, wFullBtn); }
+            else if (which === "medium") { railResize.setWidth(m.shell + m.content * 0.62); setPressed(widthGroup, wMediumBtn); }
+            else { railResize.setWidth(m.shell + m.content * 0.38); setPressed(widthGroup, wCompactBtn); }
+            clampFixed(railEl, railWin); savePrefs(); calcDodgeNudge();
+          };
+          wCompactBtn.addEventListener("click", () => applyPreset("compact"));
+          wMediumBtn.addEventListener("click", () => applyPreset("medium"));
+          wFullBtn.addEventListener("click", () => applyPreset("full"));
+          const applyOvMode = (m) => {
+            railLayout.setMode(m);
+            setPressed(ovGroup, m === "wrap" ? ovWrapBtn : ovMoreBtn);
+            pushRailClear(); syncHostPad();
+          };
+          ovWrapBtn.addEventListener("click", () => { applyOvMode("wrap"); savePrefs(); });
+          ovMoreBtn.addEventListener("click", () => { applyOvMode("more"); savePrefs(); });
+          // Restore mode THEN width, both BEFORE the align/clamp below — so those measure the final geometry.
+          applyOvMode(rp.ovMode === "wrap" ? "wrap" : RAIL_OVERFLOW_DEFAULT);
+          const savedRailW = parseFloat(rp.width);
+          if (Number.isFinite(savedRailW) && savedRailW > 0) railResize.setWidth(savedRailW); // re-clamps to the CURRENT band
+          else setPressed(widthGroup, wFullBtn);
           // R4: the toolbar always loads EXPANDED. A persisted collapsed state is kept live within the
           // session (the collapse button still works + saves), but NOT re-applied on reload — a bar that
           // reloaded collapsed-and-off-screen was un-findable. A restored MOVED position (above) is pulled
@@ -4026,13 +4131,14 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
             try {
               const fr = window.frameElement.getBoundingClientRect(); // iframe position in the parent viewport
               railEl.style.left = `${Math.round(fr.left + 4)}px`;
-              railEl.style.width = `${Math.round(Math.max(0, fr.width - 8))}px`;
+              // Only span the card when the student has NOT chosen a width (--rail-w wins over card-align).
+              if (!railEl.style.getPropertyValue("--rail-w")) railEl.style.width = `${Math.round(Math.max(0, fr.width - 8))}px`;
               railEl.style.top = "4px";
             } catch { /* cross-frame — leave the chrome.css full-width fallback */ }
           };
           alignRailToCard();
           clampFixed(railEl, railWin);
-          const onRailResize = () => { alignRailToCard(); clampFixed(railEl, railWin); restickRail(); };
+          const onRailResize = () => { alignRailToCard(); clampFixed(railEl, railWin); restickRail(); railLayout.reflow(); pushRailClear(); syncHostPad(); };
           railWin.addEventListener("resize", onRailResize);
           if (railWin !== window) {
             // Parent-realm listeners → tear down on the iframe swap (B3-6). Re-align on parent scroll / iframe
@@ -4123,6 +4229,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               railRoot.querySelector(`.tool[data-tool="${lastDrawTool}"]`)?.click();
               clampRailOnShow();
               restickRail(); // land the default bar at the band top even if the page was scrolled at Annotate-time
+              railLayout.reflow(); pushRailClear(); syncHostPad(); // bar was display:none and measured 0 until now
               clampNotes(); // the pane re-appears with the chrome — never at an off-frame position
               calcDodgeNudge(); // the chrome may be re-appearing straight under an open calculator
             }

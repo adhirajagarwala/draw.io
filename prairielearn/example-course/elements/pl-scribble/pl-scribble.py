@@ -145,9 +145,11 @@ _OVERLAY_SIZER = (
     "var fr=f.getBoundingClientRect();"
     "b.style.position='fixed';b.style.left='auto';b.style.bottom='auto';"
     "b.style.top=Math.max(4,Math.round(fr.top)+60)+'px';b.style.right=Math.max(4,Math.round(window.innerWidth-fr.right)+8)+'px';b.style.zIndex='2147483000';"
-    "b.style.padding='14px 26px';b.style.fontSize='17px';b.style.fontWeight='700';"
-    "b.style.background='#2f5fde';b.style.color='#fff';b.style.borderColor='#2f5fde';b.style.borderRadius='999px';"
-    "b.style.boxShadow='0 6px 22px rgba(47,95,222,.45)';b.style.cursor='move';b.style.touchAction='none';"
+    # Same COMPACT pill as the inactive "Annotate" state (user pref: Done should look like Annotate, not a big
+    # blue FAB) — only the label and the move cursor differ, since the active button is draggable.
+    "b.style.padding='6px 12px';b.style.fontSize='13px';b.style.fontWeight='600';"
+    "b.style.background='#fff';b.style.color='#2f5fde';b.style.borderColor='#c9d6f7';b.style.borderRadius='8px';"
+    "b.style.boxShadow='0 1px 3px rgba(20,24,28,.12)';b.style.cursor='move';b.style.touchAction='none';"
     "if(sp)sp.textContent='Done';}"
     "else{if(b.parentNode!==bp)bp.appendChild(b);"
     "b.style.position='absolute';b.style.left='auto';b.style.top='8px';b.style.bottom='auto';b.style.right='8px';b.style.zIndex='2147482500';"

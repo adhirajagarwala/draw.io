@@ -9,6 +9,14 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
   hydrateAnnotations, serializeAnnotations, setPersistAlert }) {
   // No-op fallback so a missing dep can never throw out of the save loop.
   const persistAlert = typeof setPersistAlert === "function" ? setPersistAlert : () => {};
+  // DEV-ONLY (localhost): ?overlay forces overlay mode from a plain <iframe src> for the local overlay harness
+  // (embed/overlay-demo.html). PL sets these flags via its srcdoc head script; on hosted PL location.hostname is
+  // never localhost, so this is inert in production. The harness supplies the .pl-scribble-overlay wrap around us.
+  if ((location.hostname === "localhost" || location.hostname === "127.0.0.1") &&
+      new URLSearchParams(location.search).has("overlay")) {
+    window.__SCRIBBLE_EMBED = true; window.__SCRIBBLE_OVERLAY = true;
+    document.documentElement.classList.add("pl-overlay");
+  }
   // PrairieLearn frames Scribble via a srcdoc iframe (no ?embed query), flagged by
   // window.__SCRIBBLE_EMBED; the host-demo uses ?embed. Either enters embed mode.
   const plMode = !!window.__SCRIBBLE_EMBED;

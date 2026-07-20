@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=165">
+  <link rel="stylesheet" href="style.css?v=166">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -162,6 +162,11 @@
       <!-- Minimise-to-handle uses "＿", expand uses diagonal arrows, ✕ stays full-hide only (#8).
            Both glyphs live in the button; CSS shows one per collapsed state — correct at boot, no JS. -->
       <button id="rail-collapse" class="fp-collapse" title="Minimise the toolbar" aria-label="Minimise the toolbar" aria-expanded="true"><svg class="ico-min" viewBox="0 0 24 24"><path d="M5 16h14"/></svg><svg class="ico-expand" viewBox="0 0 24 24"><path d="M15 5h4v4"/><path d="M19 5l-6 6"/><path d="M9 19H5v-4"/><path d="M5 19l6-6"/></svg></button>
+      <!-- Toolbar width handle. Deliberately a <button>: DRAG_EXCLUDE (floating-panel.js) already excludes
+           `button`, so dragging this edge resizes the bar and can never LIFT it. Overlay-only (style.css). -->
+      <button type="button" id="rail-resize" class="fp-resize" role="separator" aria-orientation="vertical"
+              title="Drag to set the toolbar width (double-click for full width)" aria-label="Toolbar width"
+              aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" aria-valuetext="Full width"></button>
     </nav>
 
     <!-- Page thumbnails (auto-shown for multi-page documents) -->
@@ -345,6 +350,6 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=165"></script>
+  <script type="module" src="app.js?v=166"></script>
 </body>
 </html>
