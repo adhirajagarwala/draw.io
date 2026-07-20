@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "164";
+const APP_VERSION = "165";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=164";
+import init, { App } from "./pkg/scribble.js?v=165";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,17 +17,17 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=164";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=164";
-import { initEmbed } from "./embed.js?v=164";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=164";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=164";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=164";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=164";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=164";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=164";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=164";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=164";
+} from "./utils.js?v=165";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=165";
+import { initEmbed } from "./embed.js?v=165";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=165";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=165";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=165";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=165";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed } from "./notes-dock.js?v=165";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=165";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=165";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=165";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -1602,7 +1602,7 @@ function regionHasBrokenImage(x0, y0, x1, y1) {
 function placeNotesAtBandTop() {
   const stage = $("stage"), sr = stage.getBoundingClientRect(), b = visibleBand();
   const CLEAR = 64; // clear the top toolbar (rail ~52 + a gap)
-  const DEFW = 400, DEFH = 340; // small default (user pref): a compact floating textbox, NOT full-width
+  const DEFW = 400, DEFH = 240; // small default (user pref): a compact, short floating textbox, NOT full-width
   const left = Math.max(8, Math.round(b.left - sr.left + 8));
   const top = Math.round(b.top - sr.top + CLEAR);
   const pane = els.notesPane;

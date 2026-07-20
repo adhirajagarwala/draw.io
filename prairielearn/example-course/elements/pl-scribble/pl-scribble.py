@@ -133,13 +133,18 @@ _OVERLAY_SIZER = (
     "f.style.pointerEvents='none';"  # default click-through — also covers the read-only view (no button)
     "if(b){var on=false,bp=b.parentNode,dg=null,sc=false;function m(){f.style.pointerEvents=on?'auto':'none';"
     "var sp=b.querySelector('span');"
-    # ACTIVE: a big, filled, DRAGGABLE floating action button, pinned bottom-right. CRITICAL: a PrairieLearn
+    # ACTIVE: a big, filled, DRAGGABLE floating action button, opening below the toolbar's right end. CRITICAL: a PrairieLearn
     # ancestor (question card) can carry a CSS transform, which makes a position:fixed DESCENDANT resolve
     # against THAT box, not the viewport — so the button lands off-screen down a long question and the student
     # can't find "Done". Reparent it to <body> (outside any transformed ancestor) so fixed == viewport, and
     # make it large/prominent. INACTIVE: the compact launch pill back at the question's top-right corner.
     "if(on){if(b.parentNode!==document.body)document.body.appendChild(b);"
-    "b.style.position='fixed';b.style.left='auto';b.style.bottom='auto';b.style.top='12px';b.style.right='12px';b.style.zIndex='2147483000';"
+    # Open BELOW the toolbar's RIGHT end: measure the overlay frame (the question CARD) and pin Done just under
+    # the ~56px toolbar (top = frame.top + 60), right-aligned to the CARD (right = innerWidth - frame.right + 8) —
+    # NOT the viewport right, which sits out in the instructor-preview sidebar. Still fully draggable from there.
+    "var fr=f.getBoundingClientRect();"
+    "b.style.position='fixed';b.style.left='auto';b.style.bottom='auto';"
+    "b.style.top=Math.max(4,Math.round(fr.top)+60)+'px';b.style.right=Math.max(4,Math.round(window.innerWidth-fr.right)+8)+'px';b.style.zIndex='2147483000';"
     "b.style.padding='14px 26px';b.style.fontSize='17px';b.style.fontWeight='700';"
     "b.style.background='#2f5fde';b.style.color='#fff';b.style.borderColor='#2f5fde';b.style.borderRadius='999px';"
     "b.style.boxShadow='0 6px 22px rgba(47,95,222,.45)';b.style.cursor='move';b.style.touchAction='none';"
