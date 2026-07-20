@@ -5,7 +5,7 @@
 // (no reparent, no jump), tracks the cursor, drops them clamped to the VIEWPORT,
 // and toggles a collapsed state. Bump this module's ?v= import with APP_VERSION.
 
-import { visibleBand, clampIntoBand } from "./visible-band.js?v=163";
+import { visibleBand, clampIntoBand } from "./visible-band.js?v=164";
 
 const DRAG_SLOP = 4; // px before a lift commits — a press-without-move is a no-op
 
@@ -132,12 +132,21 @@ export function makeFloating(el, { collapse, onChange, onSettle, win = window })
   };
   if (collapse) collapse.addEventListener("click", () => {
     const on = !el.classList.contains("fp-collapsed");
+    // Keep a MOVED bar's RIGHT edge fixed across BOTH collapse and expand — the minimise button sits at the
+    // far right, so anchoring the right edge means the handle stays under the cursor on collapse AND the bar
+    // returns to its parked spot on expand (idempotent: left = right − newWidth). The DEFAULT (un-dragged) bar
+    // gets right-anchoring from CSS (.fp-collapsed:not(.fp-moved){right:4px}); a MOVED bar keeps its own inline
+    // left, so capture the current right edge here and re-apply it after the width changes.
+    const preRight = el.classList.contains("fp-moved") ? el.getBoundingClientRect().right : null;
     el.classList.toggle("fp-collapsed", on);
     labelCollapse(on);
-    // The bar's width jumps on collapse/expand (handle ↔ max-content); re-clamp at the
-    // NEW size so expanding near the right edge can't overflow the viewport. rAF: measure
-    // after the class change lands in layout.
-    requestAnimationFrame(() => clampFixed(el, win));
+    // The bar's width jumps on collapse/expand (handle ↔ max-content); re-anchor + re-clamp at the NEW size so
+    // it stays on-screen. rAF: measure after the class change lands in layout. Guard getClientRects: if the
+    // Annotate gate hid the bar in the interim, a 0-width read would strand the right edge.
+    requestAnimationFrame(() => {
+      if (preRight != null && el.getClientRects().length) el.style.left = `${Math.round(preRight - el.getBoundingClientRect().width)}px`;
+      clampFixed(el, win);
+    });
     onChange?.();
   });
 
