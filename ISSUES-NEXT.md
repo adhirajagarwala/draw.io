@@ -77,7 +77,18 @@ like `setRailClear`); or (b) anchor Done to the card's **left**; or (c) move Don
 toolbar action (cleanest, but cross-realm — the rail is in the iframe, Done must talk to the parent).
 **Verify:** narrow the browser under ~900px, annotate, collapse the toolbar, confirm the expand handle is clickable.
 
-### 6. Toolbar WIDTH still restores from prefs on load (position no longer does)
+### 6. ~~Toolbar WIDTH still restores from prefs on load (position no longer does)~~ — RESOLVED in v170
+**Decision (user, 2026-07-21):** position SHOULD persist, but **a new question must always open at the default
+layout**. Both now hold: position is restored again, gated on `PREFS_PER_QUESTION` (a real per-question `qid`
+from the element, so `PREFS_KEY` is genuinely namespaced — a new question finds no saved layout and lands at the
+default), and band-clamped on restore by the `clampFixed` that did not exist when v168 removed the restore. If
+the element ever fails to supply a `qid`, every question shares one legacy key, so the flag fails safe to the
+old always-default behaviour. Width was already restored; the two are now consistent. The COLLAPSED state is
+still deliberately never re-applied (R4) — unlike a position, a collapse has no on-screen affordance pulling it
+back. Notes still stage at the band top every load (they're scratch).
+*Original text below, kept for context.*
+
+### 6-old. Toolbar WIDTH still restores from prefs on load (position no longer does)
 **Symptom:** a question can open with a narrow (Compact) toolbar you don't remember choosing — e.g. left over from
 an earlier session or someone else's testing on that browser.
 **Root cause:** v168 deliberately stopped restoring the saved **position** (`railFloat2.left/top`) so the bar always
@@ -135,12 +146,60 @@ and delete the loser's code path (`.ov-wrap` CSS block, or `rail-overflow.js`'s 
 
 ---
 
-## Also unresolved (not a code bug)
+## FIXED in v170 — the drag snap-back (was mis-closed twice)
 
-- **The "drag half-off, it snaps back" report** — root-caused as the iframe blurring mid-drag (dragging past the
-  frame edge puts the pointer over the parent page) cancelling a live drag, and **fixed in v167** for both the
-  toolbar and notes. **Needs a foreground confirmation from the user** that it is actually gone; it was never
-  reproducible under automation.
+- **"I drag the toolbar and it snaps back to its original place the minute I let go."** Re-reported by the user
+  at v169. **v167 closed the wrong mechanism**: it fixed the iframe-blur cancel (real, still needed), but the
+  actual high-frequency trigger was `floating-panel.js`'s `if (!(ev.buttons & 1)) return end(true)`. On release
+  Chrome dispatches a trailing `pointermove` carrying `buttons:0` **before** `pointerup`; that guard read it as
+  "the press ended somewhere we never heard about", took the **cancel** branch — the one code path that restores
+  the pre-lift position — and `pointerup` then found `drag` already null and did nothing. Net effect of v167:
+  turned a deterministic "drag half-off → snap back" into a probabilistic "drag anywhere → snap back".
+  **Three compounding causes, all fixed:**
+  1. **Cancel-on-release inversion.** A finished gesture is a DROP. Now `end(false)`. The same inversion existed
+     in `notes-dock.js:195` (worse: a cancel of a pane lifted from docked *re-docks* it) and `colorbar.js:128`.
+     New invariant across all three engines: **a lifted drag always commits; only a never-lifted press cancels.**
+  2. **The pending rAF was discarded, not flushed.** The live loop only writes left/top inside a rAF, so if no
+     frame ran (fast flick, or rAF starved per CLAUDE.md §6) the drop committed the *pre-lift* rect — the same
+     symptom by an independent route. `end()` now flushes from the cached pointer target.
+  3. **The grab offset was never re-seated after the lift.** `dx` was measured on the FULL-WIDTH resting bar,
+     but `.fp-moved` shrinks it to `max-content` — so a grab on the right half left the bar entirely left of the
+     cursor, it never tracked the pointer, and every event *including the release* landed off the element. This
+     is why right-side grabs failed far more often than left-side ones.
+  Plus a **release backstop** on the own + parent document (a release past the iframe edge, or over the parent's
+  Done pill, is dispatched in the PARENT realm and the element never sees it), and `dispose()` now tears down
+  the listeners it registers — wired to `pagehide` unconditionally, since the reparent branch that used to own
+  teardown is dead while `PHASE1_CHROME_REPARENT = false`.
+- **Regression-tested, and the tests are the first JS tests in the repo** (a start on Batch T / issue #2):
+  `scribble/web/test/drag.test.mjs`, run with `node --test scribble/web/test/drag.test.mjs`. 8 tests. The 3
+  bug tests **fail against the v169 module and pass against v170**; the 5 invariant tests (DRAG_SLOP click≠drag,
+  pointercancel still restores, blur never cancels a lifted drag, band clamp, second drag) pass on both — so the
+  v167 behaviour is provably preserved. Verify this way, not by eyeballing: this bug has now been "fixed" twice.
+- Still needs the **foreground hosted confirmation** (automation Chrome is backgrounded, so real pointer capture
+  and rAF timing cannot be exercised there).
+
+## Newly confirmed by the v170 sweep — not yet fixed
+
+Adversarially verified (43 candidates → 7 survived) during the v170 root-cause pass. Ranked.
+
+1. **Notes teleport to the band top on every reopen and every snip** (`app.js` `toggleNotes` / `revealNotes`).
+   The re-place fires whenever the pane drifted out of the band, and `clampNotes` only keeps the ~36px *header*
+   in band — so almost any lower-half pane qualifies. `savePrefs()` runs right after, so it is unrecoverable.
+   **Fix:** drop the `pr.bottom > b.bottom` clause; replace the full re-place with `clampNotes()`.
+2. **Tools parked in More can never come back once the bar is dragged** (`rail-overflow.js` promote test).
+   With no `--rail-w`, promotion tests `scroll.clientWidth - scroll.scrollWidth >= w + GAP`, which presumes a
+   fixed outer width — but `.fp-moved` makes the bar `max-content`, so `clientWidth === scrollWidth` by
+   construction and the LHS is permanently 0. **Fix:** treat the content-sized regime like the cap branch.
+3. **`clampNotes` persists its display cap so notes never grow back** (this is the old #7 above, now root-caused).
+4. **`railClear` re-shrinks the band below the 120px floor** (`notes-dock.js`) — `visible-band.js` guarantees a
+   ≥120px band, but `railClear` (≥64) is subtracted *after* that guard, collapsing the vertical bound.
+   *Verified mathematically unreachable for the rail*; affects notes only.
+5. **`syncHostPad` grows the parent host but nothing re-sizes the iframe** — the host ends up taller than the
+   overlay, so ink and pointer capture silently stop short of the last `railHeight` px of the question.
+   **Fix:** expose the parent sizer and call it, or add a parent-realm `ResizeObserver` on the host.
+6. **The Done pill overlaps the toolbar's right-end controls** (the old #5) — now also confirmed as a *direct
+   contributor* to the snap-back: it paints above the overlay iframe, so a release over it was a lost pointerup.
+   The v170 parent-document backstop removes the lost-release half; the click-collision half remains.
 
 ## Verification notes (learned the hard way)
 - Always confirm the loaded `APP_VERSION` **in the page** before asserting anything; add `?cb=<n>` to force a

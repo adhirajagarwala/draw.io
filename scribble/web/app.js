@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "169";
+const APP_VERSION = "170";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=169";
+import init, { App } from "./pkg/scribble.js?v=170";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,19 +17,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=169";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=169";
-import { initEmbed } from "./embed.js?v=169";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=169";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=169";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=169";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=169";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=169";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=169";
-import { makeResizable } from "./rail-resize.js?v=169";
-import { makeOverflow } from "./rail-overflow.js?v=169";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=169";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=169";
+} from "./utils.js?v=170";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=170";
+import { initEmbed } from "./embed.js?v=170";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=170";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=170";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=170";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=170";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=170";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=170";
+import { makeResizable } from "./rail-resize.js?v=170";
+import { makeOverflow } from "./rail-overflow.js?v=170";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=170";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=170";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -3703,6 +3703,12 @@ const PREFS_KEY = "scribble.prefs.v1" + (() => {
   const parts = [pl.qid, pl.name].filter(Boolean);
   return parts.length ? "." + parts.join(".") : "";
 })();
+// True only when the element gave us a REAL per-question id, i.e. PREFS_KEY is genuinely namespaced per question.
+// Panel POSITIONS are restored only under this flag: without a qid every question shares one legacy key, so a
+// toolbar parked low on a long question would restore at that same low spot on the next (possibly much shorter)
+// question and read as "my toolbar is gone". No qid → fail safe to the always-default behaviour. NEW QUESTION =
+// DIFFERENT KEY = DEFAULT LAYOUT, which is the guarantee this flag exists to make honest.
+const PREFS_PER_QUESTION = !!(window.__SCRIBBLE_PL && window.__SCRIBBLE_PL.qid);
 // USER-level accessibility prefs (Larger controls, colourblind-safe palette) are NOT per-question — a shared,
 // un-namespaced key so enabling them on one question applies to every question (they serve the users who
 // most need consistency).
@@ -4073,15 +4079,22 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // onChange also nudges the bar out of an active calculator hole (a drag can park it under
           // the drawer, where it would render half-clipped — the irrecoverable-panel class of bug).
           const railFP = makeFloating(railEl, { collapse: railEl.querySelector("#rail-collapse"), onChange: () => { savePrefs(); calcDodgeNudge(); }, onSettle: () => restickRail(), win: railWin });
+          // v170: the engine registers release backstops on the PARENT document, so it must be disposed on the
+          // iframe swap even when the rail was never reparented. The railTeardowns path below only installs
+          // inside the `railWin !== window` branch, which is dead while PHASE1_CHROME_REPARENT is false — so
+          // without this the listeners outlived every question. dispose() is idempotent, so the reparented
+          // branch calling it too is harmless.
+          window.addEventListener("pagehide", () => { try { railFP.dispose(); } catch { /* ignore */ } }, { once: true });
           // B3-7 + review L-1: prefer railFloat2, but when NOT reparented fall back to the legacy railFloat —
           // gate-off coords are still iframe-realm (same realm v160 saved them in), so a v160 student who dragged
           // their toolbar isn't reset. Only the parent-realm (post-flip) path ignores the legacy key.
           const rp = (prefs && (prefs.railFloat2 || (railWin === window && prefs.railFloat))) || {};
-          // The toolbar ALWAYS loads at its default place. A saved dragged position is deliberately NOT restored:
-          // a spot saved under a different question height / window size reloaded half-off-frame, and hunting for
-          // the toolbar is the worst possible first impression of a question. Moves still work for the session
-          // (savePrefs keeps writing railFloat2 for rollback), they just don't survive a reload — same rule as
-          // the collapsed state (R4). Notes follow the same rule via placeNotesAtBandTop.
+          // v170: a dragged position IS restored again, but only per-question and only band-clamped — see the
+          // PREFS_PER_QUESTION restore further down, which documents why the v168 blanket "never restore" was
+          // both right at the time and too blunt. The COLLAPSED state is still never re-applied (R4): a bar that
+          // reloaded collapsed was un-findable, and unlike a position a collapse has no on-screen affordance
+          // pulling it back. Notes still stage at the band top every load via placeNotesAtBandTop — they're
+          // scratch, so there is nothing there worth persisting.
           // ---- v166: toolbar WIDTH (drag handle + presets) and OVERFLOW mode (wrap vs More) ----
           // The notes reserve a strip at the band top so their header can't hide behind the bar; a WRAPPED
           // 2-row bar is taller than the old hardcoded 64, so push the real measured height instead.
@@ -4159,6 +4172,17 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               railEl.style.top = "4px";
             } catch { /* cross-frame — leave the chrome.css full-width fallback */ }
           };
+          // Restore a dragged position — but ONLY for a genuinely per-question prefs key (PREFS_PER_QUESTION).
+          // v168 stopped restoring it outright because a spot saved on a long question reloaded half-off-frame;
+          // that was the right call then, but the blunt version also threw away a placement the student chose on
+          // purpose. The precise fix is possible now: (a) the key is namespaced per question, so opening a NEW
+          // question finds no saved layout and lands at the default; (b) visibleBand/clampFixed pull a stale spot
+          // into the band the student can actually see, so a restore can no longer strand the bar off-screen —
+          // clampFixed below and clampRailOnShow at Annotate-time both re-verify it. Width already restored above.
+          if (PREFS_PER_QUESTION && rp.left && rp.top) {
+            const rl = parseFloat(rp.left), rt = parseFloat(rp.top);
+            if (Number.isFinite(rl) && Number.isFinite(rt)) railFP.floatTo(rl, rt);
+          }
           alignRailToCard();
           clampFixed(railEl, railWin);
           const onRailResize = () => { alignRailToCard(); clampFixed(railEl, railWin); restickRail(); railLayout.reflow(); pushRailClear(); syncHostPad(); };

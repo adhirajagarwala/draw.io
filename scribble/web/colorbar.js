@@ -125,7 +125,10 @@ export function initColorBar(deps) {
   });
   grip.addEventListener("pointermove", (ev) => {
     if (!drag || ev.pointerId !== drag.id) return; // only the owning contact drives the drag
-    if (!(ev.buttons & 1)) return endDrag(null); // press ended unseen — restore, don't chase the pointer
+    // buttons===0 means the user ALREADY RELEASED and we missed the pointerup — commit the drop rather than
+    // reverting. Passing null here restored the pre-lift state, which is the same "snaps back the minute I let
+    // go" bug fixed in the toolbar/notes engines. Synthesise the drop from the last tracked pointer position.
+    if (!(ev.buttons & 1)) return endDrag({ clientY: drag.cy ?? ev.clientY });
     if (!drag.lifted) {
       if (Math.abs(ev.clientX - drag.sx) < DRAG_SLOP && Math.abs(ev.clientY - drag.sy) < DRAG_SLOP) return;
       drag.lifted = true;
@@ -136,6 +139,7 @@ export function initColorBar(deps) {
     }
     drag.fx = ev.clientX - drag.dx;
     drag.fy = ev.clientY - drag.dy;
+    drag.cy = ev.clientY; // last tracked pointer Y — the missed-release path drops from this, having no event
     // Live clamp of the APPLIED values only (viewport coords while lifted) — the bar stays reachable
     // even mid-drag; the grab offset re-attaches when the pointer returns from past the edge.
     cb.style.left = `${Math.round(clampv(drag.fx, 4, window.innerWidth - cb.offsetWidth - 4))}px`;

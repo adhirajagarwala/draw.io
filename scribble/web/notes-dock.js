@@ -9,7 +9,7 @@
 // floatNotes / dockNotes / clampNotes back from prefs + boot + the splitter guard.
 // Bump this module's ?v= import in app.js together with APP_VERSION.
 
-import { visibleBand, clampIntoBand } from "./visible-band.js?v=169";
+import { visibleBand, clampIntoBand } from "./visible-band.js?v=170";
 
 let els, $, savePrefs, relayoutSketches, stageEl;
 const MIN_W = 318, MIN_H = 140, DOCK_BAND = 72; // MIN_W fits the header (grip + title + +Text/+Draw/Minimise/✕) without collision
@@ -192,7 +192,11 @@ export function initNotesDock(deps) {
   });
   header.addEventListener("pointermove", (ev) => {
     if (!drag || ev.pointerId !== drag.id) return; // only the owning contact drives the drag
-    if (!(ev.buttons & 1)) return endDrag(null, true); // press ended unseen (tab switch mid-drag) — cancel
+    // buttons===0 means the user ALREADY RELEASED and we missed the pointerup — a finished gesture is a DROP,
+    // not a cancel. Reverting here was the notes half of the v169 "it snaps back the minute I let go" bug, and
+    // it was worse here than on the toolbar: a cancel of a pane lifted FROM DOCKED re-docks it (see endDrag),
+    // so a flick-drop threw the notes all the way back into the dock. An unlifted press still no-ops.
+    if (!(ev.buttons & 1)) return endDrag(null, false);
     if (!drag.lifted) {
       if (Math.abs(ev.clientX - drag.sx) < DRAG_SLOP && Math.abs(ev.clientY - drag.sy) < DRAG_SLOP) return;
       drag.lifted = true;
@@ -264,13 +268,20 @@ export function initNotesDock(deps) {
     }
     // Drag-to-dock only applies to a pane LIFTED FROM DOCKED; an already-floating pane
     // repositions freely (dock it via the Float/Dock button or double-clicking the header).
-    const dock = cancelled ? d.fromDocked : (d.fromDocked && overDockZone(ev.clientY));
+    // `ev` is null on the missed-release path (pointermove saw buttons===0), so fall back to the last clientY
+    // the drag loop cached — reading ev.clientY unguarded would throw exactly on the drop we just fixed.
+    const dropY = ev ? ev.clientY : d.cy;
+    const dock = cancelled ? d.fromDocked : (d.fromDocked && dropY != null && overDockZone(dropY));
     if (dock) {
       dockNotes();
     } else {
       const sr = stageEl.getBoundingClientRect();
-      // Don't reuse the (full-width) docked footprint — cap to a sensible window size.
-      const w = Math.min(d.w, 420), h = Math.min(d.h, 360);
+      // Cap the footprint ONLY when the pane is being lifted out of the docked row — that row is full-width, so
+      // floating it at its docked size would fill the frame. An ALREADY-FLOATING pane keeps whatever size the
+      // student resized it to: capping unconditionally shrank a deliberately-large pane to 420x360 on every
+      // single drag, and clampNotes then wrote the reduced size back inline so it compounded drag after drag.
+      // (In the PL overlay the pane floats from boot and is never docked, so this path was ALWAYS the wrong one.)
+      const w = d.fromDocked ? Math.min(d.w, 420) : d.w, h = d.fromDocked ? Math.min(d.h, 360) : d.h;
       // Pass the RAW drop point; floatNotes -> clampNotes applies the relaxed (hang-off-edge) clamp, so the
       // pane stays where it was dropped instead of snapping fully back inside.
       floatNotes(d.fx - sr.left, d.fy - sr.top, w, h);
@@ -365,10 +376,27 @@ export function initNotesDock(deps) {
   // dragging the pane toward/past the frame edge blurs us mid-gesture; the old capture check then cancelled a
   // live drag and restored the pre-lift spot — the "drag it half off, it snaps back, drag again and it sticks"
   // bug. Real tab switches still cancel via visibilitychange (fromBlur === false).
+  // A LIFTED drag now COMMITS on a real tab switch rather than reverting: the student moved the pane on purpose
+  // and the drop position is band-clamped (so always reachable), whereas silently undoing it is the loss the
+  // v167 blur fix was about. Only a never-lifted press is ever cancelled. Matches floating-panel.js.
   const cancelGestures = (fromBlur) => {
-    if (drag && !(fromBlur && drag.lifted)) endDrag(null, true);
+    if (drag && !(fromBlur && drag.lifted)) endDrag(null, !drag.lifted);
     if (rz && !fromBlur) endResize();
   };
   window.addEventListener("blur", () => cancelGestures(true));
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") cancelGestures(false); });
+
+  // Release backstop — same reasoning as floating-panel.js: a pointerup only reaches `header` while pointer
+  // capture holds, and in the overlay a release past the iframe edge is dispatched in the PARENT document. Without
+  // this the release is lost and the next stray pointermove decides the gesture. endDrag/endResize null their
+  // state on entry, so a doubled-up release is a no-op.
+  const backstopUp = (ev) => {
+    if (drag && ev.pointerId === drag.id) endDrag(null, false);
+    else if (rz && ev.pointerId === rz.id) endResize();
+  };
+  document.addEventListener("pointerup", backstopUp, true); // the pane never leaves this realm — own doc is enough here
+  try {
+    const p = window.parent;
+    if (p && p !== window && p.document) p.document.addEventListener("pointerup", backstopUp, true);
+  } catch { /* cross-origin parent — own-document backstop is the best bound we have */ }
 }
