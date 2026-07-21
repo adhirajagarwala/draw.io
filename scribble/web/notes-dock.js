@@ -9,7 +9,7 @@
 // floatNotes / dockNotes / clampNotes back from prefs + boot + the splitter guard.
 // Bump this module's ?v= import in app.js together with APP_VERSION.
 
-import { visibleBand, clampIntoBand } from "./visible-band.js?v=166";
+import { visibleBand, clampIntoBand } from "./visible-band.js?v=167";
 
 let els, $, savePrefs, relayoutSketches, stageEl;
 const MIN_W = 318, MIN_H = 140, DOCK_BAND = 72; // MIN_W fits the header (grip + title + +Text/+Draw/Minimise/✕) without collision
@@ -173,6 +173,9 @@ export function initNotesDock(deps) {
   // down to the capped float size. Mirrors floating-panel.js.
   let drag = null, raf = 0, suppressExpand = false;
   header.addEventListener("pointerdown", (ev) => {
+    // Stale-gesture reset: a drag whose pointerup was swallowed would block every future drag (we bail whenever
+    // `drag` is set). Only clear one we no longer hold pointer capture for.
+    if (drag && !header.hasPointerCapture?.(drag.id)) drag = null;
     if (drag || ev.button !== 0 || ev.target.closest("button")) return; // one drag at a time; header buttons never lift
     suppressExpand = false; // fresh interaction — a prior strip-drag's suppressor must not linger
     // A collapsed strip is draggable too (to REPOSITION it); a tap without movement still expands it.
@@ -358,9 +361,13 @@ export function initNotesDock(deps) {
   // restores its pre-lift position; a resize commits where it is). On BLUR only, keep a gesture
   // whose element still HOLDS pointer capture: in the overlay the "window" is the iframe, so any
   // tap on the parent PL page blurs it while a captured drag keeps receiving events just fine.
+  // On BLUR: never kill a LIFTED drag or an in-flight resize. In the overlay the "window" is the iframe, so
+  // dragging the pane toward/past the frame edge blurs us mid-gesture; the old capture check then cancelled a
+  // live drag and restored the pre-lift spot — the "drag it half off, it snaps back, drag again and it sticks"
+  // bug. Real tab switches still cancel via visibilitychange (fromBlur === false).
   const cancelGestures = (fromBlur) => {
-    if (drag && !(fromBlur && header.hasPointerCapture?.(drag.id))) endDrag(null, true);
-    if (rz && !(fromBlur && resizeH.hasPointerCapture?.(rz.id))) endResize();
+    if (drag && !(fromBlur && drag.lifted)) endDrag(null, true);
+    if (rz && !fromBlur) endResize();
   };
   window.addEventListener("blur", () => cancelGestures(true));
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") cancelGestures(false); });

@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "166";
+const APP_VERSION = "167";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=166";
+import init, { App } from "./pkg/scribble.js?v=167";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,19 +17,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=166";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=166";
-import { initEmbed } from "./embed.js?v=166";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=166";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=166";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=166";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=166";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=166";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=166";
-import { makeResizable } from "./rail-resize.js?v=166";
-import { makeOverflow } from "./rail-overflow.js?v=166";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=166";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=166";
+} from "./utils.js?v=167";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=167";
+import { initEmbed } from "./embed.js?v=167";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=167";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=167";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=167";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=167";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=167";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=167";
+import { makeResizable } from "./rail-resize.js?v=167";
+import { makeOverflow } from "./rail-overflow.js?v=167";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=167";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=167";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -4095,10 +4095,11 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // Presets are DERIVED from the measured content width, never hardcoded px: a fixed 360/560 can fail to
           // overflow at all on a wide card, which would make the whole wrap-vs-More comparison unrunnable.
           const applyPreset = (which) => {
-            const m = railLayout.measureContent();
+            // budgetFor(n) sizes the bar to hold exactly n tool groups, so the presets differ by a real number
+            // of tools: Compact keeps the Draw group only; Medium keeps Draw + the next two by priority.
             if (which === "full") { railResize.setWidth(null); setPressed(widthGroup, wFullBtn); }
-            else if (which === "medium") { railResize.setWidth(m.shell + m.content * 0.62); setPressed(widthGroup, wMediumBtn); }
-            else { railResize.setWidth(m.shell + m.content * 0.38); setPressed(widthGroup, wCompactBtn); }
+            else if (which === "medium") { railResize.setWidth(railLayout.budgetFor(3)); setPressed(widthGroup, wMediumBtn); }
+            else { railResize.setWidth(railLayout.budgetFor(1)); setPressed(widthGroup, wCompactBtn); }
             clampFixed(railEl, railWin); savePrefs(); calcDodgeNudge();
           };
           wCompactBtn.addEventListener("click", () => applyPreset("compact"));

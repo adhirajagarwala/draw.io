@@ -7,7 +7,7 @@
 // with ZERO edits to the drag engine. The handle is a <button>, so DRAG_EXCLUDE already stops a resize gesture
 // from LIFTING the bar. Bump this module's ?v= import with APP_VERSION.
 
-import { visibleBand } from "./visible-band.js?v=166";
+import { visibleBand } from "./visible-band.js?v=167";
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
 
@@ -38,8 +38,14 @@ export function makeResizable(el, { handle, win = window, getMinW, onLive, onCha
 
   // THE only writer of bar width. null/non-finite => remove the property (back to the CSS full-span default).
   function setWidth(px) {
-    if (px == null || !Number.isFinite(px)) el.style.removeProperty("--rail-w");
-    else el.style.setProperty("--rail-w", `${Math.round(clamp(px, minW(), maxW()))}px`);
+    if (px == null || !Number.isFinite(px)) {
+      el.style.removeProperty("--rail-w"); el.style.removeProperty("--rail-w-mode");
+    } else {
+      el.style.setProperty("--rail-w", `${Math.round(clamp(px, minW(), maxW()))}px`);
+      // The chosen width is a CAP: the bar sizes to its content and stops there, so a bar whose tools have moved
+      // into More shrinks tight rather than leaving an empty gap between the last tool and the actions.
+      el.style.setProperty("--rail-w-mode", "max-content");
+    }
     syncAria();
     onLive?.();
   }

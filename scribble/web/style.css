@@ -688,8 +688,11 @@ body.overlay #rail {
   flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 4px;
   /* --rail-w is the user-chosen width (rail-resize.js). A CUSTOM PROPERTY, never style.width, because the drag
      lift clears the width longhand (floating-panel.js review fix R-3) — a custom prop survives that untouched.
-     Unset => byte-identical to the old full card span. */
-  width: var(--rail-w, calc(100% - 8px));
+     A chosen width is a MAX, not a fixed size: --rail-w-mode flips the bar to max-content so once tools move
+     into More it shrinks TIGHT to its content instead of leaving dead space before the actions.
+     Both unset => byte-identical to the old full card span. */
+  width: var(--rail-w-mode, calc(100% - 8px));
+  max-width: var(--rail-w, none);
   background: #fff;
   border: 1px solid var(--line); border-radius: 12px; padding: 4px 6px;
   box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14);
@@ -800,7 +803,7 @@ body.overlay #topbar.fp-collapsed .fp-collapse .ico-expand { display: block; }
 body.overlay #rail.fp-moved, body.overlay #topbar.fp-moved { top: auto; left: auto; right: auto; }
 /* A moved bar keeps its chosen width; UNSET it is max-content (today's behaviour — a dragged bar is content-sized
    and therefore never wraps, which is intentional, not a bug). */
-body.overlay #rail.fp-moved { width: var(--rail-w, max-content); max-width: calc(100vw - 8px); }
+body.overlay #rail.fp-moved { width: var(--rail-w-mode, max-content); max-width: var(--rail-w, calc(100vw - 8px)); }
 /* (.rail-scroll and the .fp-grip/.rail-actions/#rail-collapse flex:none rules live once in the
    "Hairline+" block below — the earlier duplicates here were removed.) */
 /* U4: hide overlay-irrelevant shortcut rows (Snip / page-nav) from the Help dialog. */

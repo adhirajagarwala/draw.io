@@ -76,12 +76,23 @@ export function makeOverflow({ rail, scroll, popover, bay, moreBtn, win = window
       if (!cands.length) break;              // only the un-demotable remain — .rail-scroll's overflow-x carries it
       demote(cands[0]);
     }
-    // 2) promote back only with real slack (never trial-promote — that is the flicker + a layout flush each try)
+    // 2) promote back only when the group genuinely fits again (never trial-promote — that is the flicker, and it
+    //    costs a layout flush per attempt). TWO regimes, because a CAPPED bar is content-sized:
+    //      chosen width  -> the bar hugs its content (max-content capped at --rail-w), so there is never "slack"
+    //                       to measure; ask instead whether shell + content + the group still fits the cap.
+    //      full width    -> the bar is a fixed calc(100% - 8px), so real slack in the scroller is the right test.
+    const capPx = parseFloat(rail.style.getPropertyValue("--rail-w")) || Infinity;
     let g2 = 12;
     while (g2-- > 0) {
+      const shellW = rail.getBoundingClientRect().width - scroll.getBoundingClientRect().width;
       const back = parked()
         .sort((a, b) => +b.dataset.railPrio - +a.dataset.railPrio)   // highest priority returns first
-        .find((n) => scroll.clientWidth - scroll.scrollWidth >= (+n.dataset.railW || 9999) + GAP);
+        .find((n) => {
+          const w = +n.dataset.railW || 9999;
+          return Number.isFinite(capPx)
+            ? shellW + scroll.scrollWidth + w + GAP <= capPx
+            : scroll.clientWidth - scroll.scrollWidth >= w + GAP;
+        });
       if (!back) break;
       promote(back);
     }
@@ -126,6 +137,19 @@ export function makeOverflow({ rail, scroll, popover, bay, moreBtn, win = window
     return { content, shell, full: content + shell };
   }
 
+  // Width budget that RETAINS exactly the top-`keep` priority groups. Presets use this instead of a percentage
+  // of content, so Compact and Medium differ by a real NUMBER OF TOOLS rather than landing on the same demotion.
+  function budgetFor(keep) {
+    const wasParked = parked();
+    wasParked.forEach(promote);                                   // measure the FULL set
+    const items = [...scroll.children].map((c) => ({ prio: +c.dataset.railPrio, w: c.getBoundingClientRect().width }));
+    const shell = rail.getBoundingClientRect().width - scroll.getBoundingClientRect().width;
+    items.sort((a, b) => b.prio - a.prio);                        // highest priority is retained first
+    const keepW = items.slice(0, Math.max(1, keep)).reduce((s, i) => s + i.w, 0);
+    if (mode === "more") reflow();                                // restore the previous demotion state
+    return Math.round(shell + keepW + 16);
+  }
+
   function invalidate() { parked().forEach((n) => delete n.dataset.railW); reflow(); }
 
   function schedule() {
@@ -135,8 +159,11 @@ export function makeOverflow({ rail, scroll, popover, bay, moreBtn, win = window
 
   function observe() {
     if (ro || !realmWin.ResizeObserver) return;
-    // Observe #rail, NEVER .rail-scroll. #rail's width comes from --rail-w / CSS and is NOT content-driven, so
-    // demoting cannot resize it and this observer cannot self-trigger. .rail-scroll is flex:1 1 auto and WOULD loop.
+    // Observe #rail, NEVER .rail-scroll (.rail-scroll is flex:1 1 auto and WOULD self-trigger every demotion).
+    // With a chosen width the bar IS content-sized (max-content capped at --rail-w), so demoting does resize it
+    // and this observer does re-fire — but it CONVERGES: demotion only continues while content exceeds the cap,
+    // and once it fits, the re-fired reflow finds no overflow and stops. The lastW/lastH early-out below absorbs
+    // the settle frame.
     ro = new realmWin.ResizeObserver((entries) => {
       const r = entries[0] && entries[0].contentRect;
       if (r && Math.abs(r.width - lastW) < 1 && Math.abs(r.height - lastH) < 1) return; // early-out
@@ -149,7 +176,7 @@ export function makeOverflow({ rail, scroll, popover, bay, moreBtn, win = window
   stamp();
   observe();
   return {
-    setMode, getMode: () => mode, reflow, promoteAll, measureContent, invalidate,
+    setMode, getMode: () => mode, reflow, promoteAll, measureContent, budgetFor, invalidate,
     dispose() { try { ro?.disconnect(); } catch { /* realm gone */ } ro = null; if (raf) realmWin.cancelAnimationFrame(raf); },
   };
 }

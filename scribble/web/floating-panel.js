@@ -5,7 +5,7 @@
 // (no reparent, no jump), tracks the cursor, drops them clamped to the VIEWPORT,
 // and toggles a collapsed state. Bump this module's ?v= import with APP_VERSION.
 
-import { visibleBand, clampIntoBand, GRAB } from "./visible-band.js?v=166";
+import { visibleBand, clampIntoBand, GRAB } from "./visible-band.js?v=167";
 
 const DRAG_SLOP = 4; // px before a lift commits — a press-without-move is a no-op
 
@@ -47,6 +47,9 @@ export function makeFloating(el, { collapse, onChange, onSettle, win = window })
   let drag = null, raf = 0;
 
   el.addEventListener("pointerdown", (ev) => {
+    // Stale-gesture reset: if a previous drag lost its pointerup (OS overlay ate it) it would otherwise block
+    // every future drag, since we bail whenever `drag` is set. Only clear one we no longer hold capture for.
+    if (drag && !el.hasPointerCapture?.(drag.id)) drag = null;
     if (drag || ev.button !== 0 || ev.target.closest(DRAG_EXCLUDE)) return; // one drag at a time; buttons/inputs never lift
     const r = el.getBoundingClientRect();
     // Defer the lift until the pointer passes DRAG_SLOP, so a click-without-move
@@ -119,7 +122,13 @@ export function makeFloating(el, { collapse, onChange, onSettle, win = window })
   // is the iframe, so ANY tap on the parent PL page fires blur — a drag whose element still HOLDS
   // pointer capture keeps receiving events across that and must not be killed. Only cancel on blur
   // when capture is gone; visibility:hidden is a real tab switch and cancels unconditionally.
-  const onWinBlur = () => { if (drag && !el.hasPointerCapture?.(drag.id)) end(true); };
+  // NEVER cancel a LIFTED drag on blur. In the overlay the "window" IS the iframe, so dragging the bar toward or
+  // past the frame edge puts the pointer over the parent page and blurs us MID-GESTURE. The old capture check
+  // then cancelled a perfectly live drag and restored the pre-lift position — that was the reported "drag it half
+  // off, it snaps back where it came from; drag again and it sticks" bug (the 2nd drag starts with the iframe
+  // already focused, so no blur fires). A genuinely swallowed pointerup is still cleaned up by visibilitychange
+  // and by the stale-gesture reset in pointerdown below.
+  const onWinBlur = () => { if (drag && !drag.lifted) end(true); };
   win.addEventListener("blur", onWinBlur);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") end(true); });
 
