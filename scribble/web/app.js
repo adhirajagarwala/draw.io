@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "168";
+const APP_VERSION = "169";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=168";
+import init, { App } from "./pkg/scribble.js?v=169";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,19 +17,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=168";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=168";
-import { initEmbed } from "./embed.js?v=168";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=168";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=168";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=168";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=168";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=168";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=168";
-import { makeResizable } from "./rail-resize.js?v=168";
-import { makeOverflow } from "./rail-overflow.js?v=168";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=168";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=168";
+} from "./utils.js?v=169";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=169";
+import { initEmbed } from "./embed.js?v=169";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=169";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=169";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=169";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=169";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=169";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=169";
+import { makeResizable } from "./rail-resize.js?v=169";
+import { makeOverflow } from "./rail-overflow.js?v=169";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=169";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=169";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline

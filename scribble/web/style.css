@@ -1663,12 +1663,14 @@ body.overlay #rail #btn-more.has-active { background: var(--accent-soft); border
    was effectively unreadable, so you couldn't tell how many tools were hidden. */
 body.overlay #rail #btn-more { position: relative; overflow: visible; }
 .more-badge {
-  position: absolute; top: -5px; right: -5px; z-index: 2;
-  min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
+  position: absolute; top: -6px; right: -6px; z-index: 2;
+  min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box;
   display: flex; align-items: center; justify-content: center;
-  font: 700 10px/1 system-ui, -apple-system, sans-serif;
-  background: var(--accent); color: #fff; border: 1.5px solid #fff; border-radius: 9px;
-  box-shadow: 0 1px 2px rgba(20, 24, 28, .25); pointer-events: none;
+  /* LIGHT chip with dark-blue digits. A solid accent fill with white text swallowed the number at this size —
+     the badge just read as a blue dot. Light background + heavy blue text is legible at 11px. */
+  font: 800 11px/1 system-ui, -apple-system, sans-serif;
+  background: #fff; color: var(--accent); border: 1.5px solid var(--accent); border-radius: 9px;
+  box-shadow: 0 1px 3px rgba(20, 24, 28, .3); pointer-events: none;
 }
 
 /* ---- the More-popover controls: section head + two segmented groups ---- */
