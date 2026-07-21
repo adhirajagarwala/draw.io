@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "167";
+const APP_VERSION = "168";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=167";
+import init, { App } from "./pkg/scribble.js?v=168";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,19 +17,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=167";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=167";
-import { initEmbed } from "./embed.js?v=167";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=167";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=167";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=167";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=167";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=167";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=167";
-import { makeResizable } from "./rail-resize.js?v=167";
-import { makeOverflow } from "./rail-overflow.js?v=167";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=167";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=167";
+} from "./utils.js?v=168";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=168";
+import { initEmbed } from "./embed.js?v=168";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=168";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=168";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=168";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=168";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=168";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=168";
+import { makeResizable } from "./rail-resize.js?v=168";
+import { makeOverflow } from "./rail-overflow.js?v=168";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=168";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=168";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -150,6 +150,9 @@ let calcDodgeNudge = () => {};    // overlay boot swaps in the calc-hole dodge; 
 // v166: re-derive the toolbar fit after anything that changes tool sizes (e.g. "Larger controls").
 // Module-scope hook because applyBig() is module-scope while railLayout lives in the rail-init closure.
 let railRefit = () => {};
+// Notes always land at the DEFAULT spot the first time they appear on a page load (Notes button, a snip's
+// revealNotes, or hydrated notes) — never at a stale saved position that could be off-frame.
+let notesFirstShow = true;
 // Backstop: the canvas-bound pointerup/cancel handlers only fire when a pointer ends ON the canvas. A
 // rejected 2nd touch (or a stroke ending over a floating panel) would otherwise leave its id in
 // activePointers forever — and once >=2 stale ids accumulate, EVERY later stroke is rejected and the
@@ -3403,11 +3406,13 @@ function toggleNotes(show) {
     renderNotes();
     if (isNotesFloating()) {
       if (document.body.classList.contains("overlay")) {
-        // R1: if the pane would open above OR below the visible band, bring it to the band top; otherwise keep
-        // the student's in-band position. Either way it opens fully on-screen — never needing a scroll to find.
+        // The FIRST time notes appear on a page load they always go to the default spot (band top), however they
+        // got opened — Notes button, a snip's revealNotes, or hydrated notes. After that, an in-band position the
+        // student chose is respected; only a pane that has drifted out of the band gets pulled back.
         const pr = els.notesPane.getBoundingClientRect(), b = visibleBand();
-        if (pr.top < b.top || pr.top > b.bottom - 36) placeNotesAtBandTop();
+        if (notesFirstShow || pr.top < b.top || pr.top > b.bottom - 36) placeNotesAtBandTop();
         else clampNotes();
+        notesFirstShow = false;
       } else clampNotes(); // non-overlay: re-fit a restored floating window to the live stage
     }
   }
@@ -3953,10 +3958,23 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         };
         // No stopPropagation: letting the click reach the document closers means opening
         // More auto-closes the About popover (the More closer excludes moreBtn itself).
+        // Flip the popover ABOVE the button when opening it downward would run past the visible band. It is
+        // position:absolute under a viewport-fixed bar with no clamp of its own, and it got materially taller
+        // once overflowed tool groups started parking inside it — so on a bar near the bottom of the band it
+        // would open straight off-screen. Measured after unhiding (a hidden element has no rect).
+        const placeMorePop = () => {
+          morePop.style.top = ""; morePop.style.bottom = ""; // measure the natural (downward) placement first
+          const r = morePop.getBoundingClientRect();
+          if (!r.height) return;
+          // Iframe realm: the popover lives inside #rail, which is in this document (Phase-1 reparent is off).
+          const band = visibleBand(window);
+          if (r.bottom > band.bottom - 4) { morePop.style.top = "auto"; morePop.style.bottom = "calc(100% + 6px)"; }
+        };
         moreBtn.addEventListener("click", () => {
           const open = morePop.hidden;
           morePop.hidden = !open;
           moreBtn.setAttribute("aria-expanded", String(open));
+          if (open) placeMorePop();
         });
         // Activating any item (Larger / Help / palette) dismisses the menu — else Help's modal opens
         // BEHIND the still-open popover (the popover is trapped in the rail's low stacking context).
@@ -4059,7 +4077,11 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // gate-off coords are still iframe-realm (same realm v160 saved them in), so a v160 student who dragged
           // their toolbar isn't reset. Only the parent-realm (post-flip) path ignores the legacy key.
           const rp = (prefs && (prefs.railFloat2 || (railWin === window && prefs.railFloat))) || {};
-          if (rp.left && rp.top) railFP.floatTo(parseFloat(rp.left), parseFloat(rp.top));
+          // The toolbar ALWAYS loads at its default place. A saved dragged position is deliberately NOT restored:
+          // a spot saved under a different question height / window size reloaded half-off-frame, and hunting for
+          // the toolbar is the worst possible first impression of a question. Moves still work for the session
+          // (savePrefs keeps writing railFloat2 for rollback), they just don't survive a reload — same rule as
+          // the collapsed state (R4). Notes follow the same rule via placeNotesAtBandTop.
           // ---- v166: toolbar WIDTH (drag handle + presets) and OVERFLOW mode (wrap vs More) ----
           // The notes reserve a strip at the band top so their header can't hide behind the bar; a WRAPPED
           // 2-row bar is taller than the old hardcoded 64, so push the real measured height instead.

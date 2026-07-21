@@ -1632,6 +1632,9 @@ body.overlay #rail.ov-wrap { height: auto; min-height: 52px; }
 body.overlay.big #rail.ov-wrap { min-height: 60px; }
 body.overlay #rail.ov-wrap .rail-scroll {
   flex-wrap: wrap; row-gap: 4px; column-gap: 10px;
+  /* Rows stayed ragged while dragging the width because groups could squeeze/split and rows centred
+     independently. Pin every row to the same height and stop groups from being compressed mid-drag. */
+  align-content: flex-start; align-items: stretch;
   /* BOTH axes: per spec, when one axis is `visible` and the other is not, `visible` computes to `auto` — that
      leaves a scroll container and NOTHING ever wraps. Setting only overflow-x here is the classic trap. */
   overflow-x: visible; overflow-y: visible;
@@ -1656,8 +1659,17 @@ body.overlay #rail #more-popover .tool span { font-size: 12.5px; }
 #more-overflow .tool[data-tool="text"] span::after { content: none; }
 /* an armed tool that left the bar must still read as armed */
 body.overlay #rail #btn-more.has-active { background: var(--accent-soft); border-color: #c9d6f7; color: var(--accent); }
-.more-badge { font-size: 10px; font-weight: 700; line-height: 1; padding: 1px 4px; border-radius: 7px;
-              background: var(--accent); color: #fff; margin-left: 2px; }
+/* Count of tools parked in More. Pinned to the button's corner: appended inline it wrapped under the label and
+   was effectively unreadable, so you couldn't tell how many tools were hidden. */
+body.overlay #rail #btn-more { position: relative; overflow: visible; }
+.more-badge {
+  position: absolute; top: -5px; right: -5px; z-index: 2;
+  min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  font: 700 10px/1 system-ui, -apple-system, sans-serif;
+  background: var(--accent); color: #fff; border: 1.5px solid #fff; border-radius: 9px;
+  box-shadow: 0 1px 2px rgba(20, 24, 28, .25); pointer-events: none;
+}
 
 /* ---- the More-popover controls: section head + two segmented groups ---- */
 .more-sec-head { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 6px 8px 2px; }
@@ -1671,3 +1683,9 @@ body.overlay #rail #btn-more.has-active { background: var(--accent-soft); border
 #rail-width-group button[aria-pressed="true"], #rail-ovmode-group button[aria-pressed="true"] {
   background: var(--accent-soft); border-color: #c9d6f7; color: var(--accent);
 }
+
+/* A tool group is an atom: never let flex shrink it or split its buttons across two rows — that was the
+   "rows aren't clean" raggedness while dragging the resize handle. */
+body.overlay #rail.ov-wrap .rail-scroll > * { flex: 0 0 auto; }
+body.overlay #rail.ov-wrap .rail-group { flex-wrap: nowrap; align-items: center; }
+body.overlay #rail.ov-wrap .rail-scroll > * { display: flex; align-items: center; min-height: 44px; }
