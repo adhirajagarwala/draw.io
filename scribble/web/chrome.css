@@ -242,7 +242,10 @@
 .scribble-chrome #rail {
   position: fixed; top: 4px; left: 4px; z-index: 10; /* net 10 (mirror style.css:687→804): rests above the cbar */
   flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 4px;
-  width: var(--rail-w, calc(100% - 8px));            /* the ONE merged bar spans the card so actions can sit at the far edge */
+  /* v171 width channel (mirror style.css:694-695): a chosen width is a CAP — the bar is content-sized up to
+     it (max-content under --rail-w-mode), so demoted tools leave no dead space. Binding --rail-w to width
+     directly kept the dead space. */
+  width: var(--rail-w-mode, calc(100% - 8px)); max-width: var(--rail-w, none);
   background: #fff;
   border: 1px solid var(--line); border-radius: 12px; padding: 4px 6px;
   box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14);
@@ -262,7 +265,7 @@
   box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14); /* override the base 0 10px 28px blur (drag lag) */
 }
 .scribble-chrome #context-bar.cbar-dragging { z-index: 80; }
-.scribble-chrome #rail.fp-moved { width: var(--rail-w, max-content); max-width: calc(100vw - 8px); top: auto; left: auto; right: auto; }
+.scribble-chrome #rail.fp-moved { width: var(--rail-w-mode, max-content); max-width: var(--rail-w, calc(100vw - 8px)); top: auto; left: auto; right: auto; } /* v171: same cap channel as the default bar (mirror style.css:806) */
 .scribble-chrome #rail.fp-dragging { z-index: 80; cursor: grabbing; box-shadow: 0 6px 20px rgba(20, 24, 28, 0.22); }
 .scribble-chrome #rail.fp-collapsed :is(.rail-group, #context-bar, .rail-actions, .fp-resize) { display: none; }
 .scribble-chrome #rail.fp-collapsed { width: auto; }
@@ -418,3 +421,70 @@
 /* Swatch focus ring is 3px offset — MUST come after the general 2px rule above (equal specificity, source
    order wins), or the swatch regresses to 2px. Mirrors style.css:183-193 ordering. */
 .scribble-chrome .swatch:focus-visible { outline-offset: 3px; }
+
+/* ============================================================================
+   v171 mirror — width handle + the More overflow model + Customize (mirror of the style.css v171 block).
+   APPENDED LAST on purpose: .scribble-chrome plays both the overlay and .big base roles here, so
+   equal-specificity rules resolve by SOURCE ORDER (the discipline documented above the .big block).
+   ========================================================================= */
+/* ---- resize handle (mirror style.css:1613-1627) — the ONLY manual width control. chrome.css previously had
+   ZERO .fp-resize styling, so the reparented handle collapsed to ~0px and the control vanished. ---- */
+.scribble-chrome #rail { padding-right: 14px; }   /* room for the strip; never steals the collapse button's hit area */
+.scribble-chrome #rail .fp-resize {
+  display: block; position: absolute; right: 0; top: 6px; bottom: 6px; width: 12px;
+  padding: 0; border: 0; background: transparent; cursor: ew-resize;
+  touch-action: none;   /* touch-action does NOT inherit — the bar's own `none` does not cover this child */
+  border-radius: 0 11px 11px 0;
+}
+.scribble-chrome #rail .fp-resize::before {                    /* the visible 2px grab line */
+  content: ""; position: absolute; left: 5px; top: 25%; bottom: 25%;
+  width: 2px; background: var(--line); border-radius: 1px;
+}
+.scribble-chrome #rail .fp-resize:hover::before,
+.scribble-chrome #rail .fp-resize:focus-visible::before { background: var(--accent); }
+.scribble-chrome #rail .fp-resize:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* ---- More parking (mirror style.css:1649-1674): without these a demoted tool renders as a squashed bar
+   chip and the count badge flies to the rail's corner. ---- */
+.scribble-chrome #rail .rail-scroll > *:first-child { border-left: 0; margin-left: 0; padding-left: 0; }
+/* review F11/F12: TWO ids, matching style.css — parked groups stack as menu-row columns in BOTH realms, and
+   the shorthand border reset kills the stray `+ .rail-group` hairline between two parked groups. */
+.scribble-chrome #rail #more-overflow .rail-group { flex-direction: column; align-items: stretch; border: 0; margin: 0; padding: 0; }
+.scribble-chrome #rail #more-overflow #context-bar { flex-direction: row; flex-wrap: wrap; padding: 6px 4px; gap: 6px; border: 0; margin: 0; }
+.scribble-chrome #rail #more-popover .tool {
+  display: flex; flex-direction: row; align-items: center; justify-content: flex-start;
+  gap: 8px; width: 100%; height: auto; padding: 7px 9px; text-align: left;
+}
+.scribble-chrome #rail #more-popover .tool span { font-size: 12.5px; }
+.scribble-chrome #more-overflow .tool[data-tool="text"] span::after { content: none; }
+.scribble-chrome #rail #btn-more.has-active { background: var(--accent-soft); border-color: #c9d6f7; color: var(--accent); }
+.scribble-chrome #rail #btn-more { position: relative; overflow: visible; } /* the badge's absolute anchor */
+.scribble-chrome .more-badge {
+  position: absolute; top: -6px; right: -6px; z-index: 2;
+  min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  font: 800 11px/1 system-ui, -apple-system, sans-serif;
+  background: #fff; color: var(--accent); border: 1.5px solid var(--accent); border-radius: 9px;
+  box-shadow: 0 1px 3px rgba(20, 24, 28, .3); pointer-events: none;
+}
+.scribble-chrome .more-sec-head { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 6px 8px 2px; }
+/* ---- v171 rules (mirror the style.css v171 additions verbatim, re-scoped) ---- */
+.scribble-chrome #rail #more-popover { overflow-y: auto; }
+.scribble-chrome .more-spill:has(#more-overflow:empty) { display: none; }
+.scribble-chrome #rail .tool.tool-off,
+.scribble-chrome #rail #more-popover .tool.tool-off { display: none; }
+.scribble-chrome #rail .rail-group.group-off { display: none; }
+.scribble-chrome #more-customize { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 2px; }
+.scribble-chrome #more-customize .ct-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 9px;
+  font-size: 12.5px; color: var(--ink); border-radius: 7px; cursor: pointer;
+}
+.scribble-chrome #more-customize .ct-row:hover { background: #f5f6f8; }
+/* review F10 (mirror): cloned tool SVGs need fill:none + a stroke-width or they render as solid blobs. */
+.scribble-chrome #more-customize .ct-row svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.85; }
+.scribble-chrome #more-customize .ct-row.ct-protected { opacity: .45; cursor: default; }
+.scribble-chrome #more-customize #ct-reset {
+  margin: 4px 6px 6px; font: 600 12px/1 system-ui, -apple-system, sans-serif; padding: 7px 8px;
+  border: 1px solid var(--line); background: #fff; color: var(--ink);
+  border-radius: 7px; cursor: pointer; white-space: nowrap;
+}
+.scribble-chrome #more-customize #ct-reset:hover { background: #eef0f3; }

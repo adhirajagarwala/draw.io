@@ -1,8 +1,10 @@
 // rail-overflow.js — what the OVERLAY toolbar does when it is too narrow for its tools.
 //
-// TWO modes, exactly one class on #rail at a time (the user is A/B-ing them; the loser gets deleted):
-//   .ov-wrap : PURE CSS — the scroller wraps to a 2nd row. This module only promotes everything back first.
-//   .ov-more : whole .rail-group / #context-bar nodes are demoted into the More popover, lowest priority first.
+// ONE model (v171): whole .rail-group / #context-bar nodes are demoted into the More popover, lowest priority
+// first, and promoted back when they genuinely fit again. The width-drag handle sets --rail-w (a CAP — the bar
+// is content-sized up to it); this engine decides which groups live on the bar vs. in More at that width.
+// (The v166–v170 wrap-to-a-2nd-row mode and the Compact/Medium/Full presets are deleted: one overflow model,
+// one manual control.)
 //
 // GRANULARITY is the group, never the individual tool: the hairline dividers are keyed on
 // `.rail-scroll > .rail-group + .rail-group`, so half-emptying a group leaves a dangling separator — and after
@@ -11,19 +13,21 @@
 
 const GAP = 8; // px of slack required before promoting back — hysteresis, kills demote<->promote flicker
 
-// Which group leaves first (ascending). The Draw group (pen/highlight/text/erase) is Infinity: it NEVER leaves,
-// so the core drawing tools are always on the bar. Undo/Redo outrank the colour strip because Ctrl+Z/Ctrl+Y
-// fully cover them from the keyboard.
+// Which group leaves first (ascending). The Draw group (pen/highlight/text/erase) AND Select fall through to
+// Infinity: they NEVER leave, so the core tools are always on the bar. Undo/Redo outrank the colour strip
+// because Ctrl+Z/Ctrl+Y fully cover them from the keyboard.
+// NB: the Marks group (tick/cross/circle/arrow/rect) also lands Infinity, but it is display:none in overlay
+// (style.css trim rules) — it MUST be given a finite priority here before it is ever surfaced on the bar,
+// or it can neither demote nor count toward the width floor correctly.
 function prioFor(node) {
   if (node.id === "context-bar") return 3;
   if (node.querySelector('[data-tool="snip"]')) return 1;
   if (node.querySelector("#btn-undo, #btn-redo")) return 2;
-  if (node.querySelector('[data-tool="select"]')) return 4;
   return Infinity;
 }
 
-export function makeOverflow({ rail, scroll, popover, bay, moreBtn, win = window, announce }) {
-  let mode = "more", ro = null, raf = 0, lastW = -1, lastH = -1;
+export function makeOverflow({ rail, scroll, bay, moreBtn, win = window, announce }) {
+  let ro = null, raf = 0, lastW = -1, lastH = -1;
 
   const doc = rail.ownerDocument;
   const realmWin = doc.defaultView || win;
@@ -41,10 +45,14 @@ export function makeOverflow({ rail, scroll, popover, bay, moreBtn, win = window
 
   // Re-insert at the ORIGINAL index: find the first still-present sibling whose order is greater. O(n) over <=5.
   function promote(node) {
+    // review F5 (symmetric with demote's guard): moving a focused element in the DOM drops keyboard focus to
+    // <body> — re-focus the same element after the move so a keyboard user promoting out of More isn't stranded.
+    const hadFocus = node.contains(doc.activeElement) ? doc.activeElement : null;
     const o = +node.dataset.railOrder;
     const ref = [...scroll.children].find((c) => +c.dataset.railOrder > o) || null;
     scroll.insertBefore(node, ref);
     delete node.dataset.railW;
+    hadFocus?.focus?.();
   }
 
   function demote(node) {
@@ -54,8 +62,6 @@ export function makeOverflow({ rail, scroll, popover, bay, moreBtn, win = window
     bay.appendChild(node);
   }
 
-  function promoteAll() { parked().forEach(promote); syncMoreBtn(); }
-
   // The active tool's group must never leave the bar — losing sight of the tool you are holding is the
   // hidden-irrecoverable-control failure class this project treats as a real bug.
   function activeGroup() {
@@ -64,14 +70,19 @@ export function makeOverflow({ rail, scroll, popover, bay, moreBtn, win = window
   }
 
   function reflow() {
-    if (mode !== "more" || !rendered()) return;
+    if (!rendered()) return;
+    // review F3: a COLLAPSED bar hides its groups (display:none) — scrollWidth reads 0, so a reflow here would
+    // "promote" everything and fire a false "All tools on the toolbar" announce. The expand path re-sizes the
+    // bar, which re-fires the ResizeObserver → a real reflow runs then.
+    if (rail.classList.contains("fp-collapsed")) return;
     stamp();
     const act = activeGroup();
-    // 1) demote while overflowing, lowest priority first
+    // 1) demote while overflowing, lowest priority first. An all-off group (.group-off — every tool in it
+    //    hidden via Customize) is display:none: never a candidate, never counted.
     let guard = 12;
     while (scroll.scrollWidth > scroll.clientWidth + 1 && guard-- > 0) {
       const cands = [...scroll.children]
-        .filter((c) => c !== act && Number.isFinite(+c.dataset.railPrio))
+        .filter((c) => c !== act && Number.isFinite(+c.dataset.railPrio) && !c.classList.contains("group-off"))
         .sort((a, b) => +a.dataset.railPrio - +b.dataset.railPrio);
       if (!cands.length) break;              // only the un-demotable remain — .rail-scroll's overflow-x carries it
       demote(cands[0]);
@@ -81,7 +92,15 @@ export function makeOverflow({ rail, scroll, popover, bay, moreBtn, win = window
     //      chosen width  -> the bar hugs its content (max-content capped at --rail-w), so there is never "slack"
     //                       to measure; ask instead whether shell + content + the group still fits the cap.
     //      full width    -> the bar is a fixed calc(100% - 8px), so real slack in the scroller is the right test.
-    const capPx = parseFloat(rail.style.getPropertyValue("--rail-w")) || Infinity;
+    let capPx = parseFloat(rail.style.getPropertyValue("--rail-w")) || Infinity;
+    // review F0 (promote starvation): a MOVED bar with NO chosen width is content-sized too (style.css .fp-moved
+    // width:max-content) — the scroller never has slack, so the Infinity-regime slack test below could never
+    // pass and tools parked by an earlier narrow cap stayed in More forever after End/double-click ("full
+    // width") or a window re-widen. Its real ceiling is the CSS viewport clamp (max-width: calc(100vw - 8px)),
+    // so treat THAT as the cap and use the same hypothetical-fit test as a chosen width.
+    if (!Number.isFinite(capPx) && rail.classList.contains("fp-moved")) {
+      capPx = Math.max(160, (realmWin.innerWidth || 0) - 8);
+    }
     let g2 = 12;
     while (g2-- > 0) {
       const shellW = rail.getBoundingClientRect().width - scroll.getBoundingClientRect().width;
@@ -99,10 +118,15 @@ export function makeOverflow({ rail, scroll, popover, bay, moreBtn, win = window
     syncMoreBtn();
   }
 
-  let sayTimer = 0;
+  let sayTimer = 0, lastSaid = 0; // review F1/F7: init 0 so a clean boot / Annotate press announces nothing
   function syncMoreBtn() {
     if (!moreBtn) return;
-    const n = parked().length;
+    // Count TOOLS, not groups — undo/redo park as ONE group but read as TWO tools, and a group-count badge
+    // under-sold what was hidden. The colour strip counts as one item (a stated fudge: it isn't a "tool").
+    // Hidden (.tool-off) tools are display:none inside the bay and still match this selector — but a hidden
+    // tool's GROUP only reaches the bay via demotion, and .group-off groups are never demoted, so in practice
+    // the count is of visible, spilled tools.
+    const n = bay.querySelectorAll(".tool:not(.tool-off)").length + (bay.querySelector("#context-bar") ? 1 : 0);
     moreBtn.setAttribute("aria-label", n ? `More tools, ${n} moved here` : "More tools");
     let badge = moreBtn.querySelector(".more-badge");
     if (n) {
@@ -111,46 +135,41 @@ export function makeOverflow({ rail, scroll, popover, bay, moreBtn, win = window
     } else if (badge) badge.remove();
     // an armed tool that left the bar must still read as armed
     moreBtn.classList.toggle("has-active", !!bay.querySelector(".tool.active"));
-    if (announce) {
+    // review F1/F7: announce ONLY when the count actually changed. The old unconditional schedule meant every
+    // reflow — including the no-op ones inside railRefit — re-queued a count toast that then OVERWROTE the
+    // message that triggered it ("Larger controls on.", the Customize hide/show lines, Reset) ~300ms later in
+    // the single #status live region, cutting the professor's named-bug fix down to a 300ms flash. Badge and
+    // aria-label above stay unconditional (they're state, not an event).
+    if (announce && n !== lastSaid) {
+      lastSaid = n;
       clearTimeout(sayTimer);
-      sayTimer = setTimeout(() => announce(n ? `${n} tool group${n > 1 ? "s" : ""} moved into More` : "All tools on the toolbar"), 300);
+      sayTimer = setTimeout(() => announce(n ? `${n} tool${n > 1 ? "s" : ""} in More` : "All tools on the toolbar"), 300);
     }
   }
 
-  function setMode(next) {
-    const m = next === "wrap" ? "wrap" : "more";
-    if (m === "wrap") promoteAll();            // wrap owns the layout — nothing may stay parked
-    mode = m;
-    rail.classList.toggle("ov-wrap", m === "wrap");
-    rail.classList.toggle("ov-more", m === "more");
-    if (m === "more") reflow();
-  }
+  // (v171 review F4: measureContent — the old promote-everything-measure-restore probe — is deleted. Its only
+  // caller was the preset derivation, which is gone; keeping an export that mutates the DOM as a side effect
+  // of "measuring" was a foot-gun.)
 
-  // Measure the bar's natural content width (used to DERIVE preset widths that are guaranteed to overflow —
-  // hardcoded px could fail to overflow on a wide card, making the whole wrap-vs-More comparison unrunnable).
-  function measureContent() {
-    const wasParked = parked();
-    wasParked.forEach(promote);                // measure the FULL set
-    const content = scroll.scrollWidth;
+  // The narrowest useful bar: shell + the never-demoted core (Draw + Select), measured IN PLACE — protected
+  // groups are never demoted, so there is no promote churn to undo. The getClientRects filter excludes
+  // display:none groups (the overlay-hidden Marks group would otherwise inflate the floor via its Infinity
+  // priority); the +16 slack keeps the floor clear of the GAP=8 promote hysteresis.
+  function coreWidth() {
+    stamp();
     const shell = rail.getBoundingClientRect().width - scroll.getBoundingClientRect().width;
-    if (mode === "more") reflow();             // put it back the way it was
-    return { content, shell, full: content + shell };
+    const core = [...scroll.children]
+      .filter((c) => !Number.isFinite(+c.dataset.railPrio) && c.getClientRects().length)
+      .reduce((s, c) => s + c.getBoundingClientRect().width, 0);
+    return Math.round(shell + core + 16);
   }
 
-  // Width budget that RETAINS exactly the top-`keep` priority groups. Presets use this instead of a percentage
-  // of content, so Compact and Medium differ by a real NUMBER OF TOOLS rather than landing on the same demotion.
-  function budgetFor(keep) {
-    const wasParked = parked();
-    wasParked.forEach(promote);                                   // measure the FULL set
-    const items = [...scroll.children].map((c) => ({ prio: +c.dataset.railPrio, w: c.getBoundingClientRect().width }));
-    const shell = rail.getBoundingClientRect().width - scroll.getBoundingClientRect().width;
-    items.sort((a, b) => b.prio - a.prio);                        // highest priority is retained first
-    const keepW = items.slice(0, Math.max(1, keep)).reduce((s, i) => s + i.w, 0);
-    if (mode === "more") reflow();                                // restore the previous demotion state
-    return Math.round(shell + keepW + 16);
-  }
-
-  function invalidate() { parked().forEach((n) => delete n.dataset.railW); reflow(); }
+  // Full REFIT: promote everything home, then re-demote against CURRENT sizes. promote() clears each group's
+  // cached railW stamp and demote() re-stamps fresh widths, so after a size change (.big, a Customize toggle)
+  // parked groups can genuinely return — the old "clear railW then reflow" left `+railW || 9999` blocking every
+  // promote. Synchronous promote→re-demote is safe (reflow is already synchronous); the announce is
+  // debounced in syncMoreBtn, so no spam.
+  function invalidate() { parked().forEach(promote); reflow(); }
 
   function schedule() {
     if (raf) return;
@@ -176,7 +195,7 @@ export function makeOverflow({ rail, scroll, popover, bay, moreBtn, win = window
   stamp();
   observe();
   return {
-    setMode, getMode: () => mode, reflow, promoteAll, measureContent, budgetFor, invalidate,
+    reflow, coreWidth, invalidate,
     dispose() { try { ro?.disconnect(); } catch { /* realm gone */ } ro = null; if (raf) realmWin.cancelAnimationFrame(raf); },
   };
 }

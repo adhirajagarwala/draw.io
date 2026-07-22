@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "170";
+const APP_VERSION = "171";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=170";
+import init, { App } from "./pkg/scribble.js?v=171";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,19 +17,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=170";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=170";
-import { initEmbed } from "./embed.js?v=170";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=170";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=170";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=170";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=170";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=170";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=170";
-import { makeResizable } from "./rail-resize.js?v=170";
-import { makeOverflow } from "./rail-overflow.js?v=170";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=170";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=170";
+} from "./utils.js?v=171";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=171";
+import { initEmbed } from "./embed.js?v=171";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=171";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=171";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=171";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=171";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=171";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=171";
+import { makeResizable } from "./rail-resize.js?v=171";
+import { makeOverflow } from "./rail-overflow.js?v=171";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=171";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=171";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -109,6 +109,13 @@ const els = {
 // Tools that exist only in the UI layer (the Rust core stays in a neutral
 // tool while they're active).
 const JS_TOOLS = new Set(["snip"]);
+// v171 Customize (the More-menu checklist): CLOSED id sets, mirroring the closed-enum discipline everywhere
+// else. PROTECTED tools can never be hidden — a student must never strand themselves mid-exam without pen /
+// eraser / select (their checklist rows render checked+disabled). CUSTOMIZABLE is the only set a saved
+// `toolsHidden` pref is validated against on read, so a corrupt/stale pref can't hide anything essential.
+// NB "Done" is the parent page's Annotate pill, not a rail tool — it has no row here by design.
+const PROTECTED_TOOLS = new Set(["pen", "eraser", "select"]);
+const CUSTOMIZABLE_TOOLS = new Set(["highlighter", "text", "snip"]);
 // ⚠ PHASE 1 (toolbar reparent) IS PAUSED AND GATED OFF — DO NOT FLIP THIS ON without finishing + verifying it.
 // It moves #rail out to the parent PL page so position:fixed follows the browser viewport. The code below is
 // written and its first review round is fixed (7 bugs found: iframe-realm tool queries, an un-gated body.big
@@ -117,11 +124,8 @@ const JS_TOOLS = new Set(["snip"]);
 // every Phase-1 addition is inert: railHostDoc stays this document (identical to the old behaviour), chrome.css
 // is never injected, and floating-panel's `win` defaults to this window. See memory: scribble-vnext-15point-plan.
 const PHASE1_CHROME_REPARENT = false;
-// v166 toolbar-overflow TRIAL: ship BOTH behaviours behind a live toggle so the overflow style can be judged on
-// the real question, then flip TRIAL false and let DEFAULT fix the winner (deleting the loser is then a contained
-// diff). "more" = demote groups into the More popover (bar stays one 52px row); "wrap" = wrap to a 2nd row.
-const RAIL_OVERFLOW_TRIAL = true;
-const RAIL_OVERFLOW_DEFAULT = "more";
+// (v171: the v166 wrap-vs-More overflow TRIAL is over — More won. One overflow model, one manual control: the
+// width-drag handle. The presets, the wrap mode, and the student-facing A/B toggle are deleted.)
 // The realm the tool rail lives in. Normally this iframe's document; when the Phase-1 reparent is enabled the
 // rail lives in the parent page, so every tool/colour/width query must search THAT document — a plain
 // `document.querySelector` would search the now-empty iframe. Set by the reparent; defaults to the iframe.
@@ -3592,16 +3596,20 @@ els.btn.thumbs.addEventListener("click", async () => {
 
 // ---------- accessibility toggles ----------
 
-function applyBig(on) {
+// `announce` mirrors applyPalette below: the CLICK announces, the boot-time restores stay silent (no toast on
+// every reload for coarse-pointer devices). This was the professor's named bug — the toggle lives inside the
+// closed More popover, so without an announce its only feedback (.active/aria-pressed) was invisible.
+function applyBig(on, announce = false) {
   document.body.classList.toggle("big", on);
   railHostEl?.classList.toggle("big", on); // mirror onto the reparented rail (chrome.css .scribble-chrome.big)
   els.btn.big.classList.toggle("active", on);
   syncAria();
   clampContextBar(); // larger controls shrink the toolbar gap → re-fit a docked bar
-  railRefit(); // tool widths + bar height changed → preset derivation and the overflow fit are stale
+  railRefit(); // tool widths + bar height changed → the overflow fit is stale (refit demotes into More, no overlap)
+  if (announce) status(on ? "Larger controls on." : "Larger controls off.");
 }
 els.btn.big.addEventListener("click", () => {
-  applyBig(!document.body.classList.contains("big"));
+  applyBig(!document.body.classList.contains("big"), true);
   savePrefs();
 });
 
@@ -3769,10 +3777,13 @@ function savePrefs() {
           return { left: r.classList.contains("fp-moved") ? r.style.left : "",
                    top: r.classList.contains("fp-moved") ? r.style.top : "",
                    collapsed: r.classList.contains("fp-collapsed"),
-                   // v166: chosen bar width ("" = full span) + overflow mode. Same versioned sub-key, so a v165
-                   // pref object still loads here and a v166 one still loads on v165 (unknown fields ignored).
+                   // v166: chosen bar width ("" = full span). Same versioned sub-key both directions: a pre-v171
+                   // object's ovMode is simply unread here (More is the only model), and a v171 object on an
+                   // older bundle reads ovMode undefined → "more". Tolerant reader, no sub-key bump needed.
                    width: r.style.getPropertyValue("--rail-w") || "",
-                   ovMode: r.classList.contains("ov-wrap") ? "wrap" : "more" };
+                   // v171 Customize: the DEVIATION from default — unchecked stable data-tool ids. Absent/empty
+                   // = everything shown, so a future new tool defaults eligible with no migration.
+                   toolsHidden: [...r.querySelectorAll(".tool.tool-off")].map((b) => b.dataset.tool).filter(Boolean) };
         })()
         : (prev.railFloat2 || {}),
       railFloat: prev.railFloat || {}, // carry the legacy iframe-realm key forward untouched (rollback safety)
@@ -3924,34 +3935,21 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         // arrow-key model, and it invalidates the children's aria-pressed / aria-haspopup).
         morePop.id = "more-popover"; morePop.hidden = true;
         morePop.append(els.btn.big, $("btn-help"), palette);
-        // ---- v166: toolbar width + overflow controls, PREPENDED above Larger/Help/palette ----
+        // ---- v171: the parked-tools spill section, PREPENDED above Larger/Help/palette ----
+        // (The v166 Compact/Medium/Full presets and the wrap-vs-More A/B seg controls are deleted — the width
+        // handle is the one manual control and More is the one overflow model.)
         // All labels via textContent (never innerHTML of anything but the static moreBtn SVG above).
-        const mkSegBtn = (label, title) => {
-          const b = document.createElement("button");
-          b.type = "button"; b.textContent = label; b.title = title || label;
-          b.setAttribute("aria-pressed", "false");
-          return b;
-        };
-        const railBay = document.createElement("div");   // .ov-more parks demoted groups in here
-        railBay.id = "more-overflow";
+        const railBay = document.createElement("div");   // the overflow engine parks demoted groups in here
+        railBay.id = "more-overflow";                    // load-bearing id: the closer exemption + the engine's bay
         railBay.setAttribute("role", "group"); railBay.setAttribute("aria-label", "Tools moved here");
         const railSecHead = document.createElement("div");
-        railSecHead.className = "more-sec-head"; railSecHead.textContent = "Toolbar";
-        const widthGroup = document.createElement("div");
-        widthGroup.id = "rail-width-group";
-        widthGroup.setAttribute("role", "group"); widthGroup.setAttribute("aria-label", "Toolbar width");
-        const wCompactBtn = mkSegBtn("Compact", "Narrow toolbar");
-        const wMediumBtn = mkSegBtn("Medium", "Medium-width toolbar");
-        const wFullBtn = mkSegBtn("Full", "Full-width toolbar");
-        widthGroup.append(wCompactBtn, wMediumBtn, wFullBtn);
-        const ovGroup = document.createElement("div");
-        ovGroup.id = "rail-ovmode-group";
-        ovGroup.setAttribute("role", "group"); ovGroup.setAttribute("aria-label", "When the toolbar is too narrow");
-        const ovWrapBtn = mkSegBtn("Wrap to a 2nd row", "Overflowing tools wrap onto a second row");
-        const ovMoreBtn = mkSegBtn("Hide extras in More", "Overflowing tools move into this More menu");
-        ovGroup.append(ovWrapBtn, ovMoreBtn);
-        morePop.prepend(railBay, railSecHead, widthGroup);
-        if (RAIL_OVERFLOW_TRIAL) widthGroup.after(ovGroup); // the A/B toggle; hidden once a winner is picked
+        railSecHead.className = "more-sec-head"; railSecHead.textContent = "Moved here to fit";
+        // Wrap head+bay in one section so CSS can hide BOTH when nothing is parked — a bare "Moved here to
+        // fit" header over an empty bay reads as a bug (.more-spill:has(#more-overflow:empty){display:none}).
+        const spillWrap = document.createElement("div");
+        spillWrap.className = "more-spill";
+        spillWrap.append(railSecHead, railBay);
+        morePop.prepend(spillWrap);
         actions.append(moreBtn);
         railEl.appendChild(actions);
         railEl.appendChild(morePop); // sibling of actions; CSS positions it under the More button
@@ -3969,12 +3967,25 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         // once overflowed tool groups started parking inside it — so on a bar near the bottom of the band it
         // would open straight off-screen. Measured after unhiding (a hidden element has no rect).
         const placeMorePop = () => {
-          morePop.style.top = ""; morePop.style.bottom = ""; // measure the natural (downward) placement first
-          const r = morePop.getBoundingClientRect();
-          if (!r.height) return;
-          // Iframe realm: the popover lives inside #rail, which is in this document (Phase-1 reparent is off).
-          const band = visibleBand(window);
-          if (r.bottom > band.bottom - 4) { morePop.style.top = "auto"; morePop.style.bottom = "calc(100% + 6px)"; }
+          // Element-derived realm (reparent pre-fix): the popover lives inside #rail — THIS document today, the
+          // PARENT document once Phase 1 flips. ownerDocument.defaultView is correct in both, and it never
+          // reaches for rail state declared in the !READONLY block below (a `railWin` reference from this
+          // closure would be a ReferenceError on every More click — this function sits OUTSIDE that scope).
+          const band = visibleBand(morePop.ownerDocument.defaultView || window);
+          // review F13: cap the popover to the ACTUAL GAP on the side it opens toward, not the whole band —
+          // a whole-band maxHeight let the flipped-above popover extend past the band TOP (Customize made it
+          // tall enough), putting the menu's upper half (incl. the checklist) off-screen. Measure the gaps
+          // from the More button, prefer downward, flip only when above genuinely offers more room; the
+          // 140px floor keeps a usable scrollable menu even in a degenerate sliver band (overflow-y:auto).
+          const br = moreBtn.getBoundingClientRect();
+          const gapBelow = band.bottom - br.bottom - 10;
+          const gapAbove = br.top - band.top - 10;
+          morePop.style.top = ""; morePop.style.bottom = ""; morePop.style.maxHeight = "";
+          const natural = morePop.getBoundingClientRect().height;
+          if (!natural) return;
+          const below = natural <= gapBelow || gapBelow >= gapAbove;
+          morePop.style.maxHeight = `${Math.max(140, Math.floor(below ? gapBelow : gapAbove))}px`;
+          if (!below) { morePop.style.top = "auto"; morePop.style.bottom = "calc(100% + 6px)"; }
         };
         moreBtn.addEventListener("click", () => {
           const open = morePop.hidden;
@@ -3984,12 +3995,13 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         });
         // Activating any item (Larger / Help / palette) dismisses the menu — else Help's modal opens
         // BEHIND the still-open popover (the popover is trapped in the rail's low stacking context).
-        // Any button closes the menu — EXCEPT the toolbar width/overflow controls and the parked-tools bay.
-        // Without the exemption the popover shuts on every preset click and the width / wrap-vs-More A/B is
-        // unusable. Help still closes it (it is outside all three groups), which is why the rule exists.
+        // Any button closes the menu — EXCEPT the parked-tools bay (activating a parked tool keeps the menu
+        // usable) and the Customize section (its Reset button must not slam the menu shut mid-configuration;
+        // the checkbox <input>s never match closest("button") anyway, so the exemption is load-bearing for
+        // Reset specifically). Help still closes it (outside both), which is why the rule exists.
         morePop.addEventListener("click", (e) => {
           if (e.target.closest("button") &&
-              !e.target.closest("#rail-width-group, #rail-ovmode-group, #more-overflow")) closeMore();
+              !e.target.closest("#more-overflow, #more-customize")) closeMore();
         });
         document.addEventListener("click", (e) => {
           if (!morePop.hidden && !morePop.contains(e.target) && !moreBtn.contains(e.target)) closeMore();
@@ -4061,14 +4073,24 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               pdoc.addEventListener("click", closeAboutOnOutsideClick);
               pdoc.addEventListener("click", pMoreClick);
               pdoc.addEventListener("keydown", closeAboutOnEscape);
-              pdoc.addEventListener("keydown", mainKeydown); // B3-5: tool/undo/save/Escape shortcuts in the parent realm
+              // Reparent pre-fix (readiness audit, blocker #1): GATE the parent-realm shortcuts on annotate-
+              // active. Bare mainKeydown here made EVERY keypress on the whole PL page a Scribble shortcut —
+              // a page-level Ctrl+Z could silently undo a completed mark even after the student clicked Done,
+              // and Ctrl+S / "?" were hijacked while merely reading the question. The wrapper REFERENCE (not
+              // bare mainKeydown) is what gets torn down below, or removeEventListener removes nothing.
+              const pMainKey = (e) => { if (document.body.classList.contains("annotate-active")) mainKeydown(e); };
+              pdoc.addEventListener("keydown", pMainKey); // B3-5: tool/undo/save/Escape shortcuts in the parent realm
               pdoc.addEventListener("keydown", pMoreKey);
               railTeardowns.push(
                 () => pdoc.removeEventListener("click", pMoreClick),
                 () => pdoc.removeEventListener("keydown", pMoreKey),
                 () => pdoc.removeEventListener("click", closeAboutOnOutsideClick),
                 () => pdoc.removeEventListener("keydown", closeAboutOnEscape),
-                () => pdoc.removeEventListener("keydown", mainKeydown),
+                () => pdoc.removeEventListener("keydown", pMainKey),
+                () => { try { railLayout.dispose(); } catch { /* engine already gone */ } }, // reparent pre-fix: the
+                // overflow engine's ResizeObserver lives in the PARENT realm once reparented (it keys on
+                // rail.ownerDocument) and host.remove() below never disconnects it — a leaked cross-realm
+                // observer per question swap. dispose() is safe here: this teardown only runs reparented.
                 () => { host.remove(); // gate the shared <link> removal on "no other host remains" (2nd question)
                         if (!pdoc.querySelector(".pl-scribble-chrome-host")) pdoc.getElementById("pl-scribble-chrome-css")?.remove(); },
               );
@@ -4078,7 +4100,10 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // and the rail may have just been reparented into the parent (so $("rail-collapse") would be null).
           // onChange also nudges the bar out of an active calculator hole (a drag can park it under
           // the drawer, where it would render half-clipped — the irrecoverable-panel class of bug).
-          const railFP = makeFloating(railEl, { collapse: railEl.querySelector("#rail-collapse"), onChange: () => { savePrefs(); calcDodgeNudge(); }, onSettle: () => restickRail(), win: railWin });
+          // onChange also syncs the host pad: dragging a .big (60px) bar away from the default spot must CLEAR
+          // the question's extra top padding, or a stale 64px gap survives the move. (syncHostPad is declared
+          // below this call — safe: onChange only fires on drag drops, long after the const initializes.)
+          const railFP = makeFloating(railEl, { collapse: railEl.querySelector("#rail-collapse"), onChange: () => { savePrefs(); calcDodgeNudge(); syncHostPad(); }, onSettle: () => restickRail(), win: railWin });
           // v170: the engine registers release backstops on the PARENT document, so it must be disposed on the
           // iframe swap even when the rail was never reparented. The railTeardowns path below only installs
           // inside the `railWin !== window` branch, which is dead while PHASE1_CHROME_REPARENT is false — so
@@ -4095,63 +4120,121 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // reloaded collapsed was un-findable, and unlike a position a collapse has no on-screen affordance
           // pulling it back. Notes still stage at the band top every load via placeNotesAtBandTop — they're
           // scratch, so there is nothing there worth persisting.
-          // ---- v166: toolbar WIDTH (drag handle + presets) and OVERFLOW mode (wrap vs More) ----
-          // The notes reserve a strip at the band top so their header can't hide behind the bar; a WRAPPED
-          // 2-row bar is taller than the old hardcoded 64, so push the real measured height instead.
+          // ---- v171: bar-height plumbing (More is the only overflow model; the handle the only width control) ----
+          // The notes reserve a strip at the band top so their header can't hide behind the bar; push the real
+          // measured height (a .big bar is 60px, not the old hardcoded 64).
           const pushRailClear = () => {
             if (!railEl.getClientRects().length) return;   // display:none via the annotate gate measures 0
             setRailClear(Math.round(railEl.getBoundingClientRect().height) + 12);
           };
-          // Wrap mode makes the bar taller than the server-rendered 52px host padding, so row 2 would cover the
-          // question's first line. Pad the live host to the real height (default bar only — a moved bar floats free).
+          // Pad the live host whenever the DEFAULT (un-moved) bar is genuinely taller than the server-rendered
+          // 52px strip — i.e. Larger controls' 60px bar — so the question's first line is never covered. The
+          // strict `> 52` on a ROUNDED value means the stock bar can never shift the question (no subpixel
+          // false-positives); a MOVED bar floats free, so the pad clears (see the drag onChange below).
           const syncHostPad = () => {
             try {
               const host = overlayHost();
               if (!host) return;
-              const wrapMode = railEl.classList.contains("ov-wrap");
-              host.style.paddingTop = (wrapMode && !railEl.classList.contains("fp-moved") && railEl.getClientRects().length)
-                ? `${Math.max(52, Math.round(railEl.getBoundingClientRect().height) + 4)}px` : "";
+              // review F6: the host's 52px baseline lives in an inline `padding:` SHORTHAND (pl-scribble.py).
+              // Writing then clearing the padding-top LONGHAND deletes the shorthand's top component outright
+              // (the other three sides survive, top computes to 0) — the stock bar would then cover the
+              // question's first line forever. Capture the baseline once; always restore THAT, never "".
+              if (host.dataset.scribbleBasePadTop == null) host.dataset.scribbleBasePadTop = host.style.paddingTop || "";
+              const h = railEl.getClientRects().length ? Math.round(railEl.getBoundingClientRect().height) : 0;
+              host.style.paddingTop = (!railEl.classList.contains("fp-moved") && h > 52)
+                ? `${h + 4}px` : host.dataset.scribbleBasePadTop;
             } catch { /* cross-frame / no host — leave the server padding */ }
           };
           const railLayout = makeOverflow({
-            rail: railEl, scroll: railEl.querySelector(".rail-scroll"), popover: morePop,
+            rail: railEl, scroll: railEl.querySelector(".rail-scroll"),
             bay: railBay, moreBtn, win: railWin, announce: (t) => status(t),
           });
           const railResize = makeResizable(railEl, {
             handle: railEl.querySelector("#rail-resize"), win: railWin,
-            // narrowest useful bar = the shell chrome (grip + actions + collapse + resize) plus one tool group
-            getMinW: () => Math.round(railLayout.measureContent().shell + 150),
+            // narrowest useful bar = shell (grip + actions + collapse + handle) + the never-demoted core
+            // (Draw + Select), measured live so it tracks .big — the floor always shows every protected tool
+            getMinW: () => railLayout.coreWidth(),
             onLive: () => { railLayout.reflow(); pushRailClear(); syncHostPad(); },
             onChange: () => { clampFixed(railEl, railWin); savePrefs(); calcDodgeNudge(); },
             announce: (t) => status(t),
           });
           railRefit = () => { railLayout.invalidate(); pushRailClear(); syncHostPad(); };
-          const setPressed = (grp, btn) => [...grp.children].forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
-          // Presets are DERIVED from the measured content width, never hardcoded px: a fixed 360/560 can fail to
-          // overflow at all on a wide card, which would make the whole wrap-vs-More comparison unrunnable.
-          const applyPreset = (which) => {
-            // budgetFor(n) sizes the bar to hold exactly n tool groups, so the presets differ by a real number
-            // of tools: Compact keeps the Draw group only; Medium keeps Draw + the next two by priority.
-            if (which === "full") { railResize.setWidth(null); setPressed(widthGroup, wFullBtn); }
-            else if (which === "medium") { railResize.setWidth(railLayout.budgetFor(3)); setPressed(widthGroup, wMediumBtn); }
-            else { railResize.setWidth(railLayout.budgetFor(1)); setPressed(widthGroup, wCompactBtn); }
-            clampFixed(railEl, railWin); savePrefs(); calcDodgeNudge();
+          // ---- v171 Customize: which tools are ELIGIBLE for the bar (the checklist at the bottom of More) ----
+          // Eligibility is orthogonal to overflow: a checked tool may still be SPILLED into More by width (it
+          // sits clickable in the bay, counted by the badge); an unchecked tool is .tool-off (display:none)
+          // everywhere and exists only as its unchecked checklist row — hidden ≠ spilled, and hidden is
+          // recoverable from More in one click (re-check → immediate refit).
+          const applyToolVisibility = (hiddenSet) => {
+            // Never leave the student holding an invisible tool: fall back to Pen (protected + never demoted).
+            // (activeTool() is the existing module-scope reader — realm-correct via railRoot.)
+            if (hiddenSet.has(activeTool())) railRoot.querySelector('.tool[data-tool="pen"]')?.click();
+            for (const b of railRoot.querySelectorAll(".tool[data-tool]")) {
+              if (!CUSTOMIZABLE_TOOLS.has(b.dataset.tool)) continue;
+              b.classList.toggle("tool-off", hiddenSet.has(b.dataset.tool));
+            }
+            // A group whose every tool is off collapses entirely (.group-off) — the engine skips it (never a
+            // demote candidate, never counted) and the divider hairlines can't dangle. In v171 only the
+            // Capture/snip group can reach this state.
+            for (const g of railRoot.querySelectorAll("#rail .rail-group")) {
+              const tools = [...g.querySelectorAll(".tool[data-tool]")];
+              g.classList.toggle("group-off", tools.length > 0 && tools.every((b) => b.classList.contains("tool-off")));
+            }
+            for (const box of custWrap.querySelectorAll("input[data-tool]")) {
+              box.checked = !hiddenSet.has(box.dataset.tool);
+            }
+            railLayout.invalidate(); pushRailClear(); syncHostPad(); // full refit with the FINAL tool set
           };
-          wCompactBtn.addEventListener("click", () => applyPreset("compact"));
-          wMediumBtn.addEventListener("click", () => applyPreset("medium"));
-          wFullBtn.addEventListener("click", () => applyPreset("full"));
-          const applyOvMode = (m) => {
-            railLayout.setMode(m);
-            setPressed(ovGroup, m === "wrap" ? ovWrapBtn : ovMoreBtn);
-            pushRailClear(); syncHostPad();
-          };
-          ovWrapBtn.addEventListener("click", () => { applyOvMode("wrap"); savePrefs(); });
-          ovMoreBtn.addEventListener("click", () => { applyOvMode("more"); savePrefs(); });
-          // Restore mode THEN width, both BEFORE the align/clamp below — so those measure the final geometry.
-          applyOvMode(rp.ovMode === "wrap" ? "wrap" : RAIL_OVERFLOW_DEFAULT);
+          // Checklist DOM — textContent + clones of the STATIC tool SVGs from index.html only (never innerHTML
+          // of anything dynamic, CLAUDE.md §7). Built only here (editable overlay): the graded read-only view
+          // never reaches this block.
+          const custWrap = document.createElement("div");
+          custWrap.id = "more-customize"; custWrap.className = "tool-customize";
+          const custHead = document.createElement("div");
+          custHead.className = "more-sec-head"; custHead.textContent = "Customize tools";
+          custWrap.append(custHead);
+          const TOOL_LABELS = { select: "Select", pen: "Pen", highlighter: "Highlight", text: "Text", eraser: "Erase", snip: "Snip" };
+          for (const id of ["select", "pen", "highlighter", "text", "eraser", "snip"]) {
+            const row = document.createElement("label");
+            row.className = "ct-row";
+            const box = document.createElement("input");
+            box.type = "checkbox"; box.dataset.tool = id; box.checked = true;
+            if (PROTECTED_TOOLS.has(id)) { box.disabled = true; row.classList.add("ct-protected"); row.title = "Always on the toolbar"; }
+            const live = railRoot.querySelector(`.tool[data-tool="${id}"] svg`);
+            const name = document.createElement("span");
+            name.textContent = TOOL_LABELS[id] || id;
+            row.append(box);
+            if (live) row.append(live.cloneNode(true)); // static markup shipped in index.html — safe to clone
+            row.append(name);
+            custWrap.append(row);
+          }
+          const ctReset = document.createElement("button");
+          ctReset.type = "button"; ctReset.id = "ct-reset"; ctReset.textContent = "Reset tools to default";
+          custWrap.append(ctReset);
+          morePop.append(custWrap); // lands BELOW Larger/Help/palette — the low-frequency tail of the menu
+          custWrap.addEventListener("change", (e) => {
+            const box = e.target.closest("input[data-tool]");
+            if (!box || box.disabled) return;
+            const hidden = new Set([...custWrap.querySelectorAll("input[data-tool]:enabled:not(:checked)")].map((b) => b.dataset.tool));
+            applyToolVisibility(hidden);
+            savePrefs();
+            const name = TOOL_LABELS[box.dataset.tool] || box.dataset.tool;
+            status(box.checked ? `${name} shown on the toolbar` : `${name} hidden from the toolbar — re-check here to restore it`);
+          });
+          ctReset.addEventListener("click", () => {
+            applyToolVisibility(new Set());
+            savePrefs();
+            status("Toolbar tools reset to default.");
+          });
+          // ---- restore: tools, then width, then an explicit first fit — all BEFORE the align/clamp below, so
+          // geometry is measured against the FINAL tool set. The saved list is validated against the closed
+          // CUSTOMIZABLE_TOOLS set, so a corrupt/stale pref can never hide a protected tool.
+          const savedHidden = new Set((Array.isArray(rp.toolsHidden) ? rp.toolsHidden : []).filter((id) => CUSTOMIZABLE_TOOLS.has(id)));
+          applyToolVisibility(savedHidden);
           const savedRailW = parseFloat(rp.width);
           if (Number.isFinite(savedRailW) && savedRailW > 0) railResize.setWidth(savedRailW); // re-clamps to the CURRENT band
-          else setPressed(widthGroup, wFullBtn);
+          // The explicit trio also covers the no-saved-width branch: makeOverflow's constructor never reflows,
+          // so without it the first fit would wait on an async ResizeObserver frame.
+          railLayout.reflow(); pushRailClear(); syncHostPad();
           // R4: the toolbar always loads EXPANDED. A persisted collapsed state is kept live within the
           // session (the collapse button still works + saves), but NOT re-applied on reload — a bar that
           // reloaded collapsed-and-off-screen was un-findable. A restored MOVED position (above) is pulled
@@ -4267,13 +4350,21 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               const cur = railRoot.querySelector(".tool.active")?.dataset.tool;
               if (RESUME_TOOLS.has(cur)) lastDrawTool = cur;
               railRoot.querySelector('.tool[data-tool="select"]')?.click();
+              // v171: the rail is display:none now, so syncHostPad measures 0 and CLEARS any .big host pad —
+              // without this, Done left the question shifted down by the taller bar's 12px extra forever.
+              syncHostPad();
             } else if (!wasAnnotating && now) {
               // C14: make the reparented rail displayable BEFORE clampRailOnShow measures it — a
               // display:none rail reports height 0 and the band-clamp garbage-places its top.
               syncRailVis();
               // Unconditional click — an offsetParent-style visibility guard would silently skip
-              // exactly when the rail is collapsed, and the Select trap would survive there.
-              railRoot.querySelector(`.tool[data-tool="${lastDrawTool}"]`)?.click();
+              // exactly when the rail is collapsed, and the Select trap would survive there. The ONE exception
+              // is .tool-off (hidden via Customize): click() works on display:none, so resuming a hidden tool
+              // would arm an INVISIBLE tool — the exact failure class Customize is built to avoid. Fall back to
+              // Pen (protected, always present).
+              const resumeBtn = railRoot.querySelector(`.tool[data-tool="${lastDrawTool}"]`);
+              (resumeBtn && !resumeBtn.classList.contains("tool-off")
+                ? resumeBtn : railRoot.querySelector('.tool[data-tool="pen"]'))?.click();
               clampRailOnShow();
               restickRail(); // land the default bar at the band top even if the page was scrolled at Annotate-time
               railLayout.reflow(); pushRailClear(); syncHostPad(); // bar was display:none and measured 0 until now

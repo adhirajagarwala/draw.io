@@ -7,7 +7,7 @@
 // with ZERO edits to the drag engine. The handle is a <button>, so DRAG_EXCLUDE already stops a resize gesture
 // from LIFTING the bar. Bump this module's ?v= import with APP_VERSION.
 
-import { visibleBand } from "./visible-band.js?v=170";
+import { visibleBand } from "./visible-band.js?v=171";
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
 
@@ -18,8 +18,15 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
 // onChange: called once per committed gesture (savePrefs + calc-dodge nudge)
 // announce: (text) => void, routed to the #status aria-live region — DEBOUNCED here, never per frame
 export function makeResizable(el, { handle, win = window, getMinW, onLive, onChange, announce }) {
-  const minW = () => Math.max(160, (getMinW && getMinW()) || 240);
-  const maxW = () => { const b = visibleBand(win); return Math.max(minW(), b.right - b.left - 8); };
+  // review F2: the FLOOR yields to the screen, never the reverse. The v171 floor (shell + Draw + Select via
+  // coreWidth, larger under .big) can exceed a narrow viewport — and the old Math.max(minW, band) then made
+  // maxW equal minW, so ANY handle gesture forced the bar WIDER than the screen (More/collapse/handle pushed
+  // off-viewport) and persisted that width. Cap the floor at the band instead: the bar tops out at the screen
+  // and the protected core scrolls within (.rail-scroll's overflow-x carries it — same rule as the demote
+  // guard's "only the un-demotable remain" case).
+  const bandW = () => { const b = visibleBand(win); return Math.max(160, b.right - b.left - 8); };
+  const minW = () => Math.min(Math.max(160, (getMinW && getMinW()) || 240), bandW());
+  const maxW = () => Math.max(minW(), bandW());
   const getWidth = () => parseFloat(el.style.getPropertyValue("--rail-w")) || 0; // 0 => unset (full span)
 
   let sayTimer = 0;

@@ -1603,11 +1603,11 @@ body.locked #btn-paste-img { display: none !important; }
    chip: at the question's bottom it read as exam text, and under the toolbar it was still clutter.) */
 
 /* ============================================================================
-   v166 — TOOLBAR WIDTH + OVERFLOW TRIAL
-   Width comes from --rail-w (see `body.overlay #rail` above). Below: the resize handle, and the TWO overflow
-   modes being A/B-ed — .ov-wrap (pure CSS, tools wrap to a 2nd row) vs .ov-more (rail-overflow.js demotes whole
-   groups into the More popover). Exactly one class is on #rail at a time. Appended LAST so equal-specificity
-   rules beat the earlier "Hairline+" block on source order.
+   v171 — TOOLBAR WIDTH HANDLE + THE ONE OVERFLOW MODEL (More)
+   The width-drag handle sets --rail-w (a CAP — the bar is content-sized up to it, see `body.overlay #rail`
+   above); rail-overflow.js demotes whole groups into the More popover at that width and promotes them back
+   when they fit. The v166 wrap-to-a-2nd-row mode and the Compact/Medium/Full preset controls are DELETED.
+   Appended LAST so equal-specificity rules beat the earlier "Hairline+" block on source order.
    ========================================================================= */
 
 /* ---- resize handle: a 12px strip living inside the bar's right padding ---- */
@@ -1626,29 +1626,21 @@ body.overlay #rail .fp-resize:hover::before,
 body.overlay #rail .fp-resize:focus-visible::before { background: var(--accent); }
 body.overlay #rail .fp-resize:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-/* ---- .ov-wrap : PURE CSS. Wrap the SCROLLER, never #rail itself — the shell (grip / actions / collapse /
-       resize) must stay pinned on one line. ---- */
-body.overlay #rail.ov-wrap { height: auto; min-height: 52px; }
-body.overlay.big #rail.ov-wrap { min-height: 60px; }
-body.overlay #rail.ov-wrap .rail-scroll {
-  flex-wrap: wrap; row-gap: 4px; column-gap: 10px;
-  /* Rows stayed ragged while dragging the width because groups could squeeze/split and rows centred
-     independently. Pin every row to the same height and stop groups from being compressed mid-drag. */
-  align-content: flex-start; align-items: stretch;
-  /* BOTH axes: per spec, when one axis is `visible` and the other is not, `visible` computes to `auto` — that
-     leaves a scroll container and NOTHING ever wraps. Setting only overflow-x here is the classic trap. */
-  overflow-x: visible; overflow-y: visible;
-  touch-action: none;                       /* no h-scroll left to pan; let a finger drag the bar instead */
-}
-/* row-start hairlines read as stray ticks once items wrap — the column-gap replaces them */
-body.overlay #rail.ov-wrap .rail-scroll > .rail-group + .rail-group,
-body.overlay #rail.ov-wrap .rail-scroll > #context-bar { border-left: 0; margin-left: 0; padding-left: 0; }
+/* (v171: the entire `.ov-wrap` rule block is deleted — wrap was the "ragged rows" screenshot bug: a flex-wrap
+   of MISMATCHED atoms (icon-over-label tool chips beside row-layout action buttons) is a flow, not a grid, so
+   labels landed on different baselines and .big made them overlap. With More as the only model the scroller's
+   base overflow-x:auto (above) can scroll but can never stack.) */
 
-/* ---- .ov-more : rail-overflow.js moves whole .rail-group / #context-bar nodes into #more-popover ---- */
+/* ---- rail-overflow.js moves whole .rail-group / #context-bar nodes into #more-popover ---- */
 /* stops a dangling hairline when #context-bar becomes the first surviving child */
 body.overlay #rail .rail-scroll > *:first-child { border-left: 0; margin-left: 0; padding-left: 0; }
-#more-overflow .rail-group { flex-direction: column; align-items: stretch; border: 0; margin: 0; padding: 0; }
-#more-overflow #context-bar { flex-direction: row; flex-wrap: wrap; padding: 6px 4px; gap: 6px; border: 0; }
+/* review F11/F12: the bay rules need TWO ids — a bare `#more-overflow .rail-group` LOST to the overlay's
+   `body.overlay #rail .rail-group { flex-direction: row }` (more classes), so parked groups rendered as
+   squished rows in the iframe while the chrome.css mirror resolved the other way. Two ids beat everything in
+   contention, in both files, so a parked group stacks its tools as menu rows everywhere — and the shorthand
+   border reset also kills the stray `+ .rail-group` hairline between two parked groups. */
+#rail #more-overflow .rail-group { flex-direction: column; align-items: stretch; border: 0; margin: 0; padding: 0; }
+#rail #more-overflow #context-bar { flex-direction: row; flex-wrap: wrap; padding: 6px 4px; gap: 6px; border: 0; margin: 0; }
 /* parked tools read as menu rows, not bar chips */
 body.overlay #rail #more-popover .tool {
   display: flex; flex-direction: row; align-items: center; justify-content: flex-start;
@@ -1673,21 +1665,35 @@ body.overlay #rail #btn-more { position: relative; overflow: visible; }
   box-shadow: 0 1px 3px rgba(20, 24, 28, .3); pointer-events: none;
 }
 
-/* ---- the More-popover controls: section head + two segmented groups ---- */
+/* ---- the More-popover section head (shared by the "Moved here to fit" spill + the Customize section) ---- */
 .more-sec-head { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 6px 8px 2px; }
-#rail-width-group, #rail-ovmode-group { display: flex; gap: 4px; padding: 2px 6px 6px; }
-#rail-width-group button, #rail-ovmode-group button {
-  flex: 1 1 auto; font: 600 12px/1 system-ui, -apple-system, sans-serif; padding: 7px 8px;
+
+/* ---- v171 additions (every rule here is on the chrome.css mirror list) ---- */
+/* The Customize checklist makes the popover materially taller than a short band; placeMorePop caps
+   max-height to the visible band, this makes the capped popover scroll instead of clipping. */
+body.overlay #rail #more-popover { overflow-y: auto; }
+/* No "Moved here to fit" header floating over an empty bay (:has is already used by the overlay trim rules) */
+.more-spill:has(#more-overflow:empty) { display: none; }
+/* A tool hidden via Customize is gone everywhere — the bar AND the More bay (the second selector out-specifies
+   the parked-tool menu-row display:flex above). It exists only as its unchecked checklist row. */
+body.overlay #rail .tool.tool-off,
+body.overlay #rail #more-popover .tool.tool-off { display: none; }
+/* A group whose every tool is hidden collapses entirely — no dangling divider, engine-inert */
+body.overlay #rail .rail-group.group-off { display: none; }
+/* The Customize section itself */
+#more-customize { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 2px; }
+#more-customize .ct-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 9px;
+  font-size: 12.5px; color: var(--ink); border-radius: 7px; cursor: pointer;
+}
+#more-customize .ct-row:hover { background: #f5f6f8; }
+/* review F10: the cloned tool SVGs inherit NOTHING from the rail's `.tool svg` rules — without fill:none +
+   a stroke-width they render as solid black blobs (SVG's fill default is black). Match the bar's icon look. */
+#more-customize .ct-row svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.85; }
+#more-customize .ct-row.ct-protected { opacity: .45; cursor: default; }
+#more-customize #ct-reset {
+  margin: 4px 6px 6px; font: 600 12px/1 system-ui, -apple-system, sans-serif; padding: 7px 8px;
   border: 1px solid var(--line); background: #fff; color: var(--ink);
   border-radius: 7px; cursor: pointer; white-space: nowrap;
 }
-#rail-width-group button:hover, #rail-ovmode-group button:hover { background: #eef0f3; }
-#rail-width-group button[aria-pressed="true"], #rail-ovmode-group button[aria-pressed="true"] {
-  background: var(--accent-soft); border-color: #c9d6f7; color: var(--accent);
-}
-
-/* A tool group is an atom: never let flex shrink it or split its buttons across two rows — that was the
-   "rows aren't clean" raggedness while dragging the resize handle. */
-body.overlay #rail.ov-wrap .rail-scroll > * { flex: 0 0 auto; }
-body.overlay #rail.ov-wrap .rail-group { flex-wrap: nowrap; align-items: center; }
-body.overlay #rail.ov-wrap .rail-scroll > * { display: flex; align-items: center; min-height: 44px; }
+#more-customize #ct-reset:hover { background: #eef0f3; }

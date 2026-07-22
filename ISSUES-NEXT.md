@@ -1,4 +1,22 @@
-# Scribble — open issues, ranked (as of v168, 2026-07-21)
+# Scribble — open issues, ranked (as of v171, 2026-07-22; older entries below may reference v168)
+
+## v171 SHIPPED (pending push/sync + hosted verify) — the toolbar redesign
+One auto-sized single-row bar + Priority+ "More" + ONE width-drag handle (drag narrower → Snip, Undo/Redo,
+colours demote into More; wider → they return); "Customize tools" checklist in More (pen/eraser/select locked
+on, per-question persistence, Reset); Larger-controls now announces and REFITS into More instead of overlapping;
+DELETED: Compact/Medium/Full presets, the wrap mode, the student-facing A/B toggle. chrome.css mirror written
+against this final layout (still deploy-excluded; inert until the v172 reparent). Adversarial review: 16
+confirmed findings, 13 fixed pre-deploy (incl. 3 high: the host-padding shorthand clobber, popover flip-above
+off-band, announce stomping). **Deferred, tracked:**
+- **(v172, flip-true only) alignRailToCard's inline style.width defeats the chrome.css max-content channel** —
+  rework alongside the card-top-default decision when the reparent flips.
+- **(v172 deploy step) chrome.css is still excluded from both deploy pipelines** — un-exclude + first full
+  deploy BEFORE flipping `PHASE1_CHROME_REPARENT`, or the reparented bar 404s its stylesheet.
+- **(minor) a saved width restored at boot clamps against the degraded 160px floor** (rail is display:none so
+  coreWidth can't measure); self-corrects on the first handle gesture. Fix only if ever user-visible.
+- **(decision) Marks tools (tick/cross/circle/arrow/box) stay hidden in overlay** — surfacing them needs a
+  finite priority in rail-overflow.js prioFor + deleting the style.css trim rules + a checklist row set.
+
 
 Live version: **v168** on hosted PL (`us.prairielearn.com` → ECE 498SL → `ECE120-Quiz-L8-Q3-scribble`).
 Everything below is **not yet fixed**. Each entry: what you see → why it happens (root cause, with file:line) →
