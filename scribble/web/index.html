@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=174">
+  <link rel="stylesheet" href="style.css?v=175">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -350,6 +350,24 @@
   <input id="file-pdf" type="file" accept=".pdf,application/pdf,.html,.htm,text/html" hidden>
   <input id="file-json" type="file" accept=".json,application/json" hidden>
 
-  <script type="module" src="app.js?v=174"></script>
+  <!-- RACE-3 (audit, high): preload the whole module graph in parallel. The v172 wedge's leading
+       mechanism is a script-blocking stall while parser-inserted modules wait; preloading shrinks
+       the serial window. Keep this list in lockstep with app.js's imports. -->
+  <link rel="modulepreload" href="app.js?v=175">
+  <link rel="modulepreload" href="pkg/scribble.js?v=175">
+  <link rel="modulepreload" href="utils.js?v=175">
+  <link rel="modulepreload" href="pdf-writer.js?v=175">
+  <link rel="modulepreload" href="embed.js?v=175">
+  <link rel="modulepreload" href="idb.js?v=175">
+  <link rel="modulepreload" href="text-extract.js?v=175">
+  <link rel="modulepreload" href="modals.js?v=175">
+  <link rel="modulepreload" href="colorbar.js?v=175">
+  <link rel="modulepreload" href="notes-dock.js?v=175">
+  <link rel="modulepreload" href="floating-panel.js?v=175">
+  <link rel="modulepreload" href="rail-resize.js?v=175">
+  <link rel="modulepreload" href="rail-overflow.js?v=175">
+  <link rel="modulepreload" href="calc-dodge.js?v=175">
+  <link rel="modulepreload" href="visible-band.js?v=175">
+  <script type="module" src="app.js?v=175"></script>
 </body>
 </html>

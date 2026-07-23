@@ -72,17 +72,27 @@ function makeDoc() {
 const doc = makeDoc();
 let rafQueue = [];
 globalThis.document = doc;
+// TEST-1 (audit): the fake window must HOLD listeners and dispatch them — the old `addEventListener: () => {}`
+// dropped the blur handler, making the blur-invariant test pass against ANY implementation (proven vacuous).
+const winHandlers = new Map();
 globalThis.window = {
   innerWidth: VIEW_W, innerHeight: VIEW_H,
   frameElement: null, // standalone realm -> visibleBand degenerates to the whole viewport
   document: doc,
-  addEventListener: () => {}, removeEventListener: () => {},
+  addEventListener: (t, fn) => { if (!winHandlers.has(t)) winHandlers.set(t, []); winHandlers.get(t).push(fn); },
+  removeEventListener: (t, fn) => { const a = winHandlers.get(t) || []; const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1); },
+  dispatchEvent: (evOrType) => {
+    const t = typeof evOrType === "string" ? evOrType : evOrType.type;
+    const fns = (winHandlers.get(t) || []).slice();
+    for (const fn of fns) fn(typeof evOrType === "string" ? { type: t } : evOrType);
+    return fns.length > 0; // lets a test assert the handler was actually registered AND ran
+  },
 };
 globalThis.window.parent = globalThis.window; // no separate parent realm in the fake
 globalThis.requestAnimationFrame = (fn) => { rafQueue.push(fn); return rafQueue.length; };
 globalThis.cancelAnimationFrame = (id) => { rafQueue[id - 1] = null; };
 
-const { makeFloating } = await import("../floating-panel.js?v=174");
+const { makeFloating } = await import("../floating-panel.js?v=175");
 
 const flushRaf = () => { const q = rafQueue; rafQueue = []; for (const fn of q) if (fn) fn(); };
 
@@ -190,7 +200,8 @@ test("window blur never cancels a LIFTED drag (v167 fix kept)", () => {
   flushRaf();
   const before = el.style.left;
   // In the overlay, dragging toward the frame edge blurs the iframe mid-gesture. That must not kill the drag.
-  globalThis.window.dispatchEvent?.("blur");
+  const blurHandled = globalThis.window.dispatchEvent("blur");
+  assert.equal(blurHandled, true, "the engine must actually register a blur handler on the realm window (a fake that drops it makes this test vacuous)");
   el._fire("pointermove", ptr("pointermove", 320, 260, 1));
   flushRaf();
 
@@ -229,4 +240,17 @@ test("a second drag from a moved bar commits relative to its current spot", () =
 
   assert.ok(parseFloat(el.style.left) > first, "the second drag moved it further right");
   assert.equal(el._has("fp-moved"), true);
+});
+
+test("visibilitychange-hidden COMMITS a lifted drag (v171 rule)", () => {
+  const { el } = setup();
+  el._fire("pointerdown", ptr("pointerdown", 100, 20, 1));
+  el._fire("pointermove", ptr("pointermove", 300, 240, 1)); // lift + drag
+  flushRaf();
+  doc.visibilityState = "hidden";
+  doc._fire("visibilitychange", { type: "visibilitychange" });
+  doc.visibilityState = "visible";
+  assert.equal(el._has("fp-moved"), true, "an alt-tab mid-drag keeps the student's placement (commit, not revert)");
+  assert.equal(el._has("fp-dragging"), false, "the drag ended");
+  assert.notEqual(el.style.left, "", "committed position retained");
 });

@@ -111,13 +111,18 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
         let rafId = 0;
         const ro = new pw.ResizeObserver(() => {
           if (rafId) return;
-          rafId = pw.requestAnimationFrame(() => { rafId = 0; resizeOverlay(host.offsetHeight); });
+          // RAF-1 (audit, high): the callback is IFRAME-realm, so it must ride the IFRAME's rAF — a parent
+          // rAF with an iframe callback silently never fires on hosted PL (the measured v155 failure mode,
+          // CLAUDE.md §11 rule 2). With pw.requestAnimationFrame here, the overlay NEVER grew with the
+          // question after boot: ink and pointer capture silently stopped short of the bottom.
+          rafId = requestAnimationFrame(() => { rafId = 0; resizeOverlay(host.offsetHeight); });
         });
         ro.observe(host);
         // Tear down on unload so a PL in-place panel swap can't leave a PARENT observer firing into this
         // torn-down iframe realm (GC leak / errors against a dead document).
         window.addEventListener("pagehide", () => {
-          try { ro.disconnect(); if (rafId) pw.cancelAnimationFrame(rafId); } catch { /* ignore */ }
+          try { ro.disconnect(); } catch { /* ignore */ }
+          if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } // own-realm cancel, defensive reset
         }, { once: true });
       }
     } catch { /* cross-frame access guard — non-fatal */ }

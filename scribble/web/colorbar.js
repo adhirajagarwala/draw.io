@@ -111,6 +111,9 @@ export function initColorBar(deps) {
   const clampv = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
   const overTopbar = (y) => y <= topbarEl.getBoundingClientRect().bottom + 6;
   grip.addEventListener("pointerdown", (ev) => {
+    // PTR-2 (audit): stale-gesture reset — a drag whose pointerup was swallowed must not block every future
+    // drag (mirrors floating-panel/notes-dock; this engine was the one copy still missing it).
+    if (drag && !grip.hasPointerCapture?.(drag.id)) drag = null;
     if (drag || ev.button !== 0) return; // one drag at a time; right/middle would open the context menu mid-lift
     const br = cb.getBoundingClientRect();
     // Capture FIRST (it can throw if the pointer is already gone — then we never lift and nothing
@@ -180,8 +183,13 @@ export function initColorBar(deps) {
   // A tab switch / OS overlay can swallow the pointerup. On BLUR only, keep a drag whose grip still
   // HOLDS pointer capture (focus changes don't interrupt captured delivery); visibility:hidden is a
   // real tab switch and cancels unconditionally.
-  window.addEventListener("blur", () => { if (drag && !grip.hasPointerCapture?.(drag.id)) endDrag(null); });
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") endDrag(null); });
+  // PTR-2 (audit): the v170 doctrine — a LIFTED drag always COMMITS; only a never-lifted press cancels.
+  // This engine was the one remaining violator: blur/tab-switch reverted a deliberate placement.
+  window.addEventListener("blur", () => { if (drag && !drag.lifted && !grip.hasPointerCapture?.(drag.id)) endDrag(null); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "hidden" || !drag) return;
+    endDrag(drag.lifted ? { clientY: drag.cy ?? drag.sy } : null);
+  });
 
   window.addEventListener("resize", clampContextBar);
 }

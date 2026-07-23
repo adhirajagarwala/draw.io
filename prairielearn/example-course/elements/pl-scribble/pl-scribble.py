@@ -179,9 +179,60 @@ _OVERLAY_SIZER = (
     "b.style.top=Math.round(Math.max(4,Math.min(window.innerHeight-b.offsetHeight-4,dg.oy+e.clientY-dg.sy)))+'px';});"
     "function ed(){if(dg&&dg.mv)sc=true;dg=null;}"
     "b.addEventListener('pointerup',ed);b.addEventListener('pointercancel',ed);"
-    "m();f.addEventListener('load',m);b.addEventListener('click',function(){if(sc){sc=false;return;}on=!on;m();});}"
+    "m();f.addEventListener('load',m);b.addEventListener('click',function(){if(sc){sc=false;return;}on=!on;m();});"
+    # RACE-1 (audit blocker): parent-side boot watchdog. Doctrine (CLAUDE.md §11): recovery runs in the realm
+    # it was PROVEN in — the parent. Ladder: (1) re-inject the module <script> into the wedged document
+    # (field-proven on the live wedge: dynamically-inserted modules are not blocked by pending stylesheets,
+    # so this boots with NO reload and no state churn); (2) up to two parent-side srcdoc re-parses (the
+    # proven manual recovery; annotate forced off first — the load listener re-syncs m()); (3) fail-INVISIBLE
+    # (hide the frame; the inlined anti-FOUC keeps the question readable — never fail-opaque). Stamp reads are
+    # fresh each check and fail OPEN (unreadable => booted => no loop). RACE-4: per-load error hook + load
+    # counter on the wrap for field forensics (a pre-evaluation module error is otherwise invisible).
+    "var sbHeals=0,sbRp=0;"
+    "function sbAbsent(){try{return !f.contentWindow||!f.contentWindow.__scribbleBooted;}catch(e){return false;}}"
+    "function sbHook(){try{var cw=f.contentWindow;if(cw&&!cw.__sbErrHook){cw.__sbErrHook=1;"
+    "cw.addEventListener('error',function(e){try{w.dataset.scribbleErr=String(e.message||e.type).slice(0,120);"
+    "console.error('[scribble boot]',e.message||e.type);}catch(_){}});}}catch(e){}}"
+    "f.addEventListener('load',function(){w.dataset.scribbleLoads=String((+w.dataset.scribbleLoads||0)+1);sbHook();});"
+    "function sbHeal(){try{"
+    "if(!sbAbsent())return;"
+    "sbHeals++;w.dataset.sbHeals=String(sbHeals);"
+    "if(sbHeals===1){var hd=f.contentDocument,mo=hd&&hd.querySelector('script[type=module][src]'),"
+    "lk=hd&&hd.querySelector('link[rel=stylesheet]');"
+    "if(hd&&mo&&lk&&lk.sheet){var hs=hd.createElement('script');hs.type='module';"
+    "hs.src=mo.getAttribute('src');hd.body.appendChild(hs);setTimeout(sbHeal,3000);return;}}"
+    "if(sbRp<2){sbRp++;on=false;m();f.setAttribute('srcdoc',f.getAttribute('srcdoc'));"
+    "setTimeout(sbHook,300);setTimeout(sbHeal,8000);return;}"
+    "on=false;m();b.style.display='none';f.style.visibility='hidden';"
+    "}catch(e){if(sbRp<2){setTimeout(sbHeal,8000);}else{try{f.style.visibility='hidden';}catch(_){}}}}"
+    "setTimeout(sbHeal,6000);}"
     "})();</script>"
 )
+# RACE-1 (audit §2.4 item 7): boot watchdog for the NON-overlay frames (Option-B question + read-only
+# submission) — the same wedge surface as the overlay, and a wedged READ-ONLY frame silently reads as "the
+# student submitted nothing" to a grader. Same parent-realm heal ladder as the overlay sizer, minus annotate
+# handling (none exists here). Appended inside each frame's wrap div.
+_FRAME_WATCHDOG = (
+    "<script>(function(){var fw=document.currentScript.parentElement,"
+    "ff=fw.querySelector('.pl-scribble-frame');if(!ff)return;var fh=0,fr=0;"
+    "function ab(){try{return !ff.contentWindow||!ff.contentWindow.__scribbleBooted;}catch(e){return false;}}"
+    "function hk(){try{var cw=ff.contentWindow;if(cw&&!cw.__sbErrHook){cw.__sbErrHook=1;"
+    "cw.addEventListener('error',function(e){try{fw.dataset.scribbleErr=String(e.message||e.type).slice(0,120);"
+    "console.error('[scribble boot]',e.message||e.type);}catch(_){}});}}catch(e){}}"
+    "ff.addEventListener('load',function(){fw.dataset.scribbleLoads=String((+fw.dataset.scribbleLoads||0)+1);hk();});"
+    "function hl(){try{"
+    "if(!ab())return;"
+    "fh++;fw.dataset.sbHeals=String(fh);"
+    "if(fh===1){var hd=ff.contentDocument,mo=hd&&hd.querySelector('script[type=module][src]'),"
+    "lk=hd&&hd.querySelector('link[rel=stylesheet]');"
+    "if(hd&&mo&&lk&&lk.sheet){var hs=hd.createElement('script');hs.type='module';"
+    "hs.src=mo.getAttribute('src');hd.body.appendChild(hs);setTimeout(hl,3000);return;}}"
+    "if(fr<2){fr++;ff.setAttribute('srcdoc',ff.getAttribute('srcdoc'));setTimeout(hk,300);setTimeout(hl,8000);return;}"
+    "ff.style.visibility='hidden';"
+    "}catch(e){if(fr<2){setTimeout(hl,8000);}else{try{ff.style.visibility='hidden';}catch(_){}}}}"
+    "setTimeout(hl,6000);})();</script>"
+)
+
 _OVERLAY_WRAP = (
     # Full-bleed: negative side margins eat PrairieLearn's 16px card-body padding so Scribble uses the
     # card edge-to-edge (the drawing canvas stays locked at 816px inside, so replay is unaffected).
@@ -232,14 +283,23 @@ def _build_srcdoc(doc, base_url, extra_head, overlay=False):
     then attribute-escape the whole document for srcdoc=. Returns the escaped srcdoc, or
     None if no <head> was found (tolerates attributes/case on the tag)."""
     flag = "window.__SCRIBBLE_EMBED = true;"
+    style = ""
     if overlay:
         # Set the flag AND tag <html class="pl-overlay"> synchronously (this inline script runs before the
         # first paint), so the anti-FOUC CSS can hide the standalone chrome until app.js sets body.overlay.
         # Without it the iframe paints its default standalone look for ~160ms before flipping to the overlay.
         flag += "window.__SCRIBBLE_OVERLAY = true;document.documentElement.classList.add('pl-overlay');"
+        # RACE-2 (audit, high): the "invisible until booted" guarantee must NOT ride the style.css network
+        # fetch — in the v172 field incident that asset's stall was plausibly the very thing that wedged the
+        # boot, so the gate failed exactly when needed and the frame painted OPAQUE over the live question.
+        # Inline the two load-bearing rules (duplicated from style.css:658-659 on purpose) so a css-less or
+        # module-dead frame degrades to INVISIBLE and click-through (pointer-events:none is parent-side).
+        # style-src includes 'unsafe-inline' by design (CLAUDE.md §7), and this sits BEFORE the CSP meta anyway.
+        style = ("<style>html.pl-overlay{background:transparent}"
+                 "html.pl-overlay body:not(.overlay){visibility:hidden}</style>")
     inject = (
-        '<base href="%s"><script>%s</script>'
-        % (_html.escape(base_url, quote=True), flag)
+        '<base href="%s"><script>%s</script>%s'
+        % (_html.escape(base_url, quote=True), flag, style)
     ) + extra_head
     new_doc, n = re.subn(
         r"<head\b[^>]*>", lambda m: m.group(0) + inject, doc, count=1, flags=re.IGNORECASE
@@ -339,19 +399,25 @@ def render(element_html, data):
         blob = data["submitted_answers"].get(name) or ""
         if not blob:
             return ""
+        # SEC-1 (audit): \u003c-escape the JSON before inlining — a "</script>" inside any field (e.g. a
+        # student blob surfaced under an answers-name collision) would otherwise close this tag and execute
+        # in the PL origin when STAFF view the panel. \u003c is transparent to JSON.parse.
         cfg = "<script>window.__SCRIBBLE_PL=%s;window.__SCRIBBLE_READONLY=true;</script>" % json.dumps(
             {"readOnly": True, "data": blob, "name": name, "qid": _qid(data)}  # same namespaced PREFS_KEY as the editable view
-        )
+        ).replace("<", "\\u003c")
         srcdoc = _build_srcdoc(doc, base_url, cfg, overlay=False)
         if srcdoc is None:
             return _INJECT_FAIL
         return (
             '<div class="pl-scribble-wrap" style="margin:14px 0;">'
-            '<div class="pl-scribble-source" hidden>%s</div>%s</div>'
+            '<div class="pl-scribble-source" hidden>%s</div>%s'
+            + _FRAME_WATCHDOG + "</div>"
         ) % (inner, _FRAME % ("Saved annotations", srcdoc))
 
     # panel == "question": editable, with a hidden form input PrairieLearn persists.
-    cfg = "<script>window.__SCRIBBLE_PL=%s;</script>" % json.dumps({"readOnly": False, "name": name, "qid": _qid(data)})
+    # SEC-1: same \u003c hardening as the read-only panel (qid/name are course-authored, but the rule is uniform).
+    cfg = "<script>window.__SCRIBBLE_PL=%s;</script>" % json.dumps(
+        {"readOnly": False, "name": name, "qid": _qid(data)}).replace("<", "\\u003c")
     srcdoc = _build_srcdoc(doc, base_url, cfg, overlay=overlay)
     if srcdoc is None:
         return _INJECT_FAIL
@@ -369,7 +435,7 @@ def render(element_html, data):
     return (
         '<div class="pl-scribble-wrap" style="margin:14px 0;">'
         '<div class="pl-scribble-source" hidden>%s</div>'
-        "%s%s</div>"
+        "%s%s" + _FRAME_WATCHDOG + "</div>"
     ) % (inner, input_html, _FRAME % ("Scribble scratchpad", srcdoc))
 
 

@@ -3,20 +3,22 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "174";
-// Boot-evaluation stamp, kept for DIAGNOSTICS only (v174): lets a live probe distinguish "module never
-// evaluated" (the still-unsolved PL first-load race) from "booted then broke". The v173 watchdog that acted
-// on it is REMOVED — its in-iframe location.reload() of the about:srcdoc document lands on a BLANK page
-// instead of re-parsing the srcdoc (that recovery only works PARENT-side via re-setting the srcdoc
-// attribute), so it replaced a still-readable question with permanent white. Do not reintroduce an
-// in-iframe reload; any future self-heal must be driven from the parent element.
+const APP_VERSION = "175";
+// Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
+// re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
+// evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
+// any OTHER path that ever evaluates a second copy in a booted realm (two apps on one canvas = two save
+// loops racing one hidden input = student data corruption). It must run BEFORE any listener registration;
+// the window error filter below swallows the marker so no student-visible banner appears. History: the v173
+// IN-IFRAME reload watchdog was an outage (about:srcdoc reloads land blank) — recovery is parent-side only.
+if (window.__scribbleBooted) throw new Error("scribble-duplicate-boot-suppressed");
 window.__scribbleBooted = true;
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=174";
+import init, { App } from "./pkg/scribble.js?v=175";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -24,19 +26,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=174";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=174";
-import { initEmbed } from "./embed.js?v=174";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=174";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=174";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=174";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=174";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=174";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=174";
-import { makeResizable } from "./rail-resize.js?v=174";
-import { makeOverflow } from "./rail-overflow.js?v=174";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=174";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=174";
+} from "./utils.js?v=175";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=175";
+import { initEmbed } from "./embed.js?v=175";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=175";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=175";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=175";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=175";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=175";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=175";
+import { makeResizable } from "./rail-resize.js?v=175";
+import { makeOverflow } from "./rail-overflow.js?v=175";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=175";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=175";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -59,7 +61,8 @@ async function getPdfjs() {
 window.addEventListener("error", (ev) => {
   // "ResizeObserver loop … undelivered notifications" is a benign browser diagnostic (the layout just took
   // an extra frame to settle), not an app error — don't scare the user with it.
-  if (typeof ev.message === "string" && ev.message.includes("ResizeObserver loop")) return;
+  if (typeof ev.message === "string" && (ev.message.includes("ResizeObserver loop")
+      || ev.message.includes("scribble-duplicate-boot"))) return; // benign: A1 guard aborting a duplicate evaluation
   console.error(ev.error || ev.message); // keep the raw detail for debugging
   status("Something went wrong. Reload the page if this keeps happening.");
 });
@@ -549,7 +552,7 @@ async function renderContinuous() {
     annoCanvas.addEventListener("pointerdown", onAnnoPointerDown);
     annoCanvas.addEventListener("pointermove", onAnnoPointerMove);
     annoCanvas.addEventListener("pointerup", endStroke);
-    annoCanvas.addEventListener("pointercancel", onAnnoPointerCancel);
+    annoCanvas.addEventListener("pointercancel", onAnnoPointerCancelOwned); // PTR-1: pid-filtered
     annoCanvas.addEventListener("contextmenu", onAnnoContextMenu);
     cont.io.observe(el);
   }
@@ -1415,6 +1418,17 @@ function endStroke(ev) {
   }
 }
 
+// PTR-1 (audit, medium): a pointercancel from a NON-owning contact — canonically a rejected palm's OS
+// cancel while the pen is mid-stroke — must clean up only ITS OWN bookkeeping, never nuke the live gesture
+// (that erased in-flight strokes: the v173 disease via a third route). SketchView has carried this exact
+// filter for versions, with a comment naming this bug. The ev=null wholesale-reset path stays untouched.
+function onAnnoPointerCancelOwned(ev) {
+  const owns = ev.pointerId === drawingPointerId || ev.pointerId === gesturePointerId;
+  if (owns) { onAnnoPointerCancel(ev); return; }
+  activePointers.delete(ev.pointerId);
+  if (ev.pointerType === "pen") penActive = [...activePointers.values()].includes("pen");
+}
+
 function onAnnoPointerCancel(ev) {
   if (ev) {
     activePointers.delete(ev.pointerId);
@@ -1440,7 +1454,7 @@ function onAnnoPointerCancel(ev) {
   redrawAnnotations();
 }
 els.annoCanvas.addEventListener("pointerup", endStroke);
-els.annoCanvas.addEventListener("pointercancel", onAnnoPointerCancel);
+els.annoCanvas.addEventListener("pointercancel", onAnnoPointerCancelOwned); // PTR-1: pid-filtered
 
 // ---------- snip: copy a region (image + its text) into the notes ----------
 
@@ -4117,10 +4131,20 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // and the rail may have just been reparented into the parent (so $("rail-collapse") would be null).
           // onChange also nudges the bar out of an active calculator hole (a drag can park it under
           // the drawer, where it would render half-clipped — the irrecoverable-panel class of bug).
+          // GEOM-1 (audit, high): alignRailToCard's inline style.left/style.width defeat the collapse CSS —
+          // a minimised DEFAULT bar kept the full card width with the expand handle teleported far-left. On
+          // collapse (non-moved) clear both longhands so chrome.css's right-anchored handle rules govern; on
+          // expand, re-run the card alignment. (Declared before railFP so the onChange closure can call it;
+          // function declaration hoists.)
+          function syncCollapsedGeom() {
+            if (railEl.classList.contains("fp-moved")) return; // a moved bar owns its own inline geometry
+            if (railEl.classList.contains("fp-collapsed")) { railEl.style.left = ""; railEl.style.width = ""; }
+            else alignRailToCard();
+          }
           // onChange also syncs the host pad: dragging a .big (60px) bar away from the default spot must CLEAR
           // the question's extra top padding, or a stale 64px gap survives the move. (syncHostPad is declared
           // below this call — safe: onChange only fires on drag drops, long after the const initializes.)
-          const railFP = makeFloating(railEl, { collapse: railEl.querySelector("#rail-collapse"), onChange: () => { savePrefs(); calcDodgeNudge(); syncHostPad(); }, onSettle: () => restickRail(), win: railWin });
+          const railFP = makeFloating(railEl, { collapse: railEl.querySelector("#rail-collapse"), onChange: () => { syncCollapsedGeom(); savePrefs(); calcDodgeNudge(); syncHostPad(); }, onSettle: () => { restickRail(); if (railWin !== window) { alignRailToCard(); clampFixed(railEl, railWin); } }, win: railWin });
           // v170: the engine registers release backstops on the PARENT document, so it must be disposed on the
           // iframe swap even when the rail was never reparented. The railTeardowns path below only installs
           // inside the `railWin !== window` branch, which is dead while PHASE1_CHROME_REPARENT is false — so
@@ -4172,7 +4196,12 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
             // collapses to grip + actions + More + collapse + handle and the drag can fold everything into More
             getMinW: () => railLayout.coreWidth(),
             onLive: () => { railLayout.reflow(); pushRailClear(); syncHostPad(); },
-            onChange: () => { clampFixed(railEl, railWin); savePrefs(); calcDodgeNudge(); },
+            onChange: () => {
+              // GEOM-1: clearing the cap (End/double-click) must hand the un-moved default bar back to the
+              // card alignment — the stale inline width from a previous align otherwise pins a wrong span.
+              if (!railEl.style.getPropertyValue("--rail-w")) syncCollapsedGeom();
+              clampFixed(railEl, railWin); savePrefs(); calcDodgeNudge();
+            },
             announce: (t) => status(t),
           });
           railRefit = () => { railLayout.invalidate(); pushRailClear(); syncHostPad(); };
@@ -4303,14 +4332,21 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
             // grow (resizeOverlay), rAF-coalesced (CLAUDE.md §10 — no layout work directly in the handler).
             railTeardowns.push(() => railFP.dispose()); // review N-1: remove makeFloating's parent-window blur listener
             railTeardowns.push(() => railWin.removeEventListener("resize", onRailResize));
+            // STICKY-1 (audit, high — this was shipped DEAD twice over): (a) the callback must be coalesced
+            // through OUR OWN realm's rAF — a parent-realm rAF with an iframe-realm callback silently never
+            // fires on hosted PL (the measured v155 failure mode, documented in calc-dodge.js; CLAUDE.md §11
+            // rule 2); (b) the scroll listener must be CAPTURE-PHASE ON THE PARENT DOCUMENT — PL scrolls a
+            // nested div, so a bubble-phase window listener never hears it (live-measured, ISSUES-NEXT #4;
+            // rule 3). This is the exact proven wiring of the calc-dodge + restickRail triggers.
             let alignRaf = 0;
-            const scheduleAlign = () => { if (alignRaf) return; alignRaf = railWin.requestAnimationFrame(() => { alignRaf = 0; alignRailToCard(); }); };
-            railWin.addEventListener("scroll", scheduleAlign, { passive: true });
-            railTeardowns.push(() => railWin.removeEventListener("scroll", scheduleAlign));
+            const scheduleAlign = () => { if (alignRaf) return; alignRaf = requestAnimationFrame(() => { alignRaf = 0; alignRailToCard(); }); };
+            const alignOpts = { capture: true, passive: true };
+            railWin.document.addEventListener("scroll", scheduleAlign, alignOpts);
+            railTeardowns.push(() => railWin.document.removeEventListener("scroll", scheduleAlign, alignOpts));
             if (railWin.ResizeObserver && window.frameElement) {
               const ro = new railWin.ResizeObserver(scheduleAlign);
               ro.observe(window.frameElement);
-              railTeardowns.push(() => { try { ro.disconnect(); } catch { /* ignore */ } if (alignRaf) railWin.cancelAnimationFrame(alignRaf); });
+              railTeardowns.push(() => { try { ro.disconnect(); } catch { /* ignore */ } if (alignRaf) cancelAnimationFrame(alignRaf); });
             }
             window.addEventListener("pagehide", () => { for (const t of railTeardowns) { try { t(); } catch { /* ignore */ } } }, { once: true });
           }
@@ -4417,6 +4453,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               // display:none rail reports height 0 and the band-clamp garbage-places its top.
               syncRailVis();
               weldDone(); // v172: dock the parent's Done pill into the bar's right end for this session
+              alignRailToCard(); // STICKY-1(c): first visible placement — the bar was display:none until now
               // Unconditional click — an offsetParent-style visibility guard would silently skip
               // exactly when the rail is collapsed, and the Select trap would survive there. The ONE exception
               // is .tool-off (hidden via Customize): click() works on display:none, so resuming a hidden tool
@@ -4444,7 +4481,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // If Annotate was pressed BEFORE wasm init finished, the ON transition already happened and
           // the observer will never see it — run the show-clamps once for that first showing. (No
           // Select trap in this path: pen is both the markup default and lastDrawTool's default.)
-          if (wasAnnotating) { syncRailVis(); weldDone(); clampRailOnShow(); restickRail(); clampNotes(); calcDodgeNudge(); }
+          if (wasAnnotating) { syncRailVis(); weldDone(); alignRailToCard(); clampRailOnShow(); restickRail(); clampNotes(); calcDodgeNudge(); }
 
           // ---- #13: PL's Calculator drawer must win its own clicks. calc-dodge punches a clip-path
           // hole in the overlay frame wherever the OPEN drawer overlaps it (clicks fall through, ink

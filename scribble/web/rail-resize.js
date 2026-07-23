@@ -7,7 +7,7 @@
 // with ZERO edits to the drag engine. The handle is a <button>, so DRAG_EXCLUDE already stops a resize gesture
 // from LIFTING the bar. Bump this module's ?v= import with APP_VERSION.
 
-import { visibleBand } from "./visible-band.js?v=174";
+import { visibleBand } from "./visible-band.js?v=175";
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
 
@@ -49,6 +49,10 @@ export function makeResizable(el, { handle, win = window, getMinW, onLive, onCha
       el.style.removeProperty("--rail-w"); el.style.removeProperty("--rail-w-mode");
     } else {
       el.style.setProperty("--rail-w", `${Math.round(clamp(px, minW(), maxW()))}px`);
+      // GEOM-1 (audit): a card-aligned DEFAULT bar carries an inline style.width; the cap channel is
+      // width:max-content + max-width:--rail-w, which an inline longhand overrides — the bar then never
+      // content-shrinks. Clear it whenever a cap is applied (the drag-lift does the same, review R-3).
+      el.style.width = "";
       // The chosen width is a CAP: the bar sizes to its content and stops there, so a bar whose tools have moved
       // into More shrinks tight rather than leaving an empty gap between the last tool and the actions.
       el.style.setProperty("--rail-w-mode", "max-content");

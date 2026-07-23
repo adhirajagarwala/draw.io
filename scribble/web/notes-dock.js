@@ -9,7 +9,7 @@
 // floatNotes / dockNotes / clampNotes back from prefs + boot + the splitter guard.
 // Bump this module's ?v= import in app.js together with APP_VERSION.
 
-import { visibleBand, clampIntoBand } from "./visible-band.js?v=174";
+import { visibleBand, clampIntoBand } from "./visible-band.js?v=175";
 
 let els, $, savePrefs, relayoutSketches, stageEl;
 const MIN_W = 318, MIN_H = 140, DOCK_BAND = 72; // MIN_W fits the header (grip + title + +Text/+Draw/Minimise/✕) without collision
@@ -394,9 +394,32 @@ export function initNotesDock(deps) {
     if (drag && ev.pointerId === drag.id) endDrag(null, false);
     else if (rz && ev.pointerId === rz.id) endResize();
   };
+  // LEAK-1 companion: a genuine pointercancel must also be heard when it lands in the parent realm —
+  // cancel (restore) for a drag, commit-where-it-is for a resize, mirroring floating-panel's backstops.
+  const backstopCancel = (ev) => {
+    if (drag && ev.pointerId === drag.id) endDrag(null, true);
+    else if (rz && ev.pointerId === rz.id) endResize();
+  };
   document.addEventListener("pointerup", backstopUp, true); // the pane never leaves this realm — own doc is enough here
+  document.addEventListener("pointercancel", backstopCancel, true);
+  let parentDoc = null;
   try {
     const p = window.parent;
-    if (p && p !== window && p.document) p.document.addEventListener("pointerup", backstopUp, true);
+    if (p && p !== window && p.document) {
+      parentDoc = p.document;
+      parentDoc.addEventListener("pointerup", backstopUp, true);
+      parentDoc.addEventListener("pointercancel", backstopCancel, true);
+    }
   } catch { /* cross-origin parent — own-document backstop is the best bound we have */ }
+  // LEAK-1 (audit, medium — land BEFORE any srcdoc re-parse machinery): the PARENT-document listeners above
+  // outlive this iframe realm on every srcdoc swap, pinning the dead realm (wasm heap included) via their
+  // closures. Same disease floating-panel fixed in v170 (review N-1); the dispose half was missed here in
+  // that very release. Torn down on pagehide — which fires on parent-driven srcdoc re-parses too.
+  window.addEventListener("pagehide", () => {
+    if (!parentDoc) return;
+    try {
+      parentDoc.removeEventListener("pointerup", backstopUp, true);
+      parentDoc.removeEventListener("pointercancel", backstopCancel, true);
+    } catch { /* parent gone first — nothing to unpin */ }
+  }, { once: true });
 }

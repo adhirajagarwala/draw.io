@@ -1,4 +1,20 @@
-# Scribble — open issues, ranked (as of v171, 2026-07-22; older entries below may reference v168)
+# Scribble — open issues, ranked (as of v175, 2026-07-23; older entries below may reference v168)
+
+## v175 — THE CONSOLIDATED AUDIT RELEASE (24-agent full audit; 64 verified findings; report in session notes)
+Wave-1 fixes shipped: RACE-1 parent-side boot watchdog (module re-injection first — field-proven on the live
+wedge — then ≤2 srcdoc re-parses, then fail-INVISIBLE; all three frame emissions) · RACE-2 inline anti-FOUC in
+the srcdoc head (the question can never again sit behind an opaque wedge) · RACE-3 modulepreload for the whole
+graph · RACE-4 per-load error hook + load counter · STICKY-1 card-top sticky un-deadened (capture-phase parent-
+doc scroll + own-realm rAF + annotate-ON align) · GEOM-1 collapse/width vs card-align inline-style conflicts ·
+GEOM-2 cancel-revert re-aligns reparented bar · RAF-1 host-growth observer un-wedged (overlay grows again) ·
+RAF-2 overflow rAF realm · LEAK-1 notes parent-backstop dispose + pointercancel backstop · PTR-1 canvas
+pointercancel pid-filter (palm cancel no longer erases strokes) · PTR-2 colorbar lifted-commit doctrine ·
+SEC-1 \u003c-escaping of inlined JSON (stored-XSS hardening) · TEST-1 de-vacuoused blur test + visibility test.
+Wave-2 queue (audit §3 lows + CAP-1 measurement + MULTI-1): see the master audit report.
+CLAUDE.md gained §11 (realm & recovery rules). First-load race root cause: H1 script-blocking-stylesheet stall
+(leading, matches the live capture incl. readyState:interactive + injection-heals) vs H2 detach/reattach —
+instrumentation ships in v175; the watchdog heals either way.
+
 
 ## v171 SHIPPED (pending push/sync + hosted verify) — the toolbar redesign
 One auto-sized single-row bar + Priority+ "More" + ONE width-drag handle (drag narrower → Snip, Undo/Redo,
@@ -8,8 +24,12 @@ DELETED: Compact/Medium/Full presets, the wrap mode, the student-facing A/B togg
 against this final layout (still deploy-excluded; inert until the v172 reparent). Adversarial review: 16
 confirmed findings, 13 fixed pre-deploy (incl. 3 high: the host-padding shorthand clobber, popover flip-above
 off-band, announce stomping). **Deferred, tracked:**
-- **(v172, flip-true only) alignRailToCard's inline style.width defeats the chrome.css max-content channel** —
-  rework alongside the card-top-default decision when the reparent flips.
+- ~~alignRailToCard inline width vs the max-content channel~~ — **RESOLVED in v175 (GEOM-1)**: setWidth
+  clears style.width when capping; syncCollapsedGeom clears left/width on collapse and re-aligns on
+  expand/uncap; the End/dblclick path re-aligns.
+- **(verify live, low) submission-panel watchdog vs AJAX panel swaps (review A7)**: if PL inserts the
+  read-only panel via innerHTML, its inline watchdog script won't execute — check on hosted once, adopt
+  sibling-frame coverage if real.
 - **(done in v172) chrome.css deploy**: deploy.sh no longer excludes it; the CLAUDE.md §0.1 class-repo rsync
   must also be run WITHOUT `--exclude 'chrome.css'` from v172 on (both bundles carry it before the flip).
 - **(minor) a saved width restored at boot clamps against the degraded 160px floor** (rail is display:none so

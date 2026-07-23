@@ -262,3 +262,28 @@ listeners + rAF for scroll.
   with binding user decisions in its addenda). A new session picking up Batch
   C2/C3, the calculator debug, Phase 1, or the deep audit MUST read it first —
   together with the memory file `scribble-vnext-15point-plan.md`.
+
+## 11. Realm & recovery rules (written in blood, v170–v174 — every one is a shipped incident)
+
+1. **Any recovery mechanism is tested in the realm it runs in, on the real failure state.** (v173: an
+   in-iframe `location.reload()` of `about:srcdoc` lands on a BLANK document; only a parent-side srcdoc
+   re-set or parent-side module re-injection recovers. The v173 watchdog turned a race into an outage.)
+2. **Never schedule a parent-realm rAF with an iframe-realm callback.** Measured dead on hosted PL (v155);
+   reintroduced three times in v172–v174. Pre-deploy grep gate:
+   `grep -rn "railWin.requestAnimationFrame\|pw.requestAnimationFrame\|realmWin.requestAnimationFrame" scribble/web/`
+   — every hit must schedule a callback of its own realm or carry a justifying comment.
+3. **Parent-scroll listening is capture-phase on the parent DOCUMENT, never bubble on the window** — PL
+   scrolls a nested div (live-measured).
+4. **Every parent-realm registration ships with its teardown in the same commit** (listener, observer, node).
+5. **A gesture-invariant fix is applied to EVERY engine in one pass** (the buttons:0/pid/stale doctrine has
+   ~10 hand-copied engines; three field incidents were one disease in different copies).
+6. **A deferred item whose trigger is "when X flips" BLOCKS the flip** — grep ISSUES-NEXT for the flag first.
+7. **A regression test must be proven able to fail** (re-introduce the defect once, or assert the guarded
+   handler actually executed).
+8. **Fail-safe UI states never depend on network fetches** — protective hide/gates are inline in the srcdoc.
+9. **Walk every failure path to its student-visible end state; it must be FAIL-INVISIBLE** (the question,
+   unobstructed) — never fail-opaque.
+10. **"Shipped" means live-verified on hosted PL, foreground, iframe <900px, APP_VERSION confirmed in-page.**
+11. **Parent-side element scripts feature-detect per-instance (closest()/scoped), never page-global.**
+12. **Pre-evaluation errors must be observable** — the parent attaches an error hook to the iframe
+    contentWindow on every load (a module-graph failure is otherwise invisible in both realms).

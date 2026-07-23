@@ -173,7 +173,10 @@ export function makeOverflow({ rail, scroll, bay, moreBtn, win = window, announc
 
   function schedule() {
     if (raf) return;
-    raf = realmWin.requestAnimationFrame(() => { raf = 0; reflow(); });
+    // RAF-2 (audit): reflow is an IFRAME-realm closure — coalesce through OUR OWN rAF, never realmWin's
+    // (post-reparent realmWin is the parent, and a parent rAF with an iframe callback never fires on hosted
+    // PL — the measured v155 failure mode). realmWin stays correct for the ResizeObserver construction.
+    raf = requestAnimationFrame(() => { raf = 0; reflow(); });
   }
 
   function observe() {
@@ -196,6 +199,6 @@ export function makeOverflow({ rail, scroll, bay, moreBtn, win = window, announc
   observe();
   return {
     reflow, coreWidth, invalidate,
-    dispose() { try { ro?.disconnect(); } catch { /* realm gone */ } ro = null; if (raf) realmWin.cancelAnimationFrame(raf); },
+    dispose() { try { ro?.disconnect(); } catch { /* realm gone */ } ro = null; if (raf) { cancelAnimationFrame(raf); raf = 0; } },
   };
 }
