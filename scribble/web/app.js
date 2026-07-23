@@ -3,17 +3,20 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "173";
-// v173: the boot watchdog (watchdog.js, a classic pre-module script) reloads the document once if this
-// module never evaluates (the v172 first-load race where the module fetched but zero statements ran).
-// Stamp evaluation-start FIRST so the watchdog can tell "module ran" from "module lost the race".
+const APP_VERSION = "174";
+// Boot-evaluation stamp, kept for DIAGNOSTICS only (v174): lets a live probe distinguish "module never
+// evaluated" (the still-unsolved PL first-load race) from "booted then broke". The v173 watchdog that acted
+// on it is REMOVED — its in-iframe location.reload() of the about:srcdoc document lands on a BLANK page
+// instead of re-parsing the srcdoc (that recovery only works PARENT-side via re-setting the srcdoc
+// attribute), so it replaced a still-readable question with permanent white. Do not reintroduce an
+// in-iframe reload; any future self-heal must be driven from the parent element.
 window.__scribbleBooted = true;
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=173";
+import init, { App } from "./pkg/scribble.js?v=174";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -21,19 +24,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=173";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=173";
-import { initEmbed } from "./embed.js?v=173";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=173";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=173";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=173";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=173";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=173";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=173";
-import { makeResizable } from "./rail-resize.js?v=173";
-import { makeOverflow } from "./rail-overflow.js?v=173";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=173";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=173";
+} from "./utils.js?v=174";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=174";
+import { initEmbed } from "./embed.js?v=174";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=174";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=174";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=174";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=174";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=174";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=174";
+import { makeResizable } from "./rail-resize.js?v=174";
+import { makeOverflow } from "./rail-overflow.js?v=174";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=174";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=174";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline

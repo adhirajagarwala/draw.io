@@ -9,7 +9,7 @@
 // floatNotes / dockNotes / clampNotes back from prefs + boot + the splitter guard.
 // Bump this module's ?v= import in app.js together with APP_VERSION.
 
-import { visibleBand, clampIntoBand } from "./visible-band.js?v=173";
+import { visibleBand, clampIntoBand } from "./visible-band.js?v=174";
 
 let els, $, savePrefs, relayoutSketches, stageEl;
 const MIN_W = 318, MIN_H = 140, DOCK_BAND = 72; // MIN_W fits the header (grip + title + +Text/+Draw/Minimise/✕) without collision

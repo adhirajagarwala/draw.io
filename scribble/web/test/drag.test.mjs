@@ -82,7 +82,7 @@ globalThis.window.parent = globalThis.window; // no separate parent realm in the
 globalThis.requestAnimationFrame = (fn) => { rafQueue.push(fn); return rafQueue.length; };
 globalThis.cancelAnimationFrame = (id) => { rafQueue[id - 1] = null; };
 
-const { makeFloating } = await import("../floating-panel.js?v=173");
+const { makeFloating } = await import("../floating-panel.js?v=174");
 
 const flushRaf = () => { const q = rafQueue; rafQueue = []; for (const fn of q) if (fn) fn(); };
 
