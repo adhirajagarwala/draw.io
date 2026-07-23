@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=177">
+  <link rel="stylesheet" href="style.css?v=178">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -353,21 +353,21 @@
   <!-- RACE-3 (audit, high): preload the whole module graph in parallel. The v172 wedge's leading
        mechanism is a script-blocking stall while parser-inserted modules wait; preloading shrinks
        the serial window. Keep this list in lockstep with app.js's imports. -->
-  <link rel="modulepreload" href="app.js?v=177">
-  <link rel="modulepreload" href="pkg/scribble.js?v=177">
-  <link rel="modulepreload" href="utils.js?v=177">
-  <link rel="modulepreload" href="pdf-writer.js?v=177">
-  <link rel="modulepreload" href="embed.js?v=177">
-  <link rel="modulepreload" href="idb.js?v=177">
-  <link rel="modulepreload" href="text-extract.js?v=177">
-  <link rel="modulepreload" href="modals.js?v=177">
-  <link rel="modulepreload" href="colorbar.js?v=177">
-  <link rel="modulepreload" href="notes-dock.js?v=177">
-  <link rel="modulepreload" href="floating-panel.js?v=177">
-  <link rel="modulepreload" href="rail-resize.js?v=177">
-  <link rel="modulepreload" href="rail-overflow.js?v=177">
-  <link rel="modulepreload" href="calc-dodge.js?v=177">
-  <link rel="modulepreload" href="visible-band.js?v=177">
-  <script type="module" src="app.js?v=177"></script>
+  <link rel="modulepreload" href="app.js?v=178">
+  <link rel="modulepreload" href="pkg/scribble.js?v=178">
+  <link rel="modulepreload" href="utils.js?v=178">
+  <link rel="modulepreload" href="pdf-writer.js?v=178">
+  <link rel="modulepreload" href="embed.js?v=178">
+  <link rel="modulepreload" href="idb.js?v=178">
+  <link rel="modulepreload" href="text-extract.js?v=178">
+  <link rel="modulepreload" href="modals.js?v=178">
+  <link rel="modulepreload" href="colorbar.js?v=178">
+  <link rel="modulepreload" href="notes-dock.js?v=178">
+  <link rel="modulepreload" href="floating-panel.js?v=178">
+  <link rel="modulepreload" href="rail-resize.js?v=178">
+  <link rel="modulepreload" href="rail-overflow.js?v=178">
+  <link rel="modulepreload" href="calc-dodge.js?v=178">
+  <link rel="modulepreload" href="visible-band.js?v=178">
+  <script type="module" src="app.js?v=178"></script>
 </body>
 </html>

@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "177";
+const APP_VERSION = "178";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=177";
+import init, { App } from "./pkg/scribble.js?v=178";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -26,19 +26,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=177";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=177";
-import { initEmbed } from "./embed.js?v=177";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=177";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=177";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=177";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=177";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=177";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=177";
-import { makeResizable } from "./rail-resize.js?v=177";
-import { makeOverflow } from "./rail-overflow.js?v=177";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=177";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=177";
+} from "./utils.js?v=178";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=178";
+import { initEmbed } from "./embed.js?v=178";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=178";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=178";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=178";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=178";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=178";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=178";
+import { makeResizable } from "./rail-resize.js?v=178";
+import { makeOverflow } from "./rail-overflow.js?v=178";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=178";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=178";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline

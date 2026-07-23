@@ -87,13 +87,16 @@ export function makeOverflow({ rail, scroll, bay, moreBtn, win = window, announc
     // 2) promote back only when the group genuinely fits again (never trial-promote — that is the flicker, and it
     //    costs a layout flush per attempt). ONE test for every regime: does shell + true content + the
     //    returning group + hysteresis fit under the bar's effective ceiling?
-    let capPx = parseFloat(rail.style.getPropertyValue("--rail-w")) || Infinity;
-    // v172, generalizing review F0: with NO chosen width the bar still has a hard ceiling — the viewport clamp
-    // for a MOVED (max-content) bar, its own FIXED span (calc(100% - 8px)) for the default bar. The old
-    // "slack" test for the default bar (clientWidth - scrollWidth >= w) was MATHEMATICALLY DEAD: scrollWidth
-    // is defined as max(clientWidth, content), so it can never be less than clientWidth and the test could
-    // never pass — parked tools NEVER promoted at full width (live-verified on hosted v171: End restored the
-    // span but the bay never emptied). One hypothetical-fit test for every regime instead.
+    // The promote ceiling is the width the bar is ALLOWED to grow to — the min of the user's chosen width
+    // (--rail-w) and the card cap (--rail-max, set by alignRailToCard), NOT the bar's CURRENT width. v177 made
+    // the default bar content-sized (max-content capped by --rail-max), so its current width == its current
+    // content and SHRINKS as tools demote; using it as the ceiling (the v172 fallback) meant a demoted tool
+    // could never fit "within the width we already shrank to" → Snip/Undo/Redo stuck in More even with 150px
+    // of card room to spare (live-measured: bar 758, cap 915, would-fit 892). Read both custom props and take
+    // the min; only when NEITHER is set fall back (moved bar → viewport; last-ditch → current width).
+    const rwCap = parseFloat(rail.style.getPropertyValue("--rail-w"));
+    const rmaxCap = parseFloat(rail.style.getPropertyValue("--rail-max"));
+    let capPx = Math.min(Number.isFinite(rwCap) ? rwCap : Infinity, Number.isFinite(rmaxCap) ? rmaxCap : Infinity);
     if (!Number.isFinite(capPx)) {
       capPx = rail.classList.contains("fp-moved")
         ? Math.max(160, (realmWin.innerWidth || 0) - 8)
