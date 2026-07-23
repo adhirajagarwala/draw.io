@@ -841,7 +841,7 @@ body.overlay #topbar.fp-collapsed :is(.brand, #btn-open, .topbar-right) { displa
    ============================================================================ */
 /* Shell: white, one hairline, soft radius, whisper shadow, fixed height */
 body.overlay #rail {
-  gap: 6px; padding: 5px 7px; height: 52px;
+  gap: 3px; padding: 4px 6px; height: 50px; /* v177: tightened (mirror chrome.css) */
   border-radius: 12px; border: 1px solid var(--line); background: #fff;
   box-shadow: 0 1px 3px rgba(20, 24, 28, 0.10); align-items: center;
 }
@@ -1239,11 +1239,11 @@ body.big .readout, body.big #zoom-select, body.big #page-input { font-size: 15px
    rule so it wins on specificity; set NO width (leave it to the calc/fp-moved/fp-collapsed rules) and
    NO !important. The rail-actions .btn, the width picker, and the swatches are the controls the leaking
    body.big rules can't reach in overlay — enlarge those, not just .tool. */
-body.overlay.big #rail { height: 60px; }
+body.overlay.big #rail { height: 52px; } /* v177 tightened */
 body.overlay.big #rail .tool,
-body.overlay.big #rail .rail-actions .btn { height: 46px; padding: 0 9px; }
+body.overlay.big #rail .rail-actions .btn { height: 42px; padding: 0 6px; }
 body.overlay.big #rail .tool svg,
-body.overlay.big #rail .rail-actions .btn svg { width: 22px; height: 22px; }
+body.overlay.big #rail .rail-actions .btn svg { width: 20px; height: 20px; }
 /* Exclude the Text tool's real span — it is deliberately font-size:0 (a "Text" ::after stands in);
    enlarging .tool span unconditionally would un-hide "Text on page" and collide with the ::after. */
 body.overlay.big #rail .tool:not([data-tool="text"]) span,

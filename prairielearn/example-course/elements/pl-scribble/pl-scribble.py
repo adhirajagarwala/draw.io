@@ -110,10 +110,14 @@ _OVERLAY_FRAME = (
 # events THROUGH to the live question and Scribble's UI stays hidden (style.css :not(.annotate-active));
 # clicking flips drawing on. Prof. Lumetta asked for an explicit launch affordance (cf. PL's Calculator).
 _ANNOTATE_BTN = (
-    '<button type="button" class="pl-scribble-annotate-btn" aria-pressed="false" '
+    '<button type="button" class="pl-scribble-annotate-btn" data-scribble-id="%s" aria-pressed="false" '
     # z-index above the overlay frame (2147482000) so the launch affordance is never buried by another
     # extension's overlay; the active "Done" state floats even higher (2147483000, in the sizer).
-    'style="position:absolute;top:8px;right:8px;z-index:2147482500;display:inline-flex;align-items:center;gap:6px;'
+    # v177 (user): the launcher is ALWAYS on screen — position:fixed to the viewport, never scrolled away
+    # with the card. The sizer places it (top-left of the visible card by default; where Done last stood
+    # after an annotate session). Server-side it starts hidden-ish at the viewport top-left; the sizer's
+    # first m() run positions it properly before first interaction matters.
+    'style="position:fixed;top:8px;left:8px;z-index:2147482500;display:inline-flex;align-items:center;gap:6px;'
     'padding:6px 12px;border:1px solid #c9d6f7;border-radius:8px;background:#fff;color:#2f5fde;'
     'font:600 13px/1 system-ui,-apple-system,sans-serif;cursor:pointer;box-shadow:0 1px 3px rgba(20,24,28,.12);">'
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" '
@@ -127,11 +131,23 @@ _OVERLAY_SIZER = (
     "<script>(function(){var w=document.currentScript.parentElement,"
     "h=w.querySelector('.pl-scribble-host'),f=w.querySelector('.pl-scribble-overlay-frame'),"
     "b=w.querySelector('.pl-scribble-annotate-btn');"
-    "function s(){f.style.height=Math.max(h.offsetHeight,200)+'px';}s();"
+    "function s(){f.style.height=Math.max(h.offsetHeight,200)+'px';"
+    # v177 A2: a viewport-FIXED pill must never strand off-screen when the window shrinks — re-clamp on
+    # every resize (s already runs on resize). Applies whenever the button is body-parented (pill or FAB).
+    "try{if(b&&b.parentNode===document.body&&b.style.position==='fixed'){"
+    "var bx=Math.max(8,Math.min(window.innerWidth-120,parseFloat(b.style.left)||8));"
+    "var by=Math.max(8,Math.min(window.innerHeight-48,parseFloat(b.style.top)||8));"
+    "b.style.left=bx+'px';b.style.top=by+'px';}}catch(_){}}s();"
     "window.addEventListener('load',s);window.addEventListener('resize',s);"
     "if(window.MathJax&&MathJax.startup&&MathJax.startup.promise){MathJax.startup.promise.then(s);}"
     "f.style.pointerEvents='none';"  # default click-through — also covers the read-only view (no button)
-    "if(b){var on=false,bp=b.parentNode,dg=null,sc=false;function m(){f.style.pointerEvents=on?'auto':'none';"
+    # v177 A1 (review blocker): the first m() runs at parse with the server-rendered FIXED button already
+    # laid out, so a naive rect capture "remembers" the placeholder (8,8) and the card default became dead
+    # code. Continuity is honored ONLY after a real annotate session (sbP flag, set on the ON branch).
+    # V177-3: a re-rendered panel leaves the previous button as a body-level zombie — dedupe by identity.
+    "if(b){var on=false,dg=null,sc=false;"
+    "try{var sid=b.getAttribute('data-scribble-id');if(sid){document.querySelectorAll('.pl-scribble-annotate-btn[data-scribble-id=\"'+sid+'\"]').forEach(function(o){if(o!==b)o.remove();});}}catch(_){}"
+    "function m(){f.style.pointerEvents=on?'auto':'none';"
     "var sp=b.querySelector('span');"
     # ACTIVE: a big, filled, DRAGGABLE floating action button, opening below the toolbar's right end. CRITICAL: a PrairieLearn
     # ancestor (question card) can carry a CSS transform, which makes a position:fixed DESCENDANT resolve
@@ -143,7 +159,7 @@ _OVERLAY_SIZER = (
     # the toolbar's right end BY APP.JS — this script must then skip its own fixed positioning entirely (two
     # writers fighting over one node was the collision class the plan forbids). This script still owns the
     # button's lifecycle: creation, the toggle click, the label swap, and the INACTIVE corner pill.
-    "if(on){var ch=document.querySelector('.pl-scribble-chrome-host');"
+    "if(on){b.dataset.sbP='1';var ch=document.querySelector('.pl-scribble-chrome-host');"
     "if(!ch){if(b.parentNode!==document.body)document.body.appendChild(b);"
     # (No reparented toolbar — legacy FAB path.) Open BELOW the toolbar's RIGHT end: measure the overlay frame
     # (the question CARD) and pin Done just under the ~56px toolbar, right-aligned to the CARD — NOT the
@@ -157,8 +173,18 @@ _OVERLAY_SIZER = (
     "b.style.background='#fff';b.style.color='#2f5fde';b.style.borderColor='#c9d6f7';b.style.borderRadius='8px';"
     "b.style.boxShadow='0 1px 3px rgba(20,24,28,.12)';b.style.cursor='move';b.style.touchAction='none';}"
     "if(sp)sp.textContent='Done';}"
-    "else{if(b.parentNode!==bp)bp.appendChild(b);"
-    "b.style.position='absolute';b.style.left='auto';b.style.top='8px';b.style.bottom='auto';b.style.right='8px';b.style.zIndex='2147482500';"
+    # v177: capture where the button IS (welded in the bar, or the FAB) BEFORE unwelding — the inactive pill
+    # re-appears at that exact spot ("appears the exact place you click Done"), clamped on-screen; a fresh
+    # load (rect 0x0 / never annotated) defaults to the TOP-LEFT of the visible card. position:fixed keeps it
+    # on the viewport permanently — the old absolute corner pill scrolled away with a long question.
+    "else{var pr=null;try{if(b.dataset.sbP){var r0=b.getBoundingClientRect();if(r0&&r0.width)pr=r0;}}catch(_){ }"
+    "if(b.parentNode!==document.body)document.body.appendChild(b);"
+    "var fr2=f.getBoundingClientRect();"
+    "var px=pr?pr.left:Math.max(8,Math.round(fr2.left)+24);"
+    "var py=pr?pr.top:Math.max(8,Math.round(fr2.top)+8);"
+    "px=Math.max(8,Math.min(window.innerWidth-120,Math.round(px)));"
+    "py=Math.max(8,Math.min(window.innerHeight-48,Math.round(py)));"
+    "b.style.position='fixed';b.style.left=px+'px';b.style.top=py+'px';b.style.bottom='auto';b.style.right='auto';b.style.zIndex='2147482500';b.style.margin='0';"
     "b.style.padding='6px 12px';b.style.fontSize='13px';b.style.fontWeight='600';"
     "b.style.background='#fff';b.style.color='#2f5fde';b.style.borderColor='#c9d6f7';b.style.borderRadius='8px';"
     "b.style.boxShadow='0 1px 3px rgba(20,24,28,.12)';b.style.cursor='pointer';"
@@ -431,7 +457,9 @@ def render(element_html, data):
         # Live question visible; transparent Scribble iframe over it. Answer widgets may live INSIDE or
         # OUTSIDE <pl-scribble>: the overlay only captures pointer events while the student is drawing, so
         # nested inputs stay answerable (verified end-to-end: render + type-through + grade).
-        return _OVERLAY_WRAP % (input_html, inner, _OVERLAY_FRAME % ("Scribble scratchpad", srcdoc), _ANNOTATE_BTN)
+        # v177 A3: identity-stamp the launcher so app.js's weld binds by id, never by first-match (B3-3).
+        sid = _html.escape("%s.%s" % (_qid(data) or "q", name), quote=True)
+        return _OVERLAY_WRAP % (input_html, inner, _OVERLAY_FRAME % ("Scribble scratchpad", srcdoc), _ANNOTATE_BTN % sid)
     return (
         '<div class="pl-scribble-wrap" style="margin:14px 0;">'
         '<div class="pl-scribble-source" hidden>%s</div>'

@@ -242,10 +242,10 @@
 .scribble-chrome #rail {
   position: fixed; top: 4px; left: 4px; z-index: 10; /* net 10 (mirror style.css:687→804): rests above the cbar */
   flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 4px;
-  /* v171 width channel (mirror style.css:694-695): a chosen width is a CAP — the bar is content-sized up to
-     it (max-content under --rail-w-mode), so demoted tools leave no dead space. Binding --rail-w to width
-     directly kept the dead space. */
-  width: var(--rail-w-mode, calc(100% - 8px)); max-width: var(--rail-w, none);
+  /* v177 width channel: the bar is CONTENT-SIZED always (the card-spanning default read "wider than the
+     question" — the overlay frame is the full-bleed wrap, card + 32px). Two caps compose via min(): the
+     user's chosen width (--rail-w) and the card ceiling (--rail-max, set by alignRailToCard = frame - 44). */
+  width: max-content; max-width: min(var(--rail-w, 9999px), var(--rail-max, calc(100vw - 16px)));
   background: #fff;
   border: 1px solid var(--line); border-radius: 12px; padding: 4px 6px;
   box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14);
@@ -265,14 +265,14 @@
   box-shadow: 0 1px 4px rgba(20, 24, 28, 0.14); /* override the base 0 10px 28px blur (drag lag) */
 }
 .scribble-chrome #context-bar.cbar-dragging { z-index: 80; }
-.scribble-chrome #rail.fp-moved { width: var(--rail-w-mode, max-content); max-width: var(--rail-w, calc(100vw - 8px)); top: auto; left: auto; right: auto; } /* v171: same cap channel as the default bar (mirror style.css:806) */
+.scribble-chrome #rail.fp-moved { width: max-content; max-width: min(var(--rail-w, 9999px), calc(100vw - 8px)); top: auto; left: auto; right: auto; } /* v177: dragged bar keeps content-sizing; viewport cap only (it may leave the card) */
 .scribble-chrome #rail.fp-dragging { z-index: 80; cursor: grabbing; box-shadow: 0 6px 20px rgba(20, 24, 28, 0.22); }
 .scribble-chrome #rail.fp-collapsed :is(.rail-group, #context-bar, .rail-actions, .fp-resize) { display: none; }
 .scribble-chrome #rail.fp-collapsed { width: auto; }
 /* Collapse the DEFAULT (un-dragged) bar toward the RIGHT — where the minimise button is (mirror style.css). */
 .scribble-chrome #rail.fp-collapsed:not(.fp-moved) { left: auto; right: 4px; }
 .scribble-chrome #rail {
-  gap: 6px; padding: 5px 7px; height: 52px;
+  gap: 3px; padding: 4px 6px; height: 50px; /* v177: tightened — the bar must sit well inside the question */
   border-radius: 12px; border: 1px solid var(--line); background: #fff;
   box-shadow: 0 1px 3px rgba(20, 24, 28, 0.10); align-items: center;
 }
@@ -395,9 +395,9 @@
 .scribble-chrome.big #rail .tool { height: 42px; font-size: 15px; }
 .scribble-chrome.big #rail .tool svg { width: 21px; height: 21px; }
 .scribble-chrome.big .swatch { width: 28px; height: 28px; }
-.scribble-chrome.big #rail { height: 60px; }
-.scribble-chrome.big #rail .tool, .scribble-chrome.big #rail .rail-actions .btn { height: 46px; padding: 0 9px; }
-.scribble-chrome.big #rail .tool svg, .scribble-chrome.big #rail .rail-actions .btn svg { width: 22px; height: 22px; }
+.scribble-chrome.big #rail { height: 52px; } /* v177 tightened */
+.scribble-chrome.big #rail .tool, .scribble-chrome.big #rail .rail-actions .btn { height: 42px; padding: 0 6px; }
+.scribble-chrome.big #rail .tool svg, .scribble-chrome.big #rail .rail-actions .btn svg { width: 20px; height: 20px; }
 .scribble-chrome.big #rail .tool:not([data-tool="text"]) span, .scribble-chrome.big #rail .rail-actions .btn span { font-size: 12px; }
 .scribble-chrome.big #rail .tool[data-tool="text"] span::after { font-size: 12px; }
 .scribble-chrome.big #context-bar .btn.width { min-width: 38px; height: 36px; }

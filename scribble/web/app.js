@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "176";
+const APP_VERSION = "177";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=176";
+import init, { App } from "./pkg/scribble.js?v=177";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -26,19 +26,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=176";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=176";
-import { initEmbed } from "./embed.js?v=176";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=176";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=176";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=176";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=176";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=176";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=176";
-import { makeResizable } from "./rail-resize.js?v=176";
-import { makeOverflow } from "./rail-overflow.js?v=176";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=176";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=176";
+} from "./utils.js?v=177";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=177";
+import { initEmbed } from "./embed.js?v=177";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=177";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=177";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=177";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=177";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=177";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=177";
+import { makeResizable } from "./rail-resize.js?v=177";
+import { makeOverflow } from "./rail-overflow.js?v=177";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=177";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=177";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -3742,12 +3742,10 @@ const PREFS_KEY = "scribble.prefs.v1" + (() => {
   const parts = [pl.qid, pl.name].filter(Boolean);
   return parts.length ? "." + parts.join(".") : "";
 })();
-// True only when the element gave us a REAL per-question id, i.e. PREFS_KEY is genuinely namespaced per question.
-// Panel POSITIONS are restored only under this flag: without a qid every question shares one legacy key, so a
-// toolbar parked low on a long question would restore at that same low spot on the next (possibly much shorter)
-// question and read as "my toolbar is gone". No qid → fail safe to the always-default behaviour. NEW QUESTION =
-// DIFFERENT KEY = DEFAULT LAYOUT, which is the guarantee this flag exists to make honest.
-const PREFS_PER_QUESTION = !!(window.__SCRIBBLE_PL && window.__SCRIBBLE_PL.qid);
+// True only when the element gave us a REAL per-question id, i.e. PREFS_KEY is genuinely namespaced.
+// v177: POSITION restore is gone (the professor's "top-center no matter what"), so nothing reads this today;
+// RETAINED for the Wave-2 PREF-1 gating of width/toolsHidden restores (audit §3 #25) — do not delete.
+const PREFS_PER_QUESTION = !!(window.__SCRIBBLE_PL && window.__SCRIBBLE_PL.qid); // eslint-disable-line no-unused-vars
 // USER-level accessibility prefs (Larger controls, colourblind-safe palette) are NOT per-question — a shared,
 // un-namespaced key so enabling them on one question applies to every question (they serve the users who
 // most need consistency).
@@ -4138,8 +4136,14 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // function declaration hoists.)
           function syncCollapsedGeom() {
             if (railEl.classList.contains("fp-moved")) return; // a moved bar owns its own inline geometry
-            if (railEl.classList.contains("fp-collapsed")) { railEl.style.left = ""; railEl.style.width = ""; }
-            else alignRailToCard();
+            if (railEl.classList.contains("fp-collapsed")) {
+              // v177: keep the collapsed handle WHERE THE BAR WAS (right-edge preserved) — the chrome.css
+              // viewport-right anchor was a long teleport away from a top-CENTERED bar. Inline left beats the
+              // stylesheet's left:auto, and with width:auto the right:4px rule is then ignored (over-constrained).
+              const r = railEl.getBoundingClientRect();
+              railEl.style.width = "";
+              if (r.width) railEl.style.left = `${Math.max(8, Math.round(r.right - 48))}px`;
+            } else alignRailToCard();
           }
           // onChange also syncs the host pad: dragging a .big (60px) bar away from the default spot must CLEAR
           // the question's extra top padding, or a stale 64px gap survives the move. (syncHostPad is declared
@@ -4306,11 +4310,17 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
             // A collapsed bar shrinks to its right-anchored handle (chrome.css .fp-collapsed:not(.fp-moved));
             // re-applying inline left/width here would defeat that, so bail while collapsed too.
             if (railWin === window || railEl.classList.contains("fp-moved") || railEl.classList.contains("fp-collapsed")) return;
+            if (railEl.classList.contains("rail-resizing")) return; // v177: re-centering mid-gesture detaches the handle from the cursor; onChange re-centers at commit
             try {
               const fr = window.frameElement.getBoundingClientRect(); // iframe position in the parent viewport
-              railEl.style.left = `${Math.round(fr.left + 4)}px`;
-              // Only span the card when the student has NOT chosen a width (--rail-w wins over card-align).
-              if (!railEl.style.getPropertyValue("--rail-w")) railEl.style.width = `${Math.round(Math.max(0, fr.width - 8))}px`;
+              // v177 (user directive): the DEFAULT bar opens TOP-CENTER of the question, content-sized —
+              // never the card-spanning strip (it read wider than the question: the overlay frame is the
+              // full-bleed wrap, card + 32px). Width is owned by CSS (max-content, capped by --rail-max =
+              // the card minus bleed, and by the user's --rail-w via min()); we own only left/top here.
+              railEl.style.width = ""; // never span — content-sized always
+              railEl.style.setProperty("--rail-max", `${Math.round(Math.max(160, fr.width - 44))}px`);
+              const rw = Math.min(railEl.getBoundingClientRect().width || 0, Math.max(160, fr.width - 44));
+              railEl.style.left = `${Math.round(fr.left + Math.max(20, (fr.width - rw) / 2))}px`;
               // v172, the professor's card-top decision: the DEFAULT bar hugs the top of the VISIBLE part of
               // the question card — just inside the card when its top is on-screen, pinned to the viewport top
               // once the student scrolls past it. Never a bare viewport `top:4px`, which parked the bar over
@@ -4320,17 +4330,11 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               railEl.style.top = `${Math.max(4, Math.round(fr.top) + 4)}px`;
             } catch { /* cross-frame — leave the chrome.css full-width fallback */ }
           };
-          // Restore a dragged position — but ONLY for a genuinely per-question prefs key (PREFS_PER_QUESTION).
-          // v168 stopped restoring it outright because a spot saved on a long question reloaded half-off-frame;
-          // that was the right call then, but the blunt version also threw away a placement the student chose on
-          // purpose. The precise fix is possible now: (a) the key is namespaced per question, so opening a NEW
-          // question finds no saved layout and lands at the default; (b) visibleBand/clampFixed pull a stale spot
-          // into the band the student can actually see, so a restore can no longer strand the bar off-screen —
-          // clampFixed below and clampRailOnShow at Annotate-time both re-verify it. Width already restored above.
-          if (PREFS_PER_QUESTION && rp.left && rp.top) {
-            const rl = parseFloat(rp.left), rt = parseFloat(rp.top);
-            if (Number.isFinite(rl) && Number.isFinite(rt)) railFP.floatTo(rl, rt);
-          }
+          // v177 (user directive, revoking the v170 per-question restore): "NO MATTER WHAT, when you open
+          // the page the bar is at the TOP CENTER." A saved dragged position is deliberately NOT restored on
+          // load any more — moves still hold for the session (and savePrefs keeps writing railFloat2 for
+          // diagnostics/rollback), but every open lands at the centered default. Width caps and hidden-tool
+          // choices still restore: they are sizes/sets, not places.
           alignRailToCard();
           clampFixed(railEl, railWin);
           const onRailResize = () => { alignRailToCard(); clampFixed(railEl, railWin); restickRail(); railLayout.reflow(); pushRailClear(); syncHostPad(); };
@@ -4356,6 +4360,13 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               ro.observe(window.frameElement);
               railTeardowns.push(() => { try { ro.disconnect(); } catch { /* ignore */ } if (alignRaf) cancelAnimationFrame(alignRaf); });
             }
+            // v177: a top-CENTERED bar must re-center when its own width changes (tools demote/promote, .big,
+            // Customize). The rail lives in the parent realm → parent RO, own-realm rAF via scheduleAlign.
+            if (railWin.ResizeObserver) {
+              const roSelf = new railWin.ResizeObserver(scheduleAlign);
+              roSelf.observe(railEl);
+              railTeardowns.push(() => { try { roSelf.disconnect(); } catch { /* ignore */ } });
+            }
             window.addEventListener("pagehide", () => { for (const t of railTeardowns) { try { t(); } catch { /* ignore */ } } }, { once: true });
           }
           // MF-F: the iframe's `display:none` annotate-gate (style.css) can't reach a reparented rail, so drive
@@ -4380,7 +4391,13 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               // query ONLY when it is unambiguous (exactly one chrome host on the page — covers the slow-boot
               // case where the sizer already moved the FAB to document.body before we reparented).
               const pdoc = railWin.document;
-              let b = window.frameElement?.parentElement?.querySelector(".pl-scribble-annotate-btn") || null;
+              // v177 A3: the launcher is body-parented from parse now, so wrap-containment lookup is dead —
+              // bind by the server-stamped identity instead (data-scribble-id = qid.name, matching OUR config),
+              // which keeps the B3-3 two-question invariant. Single-host global fallback stays as the belt.
+              const pl = window.__SCRIBBLE_PL || {};
+              const sid = `${pl.qid || "q"}.${pl.name || ""}`;
+              let b = null;
+              try { b = pdoc.querySelector(`.pl-scribble-annotate-btn[data-scribble-id="${(railWin.CSS || CSS).escape(sid)}"]`); } catch { /* CSS.escape unavailable */ }
               if (!b && pdoc.querySelectorAll(".pl-scribble-chrome-host").length === 1) {
                 b = pdoc.querySelector(".pl-scribble-annotate-btn");
               }

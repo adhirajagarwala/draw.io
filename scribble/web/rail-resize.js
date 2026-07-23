@@ -7,7 +7,7 @@
 // with ZERO edits to the drag engine. The handle is a <button>, so DRAG_EXCLUDE already stops a resize gesture
 // from LIFTING the bar. Bump this module's ?v= import with APP_VERSION.
 
-import { visibleBand } from "./visible-band.js?v=176";
+import { visibleBand } from "./visible-band.js?v=177";
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
 
@@ -25,8 +25,12 @@ export function makeResizable(el, { handle, win = window, getMinW, onLive, onCha
   // and the protected core scrolls within (.rail-scroll's overflow-x carries it — same rule as the demote
   // guard's "only the un-demotable remain" case).
   const bandW = () => { const b = visibleBand(win); return Math.max(160, b.right - b.left - 8); };
-  const minW = () => Math.min(Math.max(160, (getMinW && getMinW()) || 240), bandW());
-  const maxW = () => Math.max(minW(), bandW());
+  // v177 A4: the card cap (--rail-max, set by alignRailToCard) must bound the GESTURE too — without it the
+  // handle had a dead zone past the card edge, announced widths the CSS min() never rendered, and persisted
+  // the lie. Falls back to the band when unset (moved bars / non-reparented modes).
+  const railMax = () => parseFloat(el.style.getPropertyValue("--rail-max")) || Infinity;
+  const minW = () => Math.min(Math.max(160, (getMinW && getMinW()) || 240), bandW(), railMax());
+  const maxW = () => Math.max(minW(), Math.min(bandW(), railMax()));
   const getWidth = () => parseFloat(el.style.getPropertyValue("--rail-w")) || 0; // 0 => unset (full span)
 
   let sayTimer = 0;
@@ -67,6 +71,7 @@ export function makeResizable(el, { handle, win = window, getMinW, onLive, onCha
     if (ev.button !== 0) return;
     const r = el.getBoundingClientRect();      // read ONCE — the live loop is write-only (CLAUDE.md §10)
     drag = { id: ev.pointerId, left: r.left, grabDx: r.right - ev.clientX };
+    el.classList.add("rail-resizing"); // v177: freezes re-centering for the duration of the gesture
     try { handle.setPointerCapture(ev.pointerId); } catch { /* pointer already gone */ }
     ev.preventDefault(); ev.stopPropagation(); // never let the bar's own pointerdown see this
   });
@@ -80,6 +85,7 @@ export function makeResizable(el, { handle, win = window, getMinW, onLive, onCha
   const end = () => {
     if (!drag) return;
     drag = null;
+    el.classList.remove("rail-resizing");
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
     onChange?.();
     sayLater(getWidth() ? `Toolbar ${Math.round(getWidth())} pixels wide` : "Toolbar full width");
