@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "175";
+const APP_VERSION = "176";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=175";
+import init, { App } from "./pkg/scribble.js?v=176";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -26,19 +26,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=175";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=175";
-import { initEmbed } from "./embed.js?v=175";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=175";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=175";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=175";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=175";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=175";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=175";
-import { makeResizable } from "./rail-resize.js?v=175";
-import { makeOverflow } from "./rail-overflow.js?v=175";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=175";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=175";
+} from "./utils.js?v=176";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=176";
+import { initEmbed } from "./embed.js?v=176";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=176";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=176";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=176";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=176";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=176";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=176";
+import { makeResizable } from "./rail-resize.js?v=176";
+import { makeOverflow } from "./rail-overflow.js?v=176";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=176";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=176";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -4176,6 +4176,14 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
             try {
               const host = overlayHost();
               if (!host) return;
+              // v176 (live-verification catch): NEVER measure the reparented rail before chrome.css has
+              // APPLIED — in that window the parent-realm #rail renders as an unstyled full-width vertical
+              // stack thousands of px tall, and the boot-path call here wrote paddingTop:9432px, shoving the
+              // question below a giant void until the next annotate cycle. Wait for the stylesheet (the
+              // annotate-ON path re-runs this once it's ready); belt: no sane bar exceeds 200px.
+              if (railWin !== window && !railWin.document.getElementById("pl-scribble-chrome-css")?.sheet) return;
+              const sane = railEl.getClientRects().length ? railEl.getBoundingClientRect().height : 0;
+              if (sane > 200) return;
               // review F6: the host's 52px baseline lives in an inline `padding:` SHORTHAND (pl-scribble.py).
               // Writing then clearing the padding-top LONGHAND deletes the shorthand's top component outright
               // (the other three sides survive, top computes to 0) — the stock bar would then cover the
