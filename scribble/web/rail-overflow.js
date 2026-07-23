@@ -13,16 +13,19 @@
 
 const GAP = 8; // px of slack required before promoting back — hysteresis, kills demote<->promote flicker
 
-// Which group leaves first (ascending). The Draw group (pen/highlight/text/erase) AND Select fall through to
-// Infinity: they NEVER leave, so the core tools are always on the bar. Undo/Redo outrank the colour strip
-// because Ctrl+Z/Ctrl+Y fully cover them from the keyboard.
-// NB: the Marks group (tick/cross/circle/arrow/rect) also lands Infinity, but it is display:none in overlay
-// (style.css trim rules) — it MUST be given a finite priority here before it is ever surfaced on the bar,
-// or it can neither demote nor count toward the width floor correctly.
+// Which group leaves first (ascending). v173 (professor's decision): EVERY group is demotable — dragging the
+// handle to its minimum folds the WHOLE toolbar into More, leaving just the shell (grip + actions + More +
+// collapse + handle). Draw leaves LAST so the core drawing tools hold the bar the longest; Undo/Redo outrank
+// the colour strip because Ctrl+Z/Ctrl+Y fully cover them from the keyboard. An armed tool that parks in More
+// stays armed and reads as armed (the has-active dot on the More button).
+// NB: the Marks group (tick/cross/circle/arrow/rect) stays Infinity ONLY because it is display:none in overlay
+// (style.css trim rules) — give it a finite priority before ever surfacing it on the bar.
 function prioFor(node) {
   if (node.id === "context-bar") return 3;
   if (node.querySelector('[data-tool="snip"]')) return 1;
   if (node.querySelector("#btn-undo, #btn-redo")) return 2;
+  if (node.querySelector('[data-tool="select"]')) return 4;
+  if (node.querySelector('[data-tool="pen"]')) return 5;
   return Infinity;
 }
 
@@ -62,13 +65,6 @@ export function makeOverflow({ rail, scroll, bay, moreBtn, win = window, announc
     bay.appendChild(node);
   }
 
-  // The active tool's group must never leave the bar — losing sight of the tool you are holding is the
-  // hidden-irrecoverable-control failure class this project treats as a real bug.
-  function activeGroup() {
-    const act = scroll.querySelector(".tool.active");
-    return act ? act.closest(".rail-group") : null;
-  }
-
   function reflow() {
     if (!rendered()) return;
     // review F3: a COLLAPSED bar hides its groups (display:none) — scrollWidth reads 0, so a reflow here would
@@ -76,13 +72,14 @@ export function makeOverflow({ rail, scroll, bay, moreBtn, win = window, announc
     // bar, which re-fires the ResizeObserver → a real reflow runs then.
     if (rail.classList.contains("fp-collapsed")) return;
     stamp();
-    const act = activeGroup();
     // 1) demote while overflowing, lowest priority first. An all-off group (.group-off — every tool in it
-    //    hidden via Customize) is display:none: never a candidate, never counted.
+    //    hidden via Customize) is display:none: never a candidate, never counted. v173: the ARMED tool's group
+    //    is demotable like any other (the old never-demote-the-armed-group guard blocked the full-collapse
+    //    drag) — a parked armed tool stays armed and the More button's has-active dot marks where it went.
     let guard = 12;
     while (scroll.scrollWidth > scroll.clientWidth + 1 && guard-- > 0) {
       const cands = [...scroll.children]
-        .filter((c) => c !== act && Number.isFinite(+c.dataset.railPrio) && !c.classList.contains("group-off"))
+        .filter((c) => Number.isFinite(+c.dataset.railPrio) && !c.classList.contains("group-off"))
         .sort((a, b) => +a.dataset.railPrio - +b.dataset.railPrio);
       if (!cands.length) break;              // only the un-demotable remain — .rail-scroll's overflow-x carries it
       demote(cands[0]);
@@ -153,10 +150,11 @@ export function makeOverflow({ rail, scroll, bay, moreBtn, win = window, announc
   // caller was the preset derivation, which is gone; keeping an export that mutates the DOM as a side effect
   // of "measuring" was a foot-gun.)
 
-  // The narrowest useful bar: shell + the never-demoted core (Draw + Select), measured IN PLACE — protected
-  // groups are never demoted, so there is no promote churn to undo. The getClientRects filter excludes
-  // display:none groups (the overlay-hidden Marks group would otherwise inflate the floor via its Infinity
-  // priority); the +16 slack keeps the floor clear of the GAP=8 promote hysteresis.
+  // The narrowest useful bar. v173: every real group is demotable, so the only Infinity-priority nodes are
+  // the overlay-hidden Marks group — excluded by the getClientRects filter — and the floor collapses to
+  // shell + 16: the handle can drag the bar all the way down to grip + actions + More + collapse + handle,
+  // with EVERYTHING parked in More (the professor's full-collapse decision). The +16 slack keeps the floor
+  // clear of the GAP=8 promote hysteresis.
   function coreWidth() {
     stamp();
     const shell = rail.getBoundingClientRect().width - scroll.getBoundingClientRect().width;

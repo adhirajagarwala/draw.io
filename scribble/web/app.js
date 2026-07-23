@@ -3,13 +3,17 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "172";
+const APP_VERSION = "173";
+// v173: the boot watchdog (watchdog.js, a classic pre-module script) reloads the document once if this
+// module never evaluates (the v172 first-load race where the module fetched but zero statements ran).
+// Stamp evaluation-start FIRST so the watchdog can tell "module ran" from "module lost the race".
+window.__scribbleBooted = true;
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=172";
+import init, { App } from "./pkg/scribble.js?v=173";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,19 +21,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=172";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=172";
-import { initEmbed } from "./embed.js?v=172";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=172";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=172";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=172";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=172";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=172";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=172";
-import { makeResizable } from "./rail-resize.js?v=172";
-import { makeOverflow } from "./rail-overflow.js?v=172";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=172";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=172";
+} from "./utils.js?v=173";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=173";
+import { initEmbed } from "./embed.js?v=173";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=173";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=173";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=173";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=173";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=173";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=173";
+import { makeResizable } from "./rail-resize.js?v=173";
+import { makeOverflow } from "./rail-overflow.js?v=173";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=173";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=173";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -110,12 +114,13 @@ const els = {
 // tool while they're active).
 const JS_TOOLS = new Set(["snip"]);
 // v171 Customize (the More-menu checklist): CLOSED id sets, mirroring the closed-enum discipline everywhere
-// else. PROTECTED tools can never be hidden — a student must never strand themselves mid-exam without pen /
-// eraser / select (their checklist rows render checked+disabled). CUSTOMIZABLE is the only set a saved
-// `toolsHidden` pref is validated against on read, so a corrupt/stale pref can't hide anything essential.
+// else. v173 (professor's decision): EVERY tool is uncheckable — no protected rows. Hidden is still never
+// lost: an unchecked tool's row stays in More → Customize, one re-check restores it, and Reset restores all.
+// The armed-tool fallback in applyToolVisibility keeps a hidden tool from staying invisibly armed.
+// CUSTOMIZABLE is the only set a saved `toolsHidden` pref is validated against on read (closed enum).
 // NB "Done" is the parent page's Annotate pill, not a rail tool — it has no row here by design.
-const PROTECTED_TOOLS = new Set(["pen", "eraser", "select"]);
-const CUSTOMIZABLE_TOOLS = new Set(["highlighter", "text", "snip"]);
+const PROTECTED_TOOLS = new Set([]); // v173: empty by decision — kept as the mechanism for any future essential
+const CUSTOMIZABLE_TOOLS = new Set(["select", "pen", "highlighter", "text", "eraser", "snip"]);
 // v172: PHASE 1 (toolbar reparent) is ON — the professor's decided direction ("float like Done"). #rail moves
 // out to the parent PL page so position:fixed follows the real browser viewport: the bar can leave the question
 // card, sit over PL chrome once dragged, and never scrolls away. Prerequisites that made this flippable:
@@ -1291,9 +1296,14 @@ function onAnnoPointerMove(ev) {
     // Only the contact that ARMED the gesture may drive or end it — a hovering pen
     // (buttons=0) or a bumped second pointer must neither corrupt nor cancel it.
     if (ev.pointerId !== gesturePointerId) return;
-    // The owning press ended somewhere we never heard about (tab switch, OS overlay) —
-    // a move with no button down means the pointerup was swallowed. Cancel; don't keep drawing.
-    if (!(ev.buttons & 1)) { onAnnoPointerCancel(ev); return; }
+    // The owning press ended and we missed the pointerup. This is a FINISHED gesture, not a broken one —
+    // COMMIT it (v173, same disease and same cure as the v170 toolbar snap-back): on release Chrome can
+    // dispatch a trailing pointermove with buttons:0 BEFORE the pointerup, and cancelling here erased the
+    // whole stroke the instant the pen lifted — worst on fast strokes ("the ink disappears the minute I
+    // finish"). endStroke commits ink/snip/marquee/drags at their current state and is idempotent, so the
+    // real pointerup arriving a moment later is a clean no-op. Genuine interruptions still cancel via the
+    // pointercancel listener below.
+    if (!(ev.buttons & 1)) { endStroke(ev); return; }
   }
   if (snip) { moveSnip(ev); return; }
   if (marquee) { moveMarquee(ev); return; }
@@ -3006,7 +3016,10 @@ class SketchView {
   move(ev) {
     if (!this.state) return;
     if (ev.pointerId !== this.state.pid) return; // only the arming contact drives the sketch gesture
-    if (!(ev.buttons & 1)) { this.cancel(); return; } // owning press ended unseen — cancel, don't keep inking
+    // v173: a missed release COMMITS the sketch stroke (same cure as the main canvas above / the v170
+    // toolbar) — cancelling here erased fast notes-ink the instant the pen lifted. up() is pid-guarded
+    // and idempotent, so the real pointerup that may still arrive is a clean no-op.
+    if (!(ev.buttons & 1)) { this.up(ev); return; }
     const [x, y] = this.coords(ev);
     if (this.state.mode === "resize") {
       const [ax, ay] = this.state.anchor;
@@ -4152,8 +4165,8 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           });
           const railResize = makeResizable(railEl, {
             handle: railEl.querySelector("#rail-resize"), win: railWin,
-            // narrowest useful bar = shell (grip + actions + collapse + handle) + the never-demoted core
-            // (Draw + Select), measured live so it tracks .big — the floor always shows every protected tool
+            // narrowest useful bar (v173): the SHELL alone — every group is demotable, so coreWidth's floor
+            // collapses to grip + actions + More + collapse + handle and the drag can fold everything into More
             getMinW: () => railLayout.coreWidth(),
             onLive: () => { railLayout.reflow(); pushRailClear(); syncHostPad(); },
             onChange: () => { clampFixed(railEl, railWin); savePrefs(); calcDodgeNudge(); },
@@ -4166,9 +4179,14 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // everywhere and exists only as its unchecked checklist row — hidden ≠ spilled, and hidden is
           // recoverable from More in one click (re-check → immediate refit).
           const applyToolVisibility = (hiddenSet) => {
-            // Never leave the student holding an invisible tool: fall back to Pen (protected + never demoted).
+            // Never leave the student holding an invisible tool. v173: with every tool uncheckable there is no
+            // guaranteed-visible fallback, so walk a preference order for the first still-VISIBLE tool; if the
+            // student hid literally everything, arm Select (neutral, no ink — harmless even while hidden).
             // (activeTool() is the existing module-scope reader — realm-correct via railRoot.)
-            if (hiddenSet.has(activeTool())) railRoot.querySelector('.tool[data-tool="pen"]')?.click();
+            if (hiddenSet.has(activeTool())) {
+              const fallback = ["pen", "highlighter", "text", "eraser", "select", "snip"].find((id) => !hiddenSet.has(id)) || "select";
+              railRoot.querySelector(`.tool[data-tool="${fallback}"]`)?.click();
+            }
             for (const b of railRoot.querySelectorAll(".tool[data-tool]")) {
               if (!CUSTOMIZABLE_TOOLS.has(b.dataset.tool)) continue;
               b.classList.toggle("tool-off", hiddenSet.has(b.dataset.tool));
@@ -4399,11 +4417,18 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               // Unconditional click — an offsetParent-style visibility guard would silently skip
               // exactly when the rail is collapsed, and the Select trap would survive there. The ONE exception
               // is .tool-off (hidden via Customize): click() works on display:none, so resuming a hidden tool
-              // would arm an INVISIBLE tool — the exact failure class Customize is built to avoid. Fall back to
-              // Pen (protected, always present).
+              // would arm an INVISIBLE tool — the exact failure class Customize is built to avoid. v173 (no
+              // protected tools): fall back to the FIRST VISIBLE tool in preference order, snip last (modal);
+              // if the student hid all six, arm Select — neutral, inkless, the documented degradation.
               const resumeBtn = railRoot.querySelector(`.tool[data-tool="${lastDrawTool}"]`);
-              (resumeBtn && !resumeBtn.classList.contains("tool-off")
-                ? resumeBtn : railRoot.querySelector('.tool[data-tool="pen"]'))?.click();
+              const visibleFallback = () => {
+                for (const id of ["pen", "highlighter", "text", "eraser", "select", "snip"]) {
+                  const b = railRoot.querySelector(`.tool[data-tool="${id}"]`);
+                  if (b && !b.classList.contains("tool-off")) return b;
+                }
+                return railRoot.querySelector('.tool[data-tool="select"]'); // everything hidden — neutral arm
+              };
+              (resumeBtn && !resumeBtn.classList.contains("tool-off") ? resumeBtn : visibleFallback())?.click();
               clampRailOnShow();
               restickRail(); // land the default bar at the band top even if the page was scrolled at Annotate-time
               railLayout.reflow(); pushRailClear(); syncHostPad(); // bar was display:none and measured 0 until now
