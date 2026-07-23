@@ -138,10 +138,16 @@ _OVERLAY_SIZER = (
     # against THAT box, not the viewport — so the button lands off-screen down a long question and the student
     # can't find "Done". Reparent it to <body> (outside any transformed ancestor) so fixed == viewport, and
     # make it large/prominent. INACTIVE: the compact launch pill back at the question's top-right corner.
-    "if(on){if(b.parentNode!==document.body)document.body.appendChild(b);"
-    # Open BELOW the toolbar's RIGHT end: measure the overlay frame (the question CARD) and pin Done just under
-    # the ~56px toolbar (top = frame.top + 60), right-aligned to the CARD (right = innerWidth - frame.right + 8) —
-    # NOT the viewport right, which sits out in the instructor-preview sidebar. Still fully draggable from there.
+    # v172 OWNERSHIP RULE (reparent readiness plan §3): when app.js has reparented the toolbar into this page
+    # (feature-detect its host, which cannot exist before app.js creates it), the ACTIVE button is WELDED into
+    # the toolbar's right end BY APP.JS — this script must then skip its own fixed positioning entirely (two
+    # writers fighting over one node was the collision class the plan forbids). This script still owns the
+    # button's lifecycle: creation, the toggle click, the label swap, and the INACTIVE corner pill.
+    "if(on){var ch=document.querySelector('.pl-scribble-chrome-host');"
+    "if(!ch){if(b.parentNode!==document.body)document.body.appendChild(b);"
+    # (No reparented toolbar — legacy FAB path.) Open BELOW the toolbar's RIGHT end: measure the overlay frame
+    # (the question CARD) and pin Done just under the ~56px toolbar, right-aligned to the CARD — NOT the
+    # viewport right, which sits out in the instructor-preview sidebar. Still fully draggable from there.
     "var fr=f.getBoundingClientRect();"
     "b.style.position='fixed';b.style.left='auto';b.style.bottom='auto';"
     "b.style.top=Math.max(4,Math.round(fr.top)+60)+'px';b.style.right=Math.max(4,Math.round(window.innerWidth-fr.right)+8)+'px';b.style.zIndex='2147483000';"
@@ -149,7 +155,7 @@ _OVERLAY_SIZER = (
     # blue FAB) — only the label and the move cursor differ, since the active button is draggable.
     "b.style.padding='6px 12px';b.style.fontSize='13px';b.style.fontWeight='600';"
     "b.style.background='#fff';b.style.color='#2f5fde';b.style.borderColor='#c9d6f7';b.style.borderRadius='8px';"
-    "b.style.boxShadow='0 1px 3px rgba(20,24,28,.12)';b.style.cursor='move';b.style.touchAction='none';"
+    "b.style.boxShadow='0 1px 3px rgba(20,24,28,.12)';b.style.cursor='move';b.style.touchAction='none';}"
     "if(sp)sp.textContent='Done';}"
     "else{if(b.parentNode!==bp)bp.appendChild(b);"
     "b.style.position='absolute';b.style.left='auto';b.style.top='8px';b.style.bottom='auto';b.style.right='8px';b.style.zIndex='2147482500';"
@@ -161,7 +167,11 @@ _OVERLAY_SIZER = (
     "try{var d=f.contentDocument;if(d&&d.body)d.body.classList.toggle('annotate-active',on);}catch(e){}}"
     # Drag the active Done button to reposition it (viewport-clamped). DRAG_SLOP separates a drag from a click,
     # and sc suppresses the toggle on the click that ends a drag; sc resets on every pointerdown so it can't stick.
-    "b.addEventListener('pointerdown',function(e){sc=false;if(!on||e.button!==0)return;var r=b.getBoundingClientRect();"
+    # v172: a WELDED Done (inside the reparented toolbar) must not drag independently — its own drag engine
+    # would set position:fixed and rip it out of the bar (the toolbar's drag engine excludes buttons, so the
+    # two systems would fight over the node). Welded => plain toggle; the BAR's grip moves both together.
+    "b.addEventListener('pointerdown',function(e){sc=false;if(!on||e.button!==0)return;"
+    "if(document.querySelector('.pl-scribble-chrome-host'))return;var r=b.getBoundingClientRect();"
     "dg={sx:e.clientX,sy:e.clientY,ox:r.left,oy:r.top,mv:false};try{b.setPointerCapture(e.pointerId);}catch(_){}});"
     "b.addEventListener('pointermove',function(e){if(!dg)return;"
     "if(!dg.mv){if(Math.abs(e.clientX-dg.sx)<4&&Math.abs(e.clientY-dg.sy)<4)return;dg.mv=true;b.style.bottom='auto';b.style.right='auto';}"

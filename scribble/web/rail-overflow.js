@@ -88,30 +88,32 @@ export function makeOverflow({ rail, scroll, bay, moreBtn, win = window, announc
       demote(cands[0]);
     }
     // 2) promote back only when the group genuinely fits again (never trial-promote — that is the flicker, and it
-    //    costs a layout flush per attempt). TWO regimes, because a CAPPED bar is content-sized:
-    //      chosen width  -> the bar hugs its content (max-content capped at --rail-w), so there is never "slack"
-    //                       to measure; ask instead whether shell + content + the group still fits the cap.
-    //      full width    -> the bar is a fixed calc(100% - 8px), so real slack in the scroller is the right test.
+    //    costs a layout flush per attempt). ONE test for every regime: does shell + true content + the
+    //    returning group + hysteresis fit under the bar's effective ceiling?
     let capPx = parseFloat(rail.style.getPropertyValue("--rail-w")) || Infinity;
-    // review F0 (promote starvation): a MOVED bar with NO chosen width is content-sized too (style.css .fp-moved
-    // width:max-content) — the scroller never has slack, so the Infinity-regime slack test below could never
-    // pass and tools parked by an earlier narrow cap stayed in More forever after End/double-click ("full
-    // width") or a window re-widen. Its real ceiling is the CSS viewport clamp (max-width: calc(100vw - 8px)),
-    // so treat THAT as the cap and use the same hypothetical-fit test as a chosen width.
-    if (!Number.isFinite(capPx) && rail.classList.contains("fp-moved")) {
-      capPx = Math.max(160, (realmWin.innerWidth || 0) - 8);
+    // v172, generalizing review F0: with NO chosen width the bar still has a hard ceiling — the viewport clamp
+    // for a MOVED (max-content) bar, its own FIXED span (calc(100% - 8px)) for the default bar. The old
+    // "slack" test for the default bar (clientWidth - scrollWidth >= w) was MATHEMATICALLY DEAD: scrollWidth
+    // is defined as max(clientWidth, content), so it can never be less than clientWidth and the test could
+    // never pass — parked tools NEVER promoted at full width (live-verified on hosted v171: End restored the
+    // span but the bay never emptied). One hypothetical-fit test for every regime instead.
+    if (!Number.isFinite(capPx)) {
+      capPx = rail.classList.contains("fp-moved")
+        ? Math.max(160, (realmWin.innerWidth || 0) - 8)
+        : Math.round(rail.getBoundingClientRect().width);
     }
     let g2 = 12;
     while (g2-- > 0) {
       const shellW = rail.getBoundingClientRect().width - scroll.getBoundingClientRect().width;
+      // TRUE content width from geometry — scrollWidth over-reports on a stretched (flex:1) scroller (it
+      // floors at clientWidth), which is exactly what killed the old slack test. First-to-last child span
+      // covers inter-group padding/margins; display:none (.group-off) children are excluded.
+      const kids = [...scroll.children].filter((c) => c.getClientRects().length);
+      const content = kids.length
+        ? kids[kids.length - 1].getBoundingClientRect().right - kids[0].getBoundingClientRect().left : 0;
       const back = parked()
         .sort((a, b) => +b.dataset.railPrio - +a.dataset.railPrio)   // highest priority returns first
-        .find((n) => {
-          const w = +n.dataset.railW || 9999;
-          return Number.isFinite(capPx)
-            ? shellW + scroll.scrollWidth + w + GAP <= capPx
-            : scroll.clientWidth - scroll.scrollWidth >= w + GAP;
-        });
+        .find((n) => shellW + content + (+n.dataset.railW || 9999) + GAP <= capPx);
       if (!back) break;
       promote(back);
     }

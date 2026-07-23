@@ -22,7 +22,7 @@ echo "→ deploying compiled bundle → $DEST/"
 mkdir -p "$DEST"
 rsync -a --delete \
   --exclude '* 2.js' --exclude '__*' --exclude '.gitignore' \
-  --exclude 'embed/' --exclude '*.map' --exclude 'chrome.css' --exclude 'test/' \
+  --exclude 'embed/' --exclude '*.map' --exclude 'test/' \
   "$REPO/scribble/web/" "$DEST/"
 
 echo "✓ deployed. Now in PrairieLearn: course → Sync → 'Load from disk', then preview the question."

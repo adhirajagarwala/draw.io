@@ -30,7 +30,8 @@ class site), the user requires this exact process:
    **READ-ONLY** — never let a review agent edit the shared working tree (a
    Cycle-2 agent once reverted `lib.rs`); the main loop applies the fixes.
 2. **Deploy the bundle to BOTH course copies** (`prairielearn/example-course` via
-   `./prairielearn/deploy.sh`, then the same rsync — with `--exclude 'chrome.css'` —
+   `./prairielearn/deploy.sh`, then the same rsync — since v172 WITHOUT any `chrome.css`
+   exclude (the reparented toolbar loads it in the parent page; excluding it 404s the bar's styling) —
    into `pl-uiuc-ece498sl/clientFilesCourse/scribble/`). Bump the cache version.
    (The old "local Docker at :3000 first" stage is DEAD — Colima + macOS TCC on
    `~/Desktop`; hosted PrairieLearn instructor Preview replaces it.)

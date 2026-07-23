@@ -10,8 +10,8 @@ confirmed findings, 13 fixed pre-deploy (incl. 3 high: the host-padding shorthan
 off-band, announce stomping). **Deferred, tracked:**
 - **(v172, flip-true only) alignRailToCard's inline style.width defeats the chrome.css max-content channel** —
   rework alongside the card-top-default decision when the reparent flips.
-- **(v172 deploy step) chrome.css is still excluded from both deploy pipelines** — un-exclude + first full
-  deploy BEFORE flipping `PHASE1_CHROME_REPARENT`, or the reparented bar 404s its stylesheet.
+- **(done in v172) chrome.css deploy**: deploy.sh no longer excludes it; the CLAUDE.md §0.1 class-repo rsync
+  must also be run WITHOUT `--exclude 'chrome.css'` from v172 on (both bundles carry it before the flip).
 - **(minor) a saved width restored at boot clamps against the degraded 160px floor** (rail is display:none so
   coreWidth can't measure); self-corrects on the first handle gesture. Fix only if ever user-visible.
 - **(decision) Marks tools (tick/cross/circle/arrow/box) stay hidden in overlay** — surfacing them needs a

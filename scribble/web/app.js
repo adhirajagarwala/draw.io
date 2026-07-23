@@ -3,13 +3,13 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "171";
+const APP_VERSION = "172";
 
 // wasm-bindgen glue. Its ?v= is a MANUAL counter — bump it WITH APP_VERSION on every
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=171";
+import init, { App } from "./pkg/scribble.js?v=172";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -17,19 +17,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=171";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=171";
-import { initEmbed } from "./embed.js?v=171";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=171";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=171";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=171";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=171";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=171";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=171";
-import { makeResizable } from "./rail-resize.js?v=171";
-import { makeOverflow } from "./rail-overflow.js?v=171";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=171";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=171";
+} from "./utils.js?v=172";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=172";
+import { initEmbed } from "./embed.js?v=172";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=172";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=172";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=172";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=172";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=172";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=172";
+import { makeResizable } from "./rail-resize.js?v=172";
+import { makeOverflow } from "./rail-overflow.js?v=172";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=172";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=172";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -116,14 +116,15 @@ const JS_TOOLS = new Set(["snip"]);
 // NB "Done" is the parent page's Annotate pill, not a rail tool — it has no row here by design.
 const PROTECTED_TOOLS = new Set(["pen", "eraser", "select"]);
 const CUSTOMIZABLE_TOOLS = new Set(["highlighter", "text", "snip"]);
-// ⚠ PHASE 1 (toolbar reparent) IS PAUSED AND GATED OFF — DO NOT FLIP THIS ON without finishing + verifying it.
-// It moves #rail out to the parent PL page so position:fixed follows the browser viewport. The code below is
-// written and its first review round is fixed (7 bugs found: iframe-realm tool queries, an un-gated body.big
-// that crushed the bar to 140px, a missing focus ring, the Larger toggle, and three $()-after-reparent nulls),
-// but it has NEVER been verified in a real browser and step 1b (the notes pane) isn't started. With this false,
-// every Phase-1 addition is inert: railHostDoc stays this document (identical to the old behaviour), chrome.css
-// is never injected, and floating-panel's `win` defaults to this window. See memory: scribble-vnext-15point-plan.
-const PHASE1_CHROME_REPARENT = false;
+// v172: PHASE 1 (toolbar reparent) is ON — the professor's decided direction ("float like Done"). #rail moves
+// out to the parent PL page so position:fixed follows the real browser viewport: the bar can leave the question
+// card, sit over PL chrome once dragged, and never scrolls away. Prerequisites that made this flippable:
+// the execution-readiness audit's pre-fixes (annotate-gated parent keydown, element-derived realm in
+// placeMorePop, railLayout dispose, v170's unconditional pagehide dispose), chrome.css reconciled against the
+// v171 layout and UN-EXCLUDED from deploy (it 404'd before), and the Done weld + ownership split with
+// pl-scribble.py's sizer (it skips its FAB positioning when it sees our host; app.js welds Done into
+// .rail-actions while annotate-active). The notes pane deliberately STAYS in the iframe this release.
+const PHASE1_CHROME_REPARENT = true;
 // (v171: the v166 wrap-vs-More overflow TRIAL is over — More won. One overflow model, one manual control: the
 // width-drag handle. The presets, the wrap mode, and the student-facing A/B toggle are deleted.)
 // The realm the tool rail lives in. Normally this iframe's document; when the Phase-1 reparent is enabled the
@@ -4252,7 +4253,13 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               railEl.style.left = `${Math.round(fr.left + 4)}px`;
               // Only span the card when the student has NOT chosen a width (--rail-w wins over card-align).
               if (!railEl.style.getPropertyValue("--rail-w")) railEl.style.width = `${Math.round(Math.max(0, fr.width - 8))}px`;
-              railEl.style.top = "4px";
+              // v172, the professor's card-top decision: the DEFAULT bar hugs the top of the VISIBLE part of
+              // the question card — just inside the card when its top is on-screen, pinned to the viewport top
+              // once the student scrolls past it. Never a bare viewport `top:4px`, which parked the bar over
+              // PL's own navigation permanently (readiness plan, open question 3). A dragged (fp-moved) bar
+              // bailed at the top of this function and goes wherever the student puts it — default = tidy,
+              // dragged = free. Re-runs on parent scroll/resize via scheduleAlign, so this IS the sticky.
+              railEl.style.top = `${Math.max(4, Math.round(fr.top) + 4)}px`;
             } catch { /* cross-frame — leave the chrome.css full-width fallback */ }
           };
           // Restore a dragged position — but ONLY for a genuinely per-question prefs key (PREFS_PER_QUESTION).
@@ -4291,6 +4298,37 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // iframe body). Hidden until the student clicks Annotate. No-op when the rail stayed in the iframe.
           const syncRailVis = () => {
             if (railWin !== window) railEl.style.display = document.body.classList.contains("annotate-active") ? "" : "none";
+          };
+          // v172 Done WELD (readiness plan §3): while annotating, the parent's Done pill lives INSIDE the
+          // reparented toolbar's right end — one floating unit, dragged together, budgeted by the overflow
+          // shell automatically (.rail-actions is part of the measured shell). Ownership: pl-scribble.py keeps
+          // the button's lifecycle (creation, toggle click, label, the INACTIVE corner pill, and it re-claims
+          // the node itself on the OFF branch of its own m()); we own PLACEMENT while annotate-active only.
+          // The sizer skips its fixed positioning when it sees our .pl-scribble-chrome-host, so there is
+          // exactly one writer per state. No-op when not reparented (legacy FAB behaviour intact).
+          const weldDone = () => {
+            if (railWin === window) return;
+            try {
+              // review (v172): scope to THIS instance's wrap — a page-global first-match could weld the OTHER
+              // overlay question's Done on a two-question page (the B3-3 per-instance invariant the rest of the
+              // reparent code pays for). The button's home is the iframe's parent wrap; fall back to the global
+              // query ONLY when it is unambiguous (exactly one chrome host on the page — covers the slow-boot
+              // case where the sizer already moved the FAB to document.body before we reparented).
+              const pdoc = railWin.document;
+              let b = window.frameElement?.parentElement?.querySelector(".pl-scribble-annotate-btn") || null;
+              if (!b && pdoc.querySelectorAll(".pl-scribble-chrome-host").length === 1) {
+                b = pdoc.querySelector(".pl-scribble-annotate-btn");
+              }
+              const acts = railEl.querySelector(".rail-actions");
+              if (!b || !acts || b.parentElement === acts) return;
+              acts.appendChild(b);
+              // Neutralise any FAB positioning left from a pre-reparent toggle (slow wasm boot): inside the
+              // bar it is a plain flex child. The sizer's OFF branch rewrites all of these when it re-claims.
+              b.style.position = "static";
+              b.style.top = b.style.right = b.style.left = b.style.bottom = "auto";
+              b.style.zIndex = ""; b.style.cursor = "pointer"; b.style.boxShadow = "none";
+              b.style.margin = "0 0 0 4px"; b.style.touchAction = "";
+            } catch { /* cross-origin parent — Done stays the sizer's FAB */ }
           };
           syncRailVis();
           // The VISIBLE band of this (possibly question-tall) iframe, in the rail's realm. visibleBand /
@@ -4357,6 +4395,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               // C14: make the reparented rail displayable BEFORE clampRailOnShow measures it — a
               // display:none rail reports height 0 and the band-clamp garbage-places its top.
               syncRailVis();
+              weldDone(); // v172: dock the parent's Done pill into the bar's right end for this session
               // Unconditional click — an offsetParent-style visibility guard would silently skip
               // exactly when the rail is collapsed, and the Select trap would survive there. The ONE exception
               // is .tool-off (hidden via Customize): click() works on display:none, so resuming a hidden tool
@@ -4377,7 +4416,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // If Annotate was pressed BEFORE wasm init finished, the ON transition already happened and
           // the observer will never see it — run the show-clamps once for that first showing. (No
           // Select trap in this path: pen is both the markup default and lastDrawTool's default.)
-          if (wasAnnotating) { clampRailOnShow(); restickRail(); clampNotes(); calcDodgeNudge(); }
+          if (wasAnnotating) { syncRailVis(); weldDone(); clampRailOnShow(); restickRail(); clampNotes(); calcDodgeNudge(); }
 
           // ---- #13: PL's Calculator drawer must win its own clicks. calc-dodge punches a clip-path
           // hole in the overlay frame wherever the OPEN drawer overlaps it (clicks fall through, ink
