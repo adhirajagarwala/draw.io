@@ -1697,3 +1697,8 @@ body.overlay #rail .rail-group.group-off { display: none; }
   border-radius: 7px; cursor: pointer; white-space: nowrap;
 }
 #more-customize #ct-reset:hover { background: #eef0f3; }
+
+/* v179 item 4: "Answering" pause — the toolbar stays up but drawing is off. Dim the tool row so it's obvious
+   the overlay isn't capturing, and drop the crosshair. The reparented (parent-realm) rail uses .scribble-chrome. */
+body.overlay.annotate-paused #rail .rail-scroll { opacity: .48; }
+body.overlay.annotate-paused #anno-canvas { cursor: default; }

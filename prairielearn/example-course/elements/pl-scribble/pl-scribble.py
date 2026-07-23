@@ -131,7 +131,14 @@ _OVERLAY_SIZER = (
     "<script>(function(){var w=document.currentScript.parentElement,"
     "h=w.querySelector('.pl-scribble-host'),f=w.querySelector('.pl-scribble-overlay-frame'),"
     "b=w.querySelector('.pl-scribble-annotate-btn');"
-    "function s(){f.style.height=Math.max(h.offsetHeight,200)+'px';"
+    # v179 item 3: size the overlay iframe ELEMENT to the WHOLE question panel (wrap top → .card-body bottom),
+    # not just the prose host — so a graded input authored as a SIBLING below <pl-scribble> is covered and
+    # drawable (annotate) / answerable (paused). The iframe is position:absolute (out of flow), so extending
+    # it never pushes content; the .card-body bottom stops short of PL's Save/Grade footer, which stays
+    # clickable. app.js's embed.js measures the identical span for the drawable canvas.
+    "var pnl=w.closest('.card-body')||w.parentElement||h;"
+    "function cover(){try{return Math.max(h.offsetHeight,Math.round(pnl.getBoundingClientRect().bottom-w.getBoundingClientRect().top),200);}catch(_){return Math.max(h.offsetHeight,200);}}"
+    "function s(){f.style.height=cover()+'px';"
     # v177 A2: a viewport-FIXED pill must never strand off-screen when the window shrinks — re-clamp on
     # every resize (s already runs on resize). Applies whenever the button is body-parented (pill or FAB).
     "try{if(b&&b.parentNode===document.body&&b.style.position==='fixed'){"
@@ -140,6 +147,15 @@ _OVERLAY_SIZER = (
     "b.style.left=bx+'px';b.style.top=by+'px';}}catch(_){}}s();"
     "window.addEventListener('load',s);window.addEventListener('resize',s);"
     "if(window.MathJax&&MathJax.startup&&MathJax.startup.promise){MathJax.startup.promise.then(s);}"
+    # v179 item 3 (Mechanism B fix): the sizer had NO ResizeObserver, so any panel growth other than
+    # window-resize/first-MathJax (async input enhancement, a late image, a second typeset) grew the drawable
+    # canvas but NOT the iframe element, clipping the grown bottom. Observe the panel (the iframe is absolute,
+    # so re-sizing it can't feed back → no RO loop). rAF-coalesced.
+    "try{if(window.ResizeObserver){var srf=0;var sro=new ResizeObserver(function(){if(srf)return;srf=requestAnimationFrame(function(){srf=0;s();});});sro.observe(pnl);if(pnl!==h)sro.observe(h);"
+    # v179 review F3 (CLAUDE.md §11 rule 4): this parent-realm RO ships its teardown in the same change —
+    # disconnect on the parent frame's pagehide so an in-place panel swap can't leave it firing at a detached
+    # iframe (harmless writes, but a retained closure). A full-page Save&Grade GC's the realm anyway.
+    "window.addEventListener('pagehide',function(){try{sro.disconnect();if(srf)cancelAnimationFrame(srf);}catch(_){}}, {once:true});}}catch(_){}"
     "f.style.pointerEvents='none';"  # default click-through — also covers the read-only view (no button)
     # v177 A1 (review blocker): the first m() runs at parse with the server-rendered FIXED button already
     # laid out, so a naive rect capture "remembers" the placeholder (8,8) and the card default became dead
@@ -193,14 +209,16 @@ _OVERLAY_SIZER = (
     "try{var d=f.contentDocument;if(d&&d.body)d.body.classList.toggle('annotate-active',on);}catch(e){}}"
     # Drag the active Done button to reposition it (viewport-clamped). DRAG_SLOP separates a drag from a click,
     # and sc suppresses the toggle on the click that ends a drag; sc resets on every pointerdown so it can't stick.
-    # v172: a WELDED Done (inside the reparented toolbar) must not drag independently — its own drag engine
-    # would set position:fixed and rip it out of the bar (the toolbar's drag engine excludes buttons, so the
-    # two systems would fight over the node). Welded => plain toggle; the BAR's grip moves both together.
-    "b.addEventListener('pointerdown',function(e){sc=false;if(!on||e.button!==0)return;"
-    "if(document.querySelector('.pl-scribble-chrome-host'))return;var r=b.getBoundingClientRect();"
+    # v179 item 1: the INACTIVE launcher is now DRAGGABLE (like the toolbar), and where it is dropped is where
+    # the toolbar opens (app.js reads data-sb-moved on Annotate-ON, session-only). Only the WELDED active Done
+    # stays non-draggable — the bar's own grip moves that unit, and an independent drag would rip it out of
+    # .rail-actions (two positioners over one node). "Welded" = the button is inside the reparented chrome host;
+    # the inactive pill is a plain <body> child, so b.closest(host) is null and it drags freely.
+    "b.addEventListener('pointerdown',function(e){sc=false;if(e.button!==0)return;"
+    "if(b.closest('.pl-scribble-chrome-host'))return;var r=b.getBoundingClientRect();"
     "dg={sx:e.clientX,sy:e.clientY,ox:r.left,oy:r.top,mv:false};try{b.setPointerCapture(e.pointerId);}catch(_){}});"
     "b.addEventListener('pointermove',function(e){if(!dg)return;"
-    "if(!dg.mv){if(Math.abs(e.clientX-dg.sx)<4&&Math.abs(e.clientY-dg.sy)<4)return;dg.mv=true;b.style.bottom='auto';b.style.right='auto';}"
+    "if(!dg.mv){if(Math.abs(e.clientX-dg.sx)<4&&Math.abs(e.clientY-dg.sy)<4)return;dg.mv=true;b.dataset.sbMoved='1';b.style.bottom='auto';b.style.right='auto';}"
     "b.style.left=Math.round(Math.max(4,Math.min(window.innerWidth-b.offsetWidth-4,dg.ox+e.clientX-dg.sx)))+'px';"
     "b.style.top=Math.round(Math.max(4,Math.min(window.innerHeight-b.offsetHeight-4,dg.oy+e.clientY-dg.sy)))+'px';});"
     "function ed(){if(dg&&dg.mv)sc=true;dg=null;}"

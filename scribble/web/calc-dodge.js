@@ -113,7 +113,7 @@ function syncNow() {
       frame.style.clipPath = "";
       // Restore what the sizer's m() would have set — "" computes to `auto`, which would
       // make the idle transparent overlay eat every click on the live question.
-      if (clipBroken) frame.style.pointerEvents = document.body.classList.contains("annotate-active") ? "auto" : "none";
+      if (clipBroken) frame.style.pointerEvents = (document.body.classList.contains("annotate-active") && !document.body.classList.contains("annotate-paused")) ? "auto" : "none"; /* v179 F4: never re-capture while Answering-paused */
     } else if (!clipBroken) {
       const p = (v) => `${Math.round(v)}px`;
       // CSS polygon() is ONE subpath: every ring must CLOSE back to its first vertex and
@@ -237,6 +237,6 @@ export function teardown() {
     frame.style.clipPath = "";
     // Same annotate-aware restore as the holes-empty branch: "" would compute to `auto`
     // and let the idle transparent overlay eat every click on the live question.
-    if (clipBroken) frame.style.pointerEvents = document.body.classList.contains("annotate-active") ? "auto" : "none";
+    if (clipBroken) frame.style.pointerEvents = (document.body.classList.contains("annotate-active") && !document.body.classList.contains("annotate-paused")) ? "auto" : "none"; /* v179 F4: never re-capture while Answering-paused */
   } catch { /* parent gone */ }
 }

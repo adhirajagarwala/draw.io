@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "178";
+const APP_VERSION = "179";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=178";
+import init, { App } from "./pkg/scribble.js?v=179";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -26,19 +26,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=178";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=178";
-import { initEmbed } from "./embed.js?v=178";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=178";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=178";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=178";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=178";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=178";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=178";
-import { makeResizable } from "./rail-resize.js?v=178";
-import { makeOverflow } from "./rail-overflow.js?v=178";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=178";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=178";
+} from "./utils.js?v=179";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=179";
+import { initEmbed } from "./embed.js?v=179";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=179";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=179";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=179";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=179";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=179";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=179";
+import { makeResizable } from "./rail-resize.js?v=179";
+import { makeOverflow } from "./rail-overflow.js?v=179";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=179";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=179";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -1758,10 +1758,15 @@ async function finishSnip(r) {
     renderNotes();
     revealNotes();
 
-    // Best-effort: also put the image on the system clipboard.
+    // Best-effort: also put the image on the system clipboard — AND, v179 item 2a, the recognized text as a
+    // text/plain flavor. The analysis already ran (finalText); carrying it means a later paste into notes
+    // fills the caption in one step (no separate "analyze" action). Independent of the snip-time keepText
+    // choice: the clipboard is a distinct channel, and text is only attached when there genuinely is some.
     try {
       if (navigator.clipboard?.write && window.ClipboardItem) {
-        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        const parts = { "image/png": blob };
+        if (finalText) parts["text/plain"] = new Blob([finalText], { type: "text/plain" });
+        await navigator.clipboard.write([new ClipboardItem(parts)]);
       }
     } catch { /* clipboard permission is optional */ }
     // Overlay drops cross-origin question images from the raster (regionHasBrokenImage is a no-op there,
@@ -2506,9 +2511,33 @@ function syncAria() {
   set(els.seg.cont, els.seg.cont.classList.contains("active"));
 }
 
+// ---------- v179 item 4: "Answering" pause — draw ↔ answer without leaving annotate mode ----------
+// A THIRD overlay state between Annotate-ON and Done. Because the toolbar is reparented into the PARENT page
+// (PHASE1_CHROME_REPARENT), setting the IFRAME element to pointer-events:none makes the whole question
+// answerable (clicks/typing fall through) while the toolbar stays clickable — so the student answers with the
+// bar still up, then resumes drawing. Esc pauses; clicking any tool (or its P/H/T/E/V/S key, which routes
+// through the same click) resumes. Notes stay live (they float in the iframe but the pane is not the input).
+// Single writer of the iframe's pointer-events DURING a session: the parent sizer only rewrites it on the
+// Annotate/Done transition, which also resets this state (ON/OFF branches below).
+let annotatePaused = false;
+function setAnnotatePaused(paused) {
+  if (!document.body.classList.contains("overlay") || !document.body.classList.contains("annotate-active")) return;
+  // v179 F4: pause blanks the IFRAME's pointer-events — only safe when the toolbar is REPARENTED into the
+  // parent page (railHostEl set), so the bar stays clickable. If the toolbar still lived in the iframe,
+  // pausing would disable it too. (PHASE1 reparent is on in production, so this is a defensive guard.)
+  if (!railHostEl) return;
+  if (annotatePaused === paused) return;
+  annotatePaused = paused;
+  document.body.classList.toggle("annotate-paused", paused);          // iframe realm (CSS cue on canvas cursor)
+  railHostEl?.classList.toggle("annotate-paused", paused);            // parent realm (dims the reparented rail)
+  try { if (window.frameElement) window.frameElement.style.pointerEvents = paused ? "none" : "auto"; } catch { /* cross-frame */ }
+  status(paused ? "Answering — click a tool (or press P / H / T / E / V / S) to draw again." : "Drawing.");
+}
+
 for (const b of document.querySelectorAll(".tool")) {
   b.addEventListener("click", () => {
     if (!b.dataset.tool) return; // not a mode (e.g. the Undo/Redo rail actions reuse .tool styling)
+    if (annotatePaused) setAnnotatePaused(false); // v179 item 4: clicking any tool resumes drawing
     commitTextInput();
     const name = b.dataset.tool;
     if (JS_TOOLS.has(name)) {
@@ -2611,8 +2640,8 @@ for (const s of document.querySelectorAll("#colors .swatch")) {
   });
 }
 
-els.btn.undo.addEventListener("click", () => { app.undo(); redrawAnnotations(); });
-els.btn.redo.addEventListener("click", () => { app.redo(); redrawAnnotations(); });
+els.btn.undo.addEventListener("click", () => { app.undo(); redrawAnnotations(); renderNotes(); }); // v179: notes list too
+els.btn.redo.addEventListener("click", () => { app.redo(); redrawAnnotations(); renderNotes(); });
 function goToPage(n, scrollTo = "top") {
   if (!pdfDoc) return;
   const clamped = Math.min(Math.max(0, n), pdfDoc.numPages - 1);
@@ -2771,10 +2800,12 @@ const mainKeydown = (ev) => {
     ev.preventDefault();
     if (ev.shiftKey) app.redo(); else app.undo();
     redrawAnnotations();
+    renderNotes(); // v179 item 2b: an undone/redone note delete must re-appear in the notes list, not just the canvas
   } else if (mod && key === "y") {
     ev.preventDefault();
     app.redo();
     redrawAnnotations();
+    renderNotes();
   } else if (mod && key === "s") {
     ev.preventDefault();
     // In embed mode the work saves with the PL submission, not to a downloaded file.
@@ -2807,13 +2838,19 @@ const mainKeydown = (ev) => {
     // (railHostDoc: the popover lives in the parent document once Phase 1 reparents the rail.)
     const morePop = railRoot.querySelector("#more-popover");
     if (morePop && !morePop.hidden) return;
-    if (snip) { snip = null; redrawAnnotations(); } // cancel an in-progress snip
-    if (marquee) { marquee = null; redrawAnnotations(); } // cancel an in-progress marquee
-    if (selectedIds.size > 0) setSelection(-1);
+    // v179 item 4: Esc cancels the topmost in-progress thing; if there's nothing to cancel, it TOGGLES the
+    // Answering pause (pause → answer with the bar up; press again, focus permitting, to resume). The reliable
+    // resume is clicking a tool, since a key pressed while a PL input is focused never reaches this handler.
+    let cancelled = false;
+    if (snip) { snip = null; redrawAnnotations(); cancelled = true; } // cancel an in-progress snip
+    if (marquee) { marquee = null; redrawAnnotations(); cancelled = true; } // cancel an in-progress marquee
+    if (selectedIds.size > 0) { setSelection(-1); cancelled = true; }
     if (activeSketch && activeSketch.selected >= 0) {
       activeSketch.selected = -1;
       activeSketch.draw();
+      cancelled = true;
     }
+    if (!cancelled && document.body.classList.contains("annotate-active")) setAnnotatePaused(!annotatePaused);
   } else if (!mod && ev.key === "?") {
     ev.preventDefault();
     toggleHelp(true);
@@ -2873,33 +2910,22 @@ function blockActions(i, total) {
   };
   mk("↑", "Move up", () => { app.move_note(i, -1); renderNotes(); }, i === 0);
   mk("↓", "Move down", () => { app.move_note(i, 1); renderNotes(); }, i === total - 1);
-  // E5: deleting a whole block is outside the undo stack (and clears sketch history) — unrecoverable.
-  // Confirm before removing a NON-EMPTY block; empty blocks delete with no nag.
-  mk("✕", "Delete block", async () => {
-    if (noteDeleteNeedsConfirm(i)) {
-      const ok = await confirmDialog({
-        title: "Delete this note block?",
-        body: "This removes the block and can't be undone.",
-        confirmLabel: "Delete",
-        danger: true,
-      });
-      if (!ok) return;
+  // v179 item 2b: delete is now UNDOABLE (Ctrl/Cmd+Z, one Rust stack) — so the blocking "can't be undone"
+  // modal is gone. Delete immediately, then a non-blocking toast advertises Undo so a mis-click is never
+  // silent loss. (Redraw the canvas too: deleting a sketch note removes a drawing surface.)
+  mk("✕", "Delete block", () => {
+    if (READONLY) return; // v179 F2: no editing in a read-only submission view (undo is disabled there too)
+    if (app.remove_note(i)) {
+      renderNotes();
+      redrawAnnotations();
+      status("Note deleted — press Ctrl/⌘+Z to undo.");
     }
-    app.remove_note(i);
-    renderNotes();
-  }, false);
+  }, READONLY);
   return wrap;
 }
 
-// A note block is worth a delete confirm only when it actually holds work: a clipping (has an image),
-// a sketch with any drawn item (sketch_export_ops is empty for a blank sketch), or non-empty text.
-function noteDeleteNeedsConfirm(i) {
-  const kind = app.note_kind(i);
-  if (kind === "clipping") return true;
-  if (kind === "sketch") return app.sketch_export_ops(i) !== "";
-  if (kind === "text") return app.note_text(i).trim() !== "";
-  return false;
-}
+// (v179 item 2b: noteDeleteNeedsConfirm + the delete-confirm modal are retired — delete is undoable now,
+// so a mis-click is recoverable with Ctrl/Cmd+Z rather than gated behind a blocking "can't be undone" nag.)
 
 // A self-contained drawing surface for a sketch note. It reuses the SAME
 // Rust annotation engine as the PDF view via the `*_sketch` API — only the
@@ -3209,8 +3235,13 @@ const PASTE_B64_MAX = 2 * 1024 * 1024;   // mirror of Rust's MAX_CLIPPING_B64 �
 const PASTE_BLOB_MAX = 32 * 1024 * 1024; // absurd-input early guard before any decode work
 const PASTE_EDGE_START = 2000;           // long-edge target for the first encode attempt
 
-async function pasteBlobToNotes(blob) {
+// v179 item 2a: `caption` carries the recognized text that rode the clipboard alongside the image (from a
+// Scribble snip). It becomes the clip's caption in one step. Empty for a plain image (OS screenshot) — there
+// is no OCR in the stack, so a raw bitmap has no text to analyze. Rust re-validates/clamps the caption on
+// insert (§7: note text is canvas-drawn / escaped in export, never DOM HTML).
+async function pasteBlobToNotes(blob, caption = "") {
   if (!docOpen() || READONLY) return;
+  caption = (caption || "").slice(0, 500); // match the text-note cap; Rust clamps further
   if (!blob || !/^image\//.test(blob.type)) {
     status("No image on the clipboard — snip something in the reference tab first.");
     return;
@@ -3247,10 +3278,10 @@ async function pasteBlobToNotes(blob) {
       canvas.getContext("2d").drawImage(bitmap, 0, 0, w, h);
       const b64 = canvas.toDataURL("image/png").split(",")[1];
       if (b64.length <= PASTE_B64_MAX) {
-        app.add_pasted_clipping(b64, "", w, h); // display at the encoded size (CSS px at scale 1)
+        app.add_pasted_clipping(b64, caption, w, h); // caption = carried recognized text (or ""); size = CSS px at scale 1
         renderNotes();
         revealNotes();
-        status("Image pasted into your notes.");
+        status(caption ? "Pasted into your notes — image and its text." : "Image pasted into your notes.");
         return;
       }
       if (edge <= 300) {
@@ -3281,7 +3312,12 @@ $("btn-paste-img")?.addEventListener("click", () => {
   navigator.clipboard.read().then(async (items) => {
     for (const item of items) {
       const type = item.types.find((t) => t === "image/png") || item.types.find((t) => /^image\//.test(t));
-      if (type) { await pasteBlobToNotes(await item.getType(type)); return; }
+      if (type) {
+        let text = ""; // v179 item 2a: pick up the recognized text a Scribble snip left alongside the image
+        try { if (item.types.includes("text/plain")) text = await (await item.getType("text/plain")).text(); } catch { /* no text flavor */ }
+        await pasteBlobToNotes(await item.getType(type), text);
+        return;
+      }
     }
     status("No image on the clipboard — snip something in the reference tab first.");
   }).catch(() => {
@@ -3301,7 +3337,8 @@ document.addEventListener("paste", (e) => {
   if (inTextField && items.some((it) => it.kind === "string" && it.type === "text/plain")) return;
   if (!imgItem) return;
   e.preventDefault();
-  pasteBlobToNotes(imgItem.getAsFile());
+  const text = e.clipboardData?.getData("text/plain") || ""; // v179 item 2a: carry snip-recognized text as the caption
+  pasteBlobToNotes(imgItem.getAsFile(), text);
 });
 
 function buildClippingBlock(div, i) {
@@ -4382,25 +4419,32 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // the node itself on the OFF branch of its own m()); we own PLACEMENT while annotate-active only.
           // The sizer skips its fixed positioning when it sees our .pl-scribble-chrome-host, so there is
           // exactly one writer per state. No-op when not reparented (legacy FAB behaviour intact).
+          // THE launcher pill for THIS instance (parent realm). Bind by the server-stamped identity
+          // (data-scribble-id = qid.name) so a two-question page never grabs the OTHER question's pill (B3-3);
+          // fall back to the global query only when there's exactly one chrome host (unambiguous slow-boot case).
+          const findLauncher = () => {
+            if (railWin === window) return null;
+            const pdoc = railWin.document, pl = window.__SCRIBBLE_PL || {};
+            const sid = `${pl.qid || "q"}.${pl.name || ""}`;
+            let b = null;
+            try { b = pdoc.querySelector(`.pl-scribble-annotate-btn[data-scribble-id="${(railWin.CSS || CSS).escape(sid)}"]`); } catch { /* CSS.escape unavailable */ }
+            if (!b && pdoc.querySelectorAll(".pl-scribble-chrome-host").length === 1) b = pdoc.querySelector(".pl-scribble-annotate-btn");
+            return b;
+          };
+          // v179 item 1: where a DRAGGED launcher was dropped (session-only). Read BEFORE weldDone reparents the
+          // pill. Null unless the sizer marked it data-sb-moved this session — a fresh load re-renders it clean.
+          const launcherDropPoint = () => {
+            try {
+              const b = findLauncher();
+              if (!b || !b.dataset.sbMoved || b.closest(".rail-actions")) return null;
+              const r = b.getBoundingClientRect();
+              return r.width ? { left: Math.round(r.left), top: Math.round(r.top) } : null;
+            } catch { return null; }
+          };
           const weldDone = () => {
             if (railWin === window) return;
             try {
-              // review (v172): scope to THIS instance's wrap — a page-global first-match could weld the OTHER
-              // overlay question's Done on a two-question page (the B3-3 per-instance invariant the rest of the
-              // reparent code pays for). The button's home is the iframe's parent wrap; fall back to the global
-              // query ONLY when it is unambiguous (exactly one chrome host on the page — covers the slow-boot
-              // case where the sizer already moved the FAB to document.body before we reparented).
-              const pdoc = railWin.document;
-              // v177 A3: the launcher is body-parented from parse now, so wrap-containment lookup is dead —
-              // bind by the server-stamped identity instead (data-scribble-id = qid.name, matching OUR config),
-              // which keeps the B3-3 two-question invariant. Single-host global fallback stays as the belt.
-              const pl = window.__SCRIBBLE_PL || {};
-              const sid = `${pl.qid || "q"}.${pl.name || ""}`;
-              let b = null;
-              try { b = pdoc.querySelector(`.pl-scribble-annotate-btn[data-scribble-id="${(railWin.CSS || CSS).escape(sid)}"]`); } catch { /* CSS.escape unavailable */ }
-              if (!b && pdoc.querySelectorAll(".pl-scribble-chrome-host").length === 1) {
-                b = pdoc.querySelector(".pl-scribble-annotate-btn");
-              }
+              const b = findLauncher();
               const acts = railEl.querySelector(".rail-actions");
               if (!b || !acts || b.parentElement === acts) return;
               acts.appendChild(b);
@@ -4467,6 +4511,9 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           new MutationObserver(() => {
             const now = document.body.classList.contains("annotate-active");
             if (wasAnnotating && !now) {
+              annotatePaused = false; // v179 item 4: Done exits fully — clear any paused sub-state + its classes
+              document.body.classList.remove("annotate-paused");
+              railHostEl?.classList.remove("annotate-paused");
               const cur = railRoot.querySelector(".tool.active")?.dataset.tool;
               if (RESUME_TOOLS.has(cur)) lastDrawTool = cur;
               railRoot.querySelector('.tool[data-tool="select"]')?.click();
@@ -4477,8 +4524,15 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               // C14: make the reparented rail displayable BEFORE clampRailOnShow measures it — a
               // display:none rail reports height 0 and the band-clamp garbage-places its top.
               syncRailVis();
+              // v179 item 1: if the student DRAGGED the inactive launcher this session, open the toolbar where
+              // they dropped it (session-only — a fresh load re-renders the pill at the default, so this is
+              // null and the bar opens top-center). Read the pill's rect BEFORE weldDone reparents it. floatTo
+              // marks the bar fp-moved, so alignRailToCard / restickRail / scheduleAlign all bail — single
+              // writer of geometry — and clampFixed pulls a near-edge drop into the visible band.
+              const dropAt = launcherDropPoint();
               weldDone(); // v172: dock the parent's Done pill into the bar's right end for this session
-              alignRailToCard(); // STICKY-1(c): first visible placement — the bar was display:none until now
+              if (dropAt) { railFP.floatTo(dropAt.left, dropAt.top); clampFixed(railEl, railWin); }
+              else alignRailToCard(); // STICKY-1(c): first visible placement — the bar was display:none until now
               // Unconditional click — an offsetParent-style visibility guard would silently skip
               // exactly when the rail is collapsed, and the Select trap would survive there. The ONE exception
               // is .tool-off (hidden via Customize): click() works on display:none, so resuming a hidden tool
@@ -4506,7 +4560,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // If Annotate was pressed BEFORE wasm init finished, the ON transition already happened and
           // the observer will never see it — run the show-clamps once for that first showing. (No
           // Select trap in this path: pen is both the markup default and lastDrawTool's default.)
-          if (wasAnnotating) { syncRailVis(); weldDone(); alignRailToCard(); clampRailOnShow(); restickRail(); clampNotes(); calcDodgeNudge(); }
+          if (wasAnnotating) { syncRailVis(); const d0 = launcherDropPoint(); weldDone(); if (d0) { railFP.floatTo(d0.left, d0.top); clampFixed(railEl, railWin); } else alignRailToCard(); clampRailOnShow(); restickRail(); clampNotes(); calcDodgeNudge(); }
 
           // ---- #13: PL's Calculator drawer must win its own clicks. calc-dodge punches a clip-path
           // hole in the overlay frame wherever the OPEN drawer overlaps it (clicks fall through, ink

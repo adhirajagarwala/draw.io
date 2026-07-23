@@ -488,3 +488,6 @@
   border-radius: 7px; cursor: pointer; white-space: nowrap;
 }
 .scribble-chrome #more-customize #ct-reset:hover { background: #eef0f3; }
+
+/* v179 item 4 mirror: dim the reparented rail while Answering (paused). */
+.scribble-chrome.annotate-paused #rail .rail-scroll { opacity: .48; }

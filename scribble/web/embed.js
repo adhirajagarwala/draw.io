@@ -89,8 +89,19 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
     // Measure the live prose host in the PARENT (same-origin, already laid out) — race-free,
     // unlike the iframe's own window.innerHeight which depends on the parent having sized us.
     const host = wrap.querySelector(":scope > .pl-scribble-host");
-    const measuredH = (host && host.offsetHeight) || window.innerHeight || 600;
-    openOverlay(measuredH);
+    // v179 item 3: the drawable overlay must cover the WHOLE question panel, not just the wrapped prose —
+    // graded answer inputs are authored as SIBLINGS of <pl-scribble> (below the wrap), so a host-only page
+    // left them un-drawable. Measure from the wrap's top to the panel's (.card-body) bottom; the parent
+    // sizer sizes the iframe ELEMENT to the same span, and item 4's pause lets the student still type answers.
+    // Falls back to the host height when no panel ancestor is found (older layouts / Option-B).
+    const panel = wrap.closest(".card-body") || wrap.parentElement || host;
+    const coverHeight = () => {
+      try {
+        const pr = panel.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+        return Math.max((host && host.offsetHeight) || 0, Math.round(pr.bottom - wr.top), 200);
+      } catch { return (host && host.offsetHeight) || window.innerHeight || 600; }
+    };
+    openOverlay(coverHeight());
     const seed = pl.readOnly ? pl.data : (input && input.value);
     // Restoring saved work must NEVER abort the boot. This runs synchronously (unlike Option B's async IIFE
     // below), so a throw here would propagate out of initEmbed and skip the toolbar merge + notes setup that
@@ -104,8 +115,8 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
     // match so the lower half stays annotatable. Same-origin: observe the parent host + its MathJax promise.
     try {
       const pw = window.parent;
-      if (host && pw.MathJax?.startup?.promise) pw.MathJax.startup.promise.then(() => resizeOverlay(host.offsetHeight)).catch(() => {});
-      if (host && pw.ResizeObserver) {
+      if (pw.MathJax?.startup?.promise) pw.MathJax.startup.promise.then(() => resizeOverlay(coverHeight())).catch(() => {});
+      if (pw.ResizeObserver) {
         // Coalesce + defer to the next frame so growing the page (which re-renders) can't re-enter the
         // observer synchronously (the "ResizeObserver loop" warning).
         let rafId = 0;
@@ -115,9 +126,10 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
           // rAF with an iframe callback silently never fires on hosted PL (the measured v155 failure mode,
           // CLAUDE.md §11 rule 2). With pw.requestAnimationFrame here, the overlay NEVER grew with the
           // question after boot: ink and pointer capture silently stopped short of the bottom.
-          rafId = requestAnimationFrame(() => { rafId = 0; resizeOverlay(host.offsetHeight); });
+          rafId = requestAnimationFrame(() => { rafId = 0; resizeOverlay(coverHeight()); });
         });
-        ro.observe(host);
+        if (host) ro.observe(host);
+        if (panel && panel !== host) ro.observe(panel); // v179 item 3: grow when an answer input below the prose changes
         // Tear down on unload so a PL in-place panel swap can't leave a PARENT observer firing into this
         // torn-down iframe realm (GC leak / errors against a dead document).
         window.addEventListener("pagehide", () => {

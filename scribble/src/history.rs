@@ -1,6 +1,6 @@
 //! Bounded undo/redo command stack.
 
-use crate::model::{Item, Surface};
+use crate::model::{Item, NoteBlock, Surface};
 use std::collections::VecDeque;
 
 pub const MAX_HISTORY: usize = 200;
@@ -24,6 +24,11 @@ pub enum Command {
     /// Several commands applied as ONE undoable step (group move / group delete
     /// from a multi-selection). Undo replays them in reverse; redo, in order.
     Batch { commands: Vec<Command> },
+    /// A whole NOTE BLOCK was deleted from `Document::notes` at `index` (v179).
+    /// The full block is captured by value — a Sketch note's strokes travel WITH
+    /// it — so undo re-inserts it intact. It addresses the block by value, not by
+    /// a shifting sketch index, so `cmd_references_sketch` is false for it.
+    RemoveNote { index: usize, block: NoteBlock },
 }
 
 /// True if a single command touches a sketch surface (recursing into batches).
@@ -33,6 +38,8 @@ fn cmd_references_sketch(c: &Command) -> bool {
         | Command::Remove { surface, .. }
         | Command::Replace { surface, .. } => matches!(surface, Surface::Sketch(_)),
         Command::Batch { commands } => commands.iter().any(cmd_references_sketch),
+        // Captures the block by value, not by a shifting sketch index → never stale.
+        Command::RemoveNote { .. } => false,
     }
 }
 
@@ -83,5 +90,14 @@ impl History {
     /// can shift when notes are added, removed, or reordered).
     pub fn references_sketch(&self) -> bool {
         self.undo.iter().any(cmd_references_sketch) || self.redo.iter().any(cmd_references_sketch)
+    }
+
+    /// True if any queued command is an index-addressed note delete (RemoveNote).
+    /// A note reorder / whole-block removal shifts note indices, so a queued
+    /// RemoveNote's stored index goes stale and must be dropped rather than
+    /// replayed against the wrong block (v179 review F1: silent data loss).
+    pub fn references_note_delete(&self) -> bool {
+        let is_rn = |c: &Command| matches!(c, Command::RemoveNote { .. });
+        self.undo.iter().any(is_rn) || self.redo.iter().any(is_rn)
     }
 }

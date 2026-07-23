@@ -1,3 +1,19 @@
+# Scribble — open issues (v179, 2026-07-24)
+
+## v179 SHIPPED (pending push/sync + hosted verify) — the UX batch
+Item 4 pause (Esc → answer, tool-click/key → resume; bar stays), item 1 draggable launcher (session-only), item 3
+whole-panel overlay (draw over answer boxes anywhere — root cause: overlay only covered the <pl-scribble> wrap),
+item 2a paste carries snip-text, item 2b Rust undoable notes-delete (RemoveNote command; modal → Undo toast).
+Adversarial review: 12 findings, F1 (medium, silent data loss: stale RemoveNote index on redo-after-reorder)
+FIXED + regression-tested (proven able to fail); F2/F3/F4 lows fixed. **Deferred, tracked:**
+- **(v180, F5) Notes pane is NOT interactive during the Answering pause** — pause makes the whole overlay iframe
+  click-through so the student can answer, but the notes pane lives in that iframe, so it's dead while paused
+  (the user wanted notes live). Proper fix: a pointer-events HOLE over the notes pane (like calc-dodge does for
+  the calculator), or reparent the pane to the parent like the toolbar. Workaround today: resume to use notes.
+- **(verify-live, F6) Confirm PL's Save/Save & Grade stay clickable while annotating** — cover() spans the
+  .card-body; if Save sits inside it, the overlay would block it. Verify on hosted <900px; if so, cap cover()
+  to exclude the grade controls.
+
 # Scribble — open issues, ranked (as of v175, 2026-07-23; older entries below may reference v168)
 
 ## v175 — THE CONSOLIDATED AUDIT RELEASE (24-agent full audit; 64 verified findings; report in session notes)

@@ -1012,9 +1012,9 @@ impl App {
         };
         let caption = caption.clone();
         if caption.trim().is_empty() {
-            // No text to keep → remove the block (shifts indices → drop sketch history).
+            // No text to keep → remove the block (shifts indices → drop sketch + queued-delete history, F1).
             self.doc.notes.remove(i);
-            self.discard_history_referencing_sketches();
+            self.discard_reindexing_history();
         } else {
             // In-place clipping→text swap keeps the index, so sketch history stays sound.
             self.doc.notes[i] = NoteBlock::Text { content: caption };
@@ -1047,10 +1047,14 @@ impl App {
 
     pub fn remove_note(&mut self, i: usize) -> bool {
         if i < self.doc.notes.len() {
-            self.doc.notes.remove(i);
-            // Undo history addresses sketch surfaces by note index; removing a
-            // block invalidates those indices, so drop history to stay sound.
+            // v179: a note delete is now UNDOABLE (Ctrl/Cmd+Z). Order matters: FIRST discard any STALE
+            // sketch-index history (those surface indices shift when a block is removed), THEN capture the
+            // removed block and push RemoveNote — so the RemoveNote survives the discard and rides the single
+            // undo stack alongside drawings. A Sketch note's strokes are stored inside the block, so undo
+            // restores it intact. (RemoveNote itself is index-shift-safe: cmd_references_sketch is false.)
             self.discard_history_referencing_sketches();
+            let block = self.doc.notes.remove(i);
+            self.history.push(Command::RemoveNote { index: i, block });
             self.dirty = true;
             true
         } else {
@@ -1064,12 +1068,24 @@ impl App {
         let j = i as i64 + delta as i64;
         if i < len && j >= 0 && (j as usize) < len {
             self.doc.notes.swap(i, j as usize);
-            self.discard_history_referencing_sketches();
+            self.discard_reindexing_history(); // F1: a reorder invalidates queued RemoveNote indices too
             self.dirty = true;
             true
         } else {
             false
         }
+    }
+
+    /// v179 review F1: for note-structural mutations that shift indices WITHOUT pushing a compensating command
+    /// (a reorder, or a whole-block clipping removal), also drop any queued RemoveNote — its stored index is now
+    /// stale and a later redo would delete/duplicate the WRONG block (silent scratch-note loss). remove_note
+    /// itself does NOT use this: it pushes a RemoveNote that undo replays in reverse-index order, so stacked
+    /// deletes stay sound and multi-level delete-undo keeps working.
+    fn discard_reindexing_history(&mut self) {
+        if self.history.references_note_delete() {
+            self.history.clear();
+        }
+        self.discard_history_referencing_sketches(); // also clears on sketch surfaces + resets in-progress
     }
 
     /// Drop the undo history if it references any sketch surface (whose index
@@ -1123,6 +1139,12 @@ impl App {
                     self.apply_undo(c);
                 }
             }
+            // v179: undo a note delete → re-insert the captured block at its original index (clamped in case
+            // the list shrank). A Sketch note's strokes ride inside the block, so they return with it.
+            Command::RemoveNote { index, block } => {
+                let at = index.min(self.doc.notes.len());
+                self.doc.notes.insert(at, block);
+            }
         }
     }
 
@@ -1145,6 +1167,12 @@ impl App {
             Command::Batch { commands } => {
                 for c in commands {
                     self.apply_redo(c);
+                }
+            }
+            // v179: redo a note delete → remove it again at its index (clamped/guarded).
+            Command::RemoveNote { index, .. } => {
+                if index < self.doc.notes.len() {
+                    self.doc.notes.remove(index);
                 }
             }
         }
@@ -1701,6 +1729,97 @@ mod tests {
         assert_eq!(a.doc.pages[0].items.len(), 0);
         a.redo();
         assert_eq!(a.doc.pages[0].items.len(), 1);
+    }
+
+    #[test]
+    fn note_delete_undo_redo_roundtrip() {
+        // v179 item 2b: deleting a note block is undoable. Delete restores the exact block at its original
+        // index on undo; redo removes it again. (Proven able to fail: before the RemoveNote command, undo()
+        // was a no-op for notes — the block stayed gone. Re-verify by reverting remove_note's push.)
+        let mut a = app_with_page();
+        a.add_text_note("first").unwrap();
+        a.add_text_note("second").unwrap();
+        a.add_text_note("third").unwrap();
+        assert_eq!(a.doc.notes.len(), 3);
+        // delete the MIDDLE one
+        assert!(a.remove_note(1));
+        assert_eq!(a.doc.notes.len(), 2);
+        assert_eq!(a.note_text(0), "first");
+        assert_eq!(a.note_text(1), "third");
+        // undo → "second" returns at index 1
+        a.undo();
+        assert_eq!(a.doc.notes.len(), 3);
+        assert_eq!(a.note_text(0), "first");
+        assert_eq!(a.note_text(1), "second");
+        assert_eq!(a.note_text(2), "third");
+        // redo → gone again
+        a.redo();
+        assert_eq!(a.doc.notes.len(), 2);
+        assert_eq!(a.note_text(1), "third");
+    }
+
+    #[test]
+    fn note_reorder_between_delete_and_redo_never_corrupts() {
+        // v179 review F1 regression (silent data loss). A note reorder invalidates a queued RemoveNote's stored
+        // index; a subsequent redo must NOT delete the wrong block. Proven able to fail: with move_note using
+        // the sketch-only discard, the redo below removed "A" instead of "B" and a later undo duplicated "B".
+        let mut a = app_with_page();
+        a.add_text_note("A").unwrap();
+        a.add_text_note("B").unwrap();
+        a.add_text_note("C").unwrap();
+        a.remove_note(1); // delete B → [A, C], undo stack has RemoveNote{1, B}
+        a.undo(); // → [A, B, C], redo stack has RemoveNote{1, B}
+        a.move_note(0, 1); // reorder → [B, A, C]; this MUST invalidate the stale redo entry
+        assert!(
+            !a.can_redo(),
+            "the reorder must drop the now-stale note-delete redo entry"
+        );
+        // No corruption: contents are exactly the reordered list, nothing destroyed or duplicated.
+        assert_eq!(a.doc.notes.len(), 3);
+        assert_eq!(a.note_text(0), "B");
+        assert_eq!(a.note_text(1), "A");
+        assert_eq!(a.note_text(2), "C");
+    }
+
+    #[test]
+    fn two_stacked_note_deletes_both_undo() {
+        // Multi-level delete-undo still works (remove_note keeps prior RemoveNotes; reverse-index replay).
+        let mut a = app_with_page();
+        a.add_text_note("A").unwrap();
+        a.add_text_note("B").unwrap();
+        a.add_text_note("C").unwrap();
+        a.remove_note(0); // → [B, C]
+        a.remove_note(0); // → [C]
+        assert_eq!(a.doc.notes.len(), 1);
+        a.undo(); // → [B, C]
+        assert_eq!(a.note_text(0), "B");
+        a.undo(); // → [A, B, C]
+        assert_eq!(a.note_text(0), "A");
+        assert_eq!(a.note_text(1), "B");
+        assert_eq!(a.note_text(2), "C");
+    }
+
+    #[test]
+    fn sketch_note_delete_undo_restores_strokes() {
+        // A Sketch note's strokes ride inside the block, so undo restores the block AND its drawing.
+        let mut a = app_with_page();
+        let idx = a.add_sketch_note(600.0, 800.0).unwrap();
+        // draw one stroke into the sketch surface
+        a.pointer_down_sketch(idx, 10.0, 10.0, 8.0);
+        a.pointer_move(20.0, 20.0, 8.0);
+        a.pointer_up();
+        assert_eq!(a.doc.notes.len(), 1);
+        assert!(
+            matches!(a.doc.notes[0], NoteBlock::Sketch { ref surface } if !surface.items.is_empty())
+        );
+        a.remove_note(idx);
+        assert_eq!(a.doc.notes.len(), 0);
+        a.undo();
+        assert_eq!(a.doc.notes.len(), 1);
+        assert!(
+            matches!(a.doc.notes[0], NoteBlock::Sketch { ref surface } if !surface.items.is_empty()),
+            "the sketch's stroke must return with the restored block"
+        );
     }
 
     #[test]
@@ -2389,10 +2508,22 @@ mod tests {
         a.pointer_down_sketch(n2, 10.0, 10.0, 8.0);
         a.pointer_up();
         assert!(a.can_undo());
-        // Removing the earlier sketch shifts n2's index; history must be
-        // dropped rather than left pointing at the wrong surface.
+        // Removing the earlier sketch shifts n2's index; the STALE sketch-item history (the stroke command,
+        // which addresses the surface by an about-to-shift index) is dropped rather than left pointing at the
+        // wrong surface. v179: the delete ITSELF is now undoable — a RemoveNote is pushed AFTER that discard —
+        // so can_undo() stays true, but undoing re-inserts the removed block, it does NOT resurrect the
+        // discarded stroke command.
         assert!(a.remove_note(n0));
-        assert!(!a.can_undo(), "sketch-referencing history discarded");
+        assert!(
+            a.can_undo(),
+            "the note-delete is undoable (RemoveNote survives the sketch-history discard)"
+        );
+        // Undo restores the deleted block (indices back to 3) rather than un-drawing the shifted sketch.
+        a.undo();
+        assert_eq!(a.doc.notes.len(), 3);
+        assert_eq!(a.note_kind(0), "sketch");
+        a.redo(); // delete again, back to the shifted-index world
+        assert_eq!(a.doc.notes.len(), 2);
         // The shifted sketch is still intact and drawable.
         let shifted = 1; // n2 moved from index 2 to 1
         assert_eq!(a.note_kind(shifted), "sketch");
