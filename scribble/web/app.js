@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "179";
+const APP_VERSION = "180";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=179";
+import init, { App } from "./pkg/scribble.js?v=180";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -26,19 +26,19 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=179";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=179";
-import { initEmbed } from "./embed.js?v=179";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=179";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=179";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=179";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=179";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=179";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=179";
-import { makeResizable } from "./rail-resize.js?v=179";
-import { makeOverflow } from "./rail-overflow.js?v=179";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=179";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=179";
+} from "./utils.js?v=180";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=180";
+import { initEmbed } from "./embed.js?v=180";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=180";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=180";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=180";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=180";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=180";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=180";
+import { makeResizable } from "./rail-resize.js?v=180";
+import { makeOverflow } from "./rail-overflow.js?v=180";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=180";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=180";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -2520,6 +2520,32 @@ function syncAria() {
 // Single writer of the iframe's pointer-events DURING a session: the parent sizer only rewrites it on the
 // Annotate/Done transition, which also resets this state (ON/OFF branches below).
 let annotatePaused = false;
+let answerHintShown = 0; // v180 item 3: the long "press a tool…" hint only for the first couple of pauses
+// v180 item 1: the in-session writer of the iframe's pointer-events. The iframe CAPTURES (pe:auto) only when
+// the student is actively drawing — annotate ON and not paused — so at every other time answers/clicks fall
+// THROUGH to the question (pe:none). Two overrides, in precedence order:
+//   • A MODAL rendered INSIDE the iframe (Help / clipping lightbox / prompt) ALWAYS forces capture, or its
+//     ✕/backdrop are dead and Esc is unreachable (the reported "can't minimise help" — it happened while the
+//     Answering pause had set pe:none, and also latently after Done where the parent sets pe:none).
+//   • Otherwise the base is: Done (no annotate-active) → pass through; Answering pause → pass through; drawing
+//     → capture. This mirrors the parent sizer's Annotate/Done base, so re-asserting it on modal-close never
+//     strands the iframe capturing over a finished question.
+// Call this whenever a modal opens/closes or the pause toggles — never write frameElement.pe directly.
+function iframeShouldCapture() {
+  // Only the TRANSPARENT overlay iframe toggles pass-through. Every other iframed mode (the opaque ?embed /
+  // Option-B clone tool) is the whole tool and must ALWAYS capture — without this guard, closing Help in
+  // ?embed (its only syncIframePE caller; setAnnotatePaused early-returns off-overlay) would fall to the
+  // "!annotate-active → false" case and set the iframe pe:none, locking the entire tool out (reload-only).
+  if (!document.body.classList.contains("overlay")) return true;
+  if (!helpOverlay.hidden) return true;                                    // help modal open → must be clickable
+  if (document.querySelector(".modal-overlay:not([hidden])")) return true; // lightbox / prompt open → clickable
+  if (!document.body.classList.contains("annotate-active")) return false;  // Done → pass answers through
+  if (annotatePaused) return false;                                        // Answering pause → pass through
+  return true;                                                             // actively drawing → capture
+}
+function syncIframePE() {
+  try { if (window.frameElement) window.frameElement.style.pointerEvents = iframeShouldCapture() ? "auto" : "none"; } catch { /* cross-frame */ }
+}
 function setAnnotatePaused(paused) {
   if (!document.body.classList.contains("overlay") || !document.body.classList.contains("annotate-active")) return;
   // v179 F4: pause blanks the IFRAME's pointer-events — only safe when the toolbar is REPARENTED into the
@@ -2530,8 +2556,16 @@ function setAnnotatePaused(paused) {
   annotatePaused = paused;
   document.body.classList.toggle("annotate-paused", paused);          // iframe realm (CSS cue on canvas cursor)
   railHostEl?.classList.toggle("annotate-paused", paused);            // parent realm (dims the reparented rail)
-  try { if (window.frameElement) window.frameElement.style.pointerEvents = paused ? "none" : "auto"; } catch { /* cross-frame */ }
-  status(paused ? "Answering — click a tool (or press P / H / T / E / V / S) to draw again." : "Drawing.");
+  syncIframePE();                                                     // v180 item 1: modal-aware pe (never traps a modal)
+  if (paused) {
+    // v180 item 3: don't re-teach the shortcut on every single pause — show the full hint the first couple
+    // of times, then a terse "Answering." so the status line stops nagging.
+    status(++answerHintShown <= 2
+      ? "Answering — click a tool (or press P / H / T / E / V / S) to draw again."
+      : "Answering.");
+  } else {
+    status("Drawing.");
+  }
 }
 
 for (const b of document.querySelectorAll(".tool")) {
@@ -2555,45 +2589,24 @@ for (const b of document.querySelectorAll(".tool")) {
   });
 }
 
-// About closers exposed at MODULE scope so the Phase-1 reparent (B3-4) can ALSO register them in the
-// PARENT realm — post-flip, About clicks/keys fire on the parent document, not the iframe. No-ops until
-// the block below assigns them.
+// v180 item 4b: the ⓘ ("About") now OPENS THE SHORTCUTS MODAL, not a separate tooltip. The modal's footer
+// already carries the attribution, so one bar button surfaces BOTH shortcuts and credit — shortcuts are now
+// one click on the bar (default-visible) instead of buried in the More menu. The old anchored About popover
+// is removed from index.html; these closer vars stay declared (and no-op) because the Phase-1 reparent (B3-4)
+// still references them when registering parent-realm listeners — harmless no-ops now.
 let closeAbout = () => {};
 let closeAboutOnOutsideClick = () => {};
 let closeAboutOnEscape = () => {};
-// ---- About ("i"): a small anchored disclosure, NOT the Help modal — the modal centres in the full
-// (question-tall) iframe and can open below the fold on a long overlay question. Plain aria-expanded
-// (no aria-haspopup, which would announce a menu); outside-click + Escape close, focus returns.
 {
-  const aboutBtn = $("btn-about"), aboutPop = $("about-popover");
-  closeAbout = () => {
-    if (!aboutPop || aboutPop.hidden) return;
-    const hadFocus = aboutPop.contains(railHostDoc.activeElement); // B3-4: realm-correct (iframe OR parent post-flip)
-    aboutPop.hidden = true;
-    aboutBtn.setAttribute("aria-expanded", "false");
-    if (hadFocus) aboutBtn.focus();
-  };
-  if (aboutBtn && aboutPop) {
-    // No stopPropagation: the click must reach the document closers so opening About
-    // auto-closes the More popover (each closer already excludes its own button).
-    aboutBtn.addEventListener("click", () => {
-      const open = aboutPop.hidden;
-      aboutPop.hidden = !open;
-      aboutBtn.setAttribute("aria-expanded", String(open));
-    });
-    closeAboutOnOutsideClick = (e) => {
-      if (!aboutPop.hidden && !aboutPop.contains(e.target) && !aboutBtn.contains(e.target)) closeAbout();
-    };
-    // Consume the Escape that closes the popover (this listener registers before the main keydown
-    // handler): dismissing About must not ALSO clear the selection / cancel an armed snip (C10).
-    // helpOverlay.hidden guard: with the Help modal OPEN above a forgotten popover, Esc must close
-    // the modal (main's branch), not invisibly eat the keypress here. (helpOverlay is declared later
-    // in the module — fine: this body only runs on keypresses, long after module evaluation.)
-    closeAboutOnEscape = (e) => {
-      if (e.key === "Escape" && !aboutPop.hidden && helpOverlay.hidden) { closeAbout(); e.stopImmediatePropagation(); }
-    };
-    document.addEventListener("click", closeAboutOnOutsideClick);
-    document.addEventListener("keydown", closeAboutOnEscape);
+  const aboutBtn = $("btn-about");
+  if (aboutBtn) {
+    aboutBtn.removeAttribute("aria-expanded");          // it toggles a modal dialog now, not a disclosure
+    aboutBtn.setAttribute("aria-haspopup", "dialog");
+    aboutBtn.title = "Keyboard shortcuts & about";
+    aboutBtn.setAttribute("aria-label", "Keyboard shortcuts and about");
+    // No stopPropagation: the click must still reach the document closers so opening this auto-closes an
+    // open More popover (each closer excludes its own button). toggleHelp is a hoisted declaration.
+    aboutBtn.addEventListener("click", () => toggleHelp());
   }
 }
 
@@ -2606,11 +2619,14 @@ const WIDTH_TOOLS = new Set(["pen", "highlighter", "tick", "cross", "circle", "a
 
 // Show the contextual colour/thickness bar only when a marking tool is active
 // and a document is open — so it never distracts during select/snip/etc.
+// v180 item 2: the student can remove the colour/width strip from the toolbar via Customize (like a tool).
+// Session+persisted pref; when true, updateContextBar keeps the strip hidden regardless of the active tool.
+let coloursHidden = false;
 function updateContextBar(tool) {
   // Overlay folds the colour strip into the one merged tool bar → keep it persistent (no reflow
   // as tools change). Docked behaves the same; floating stays contextual to the marking tools.
   const overlay = document.body.classList.contains("overlay");
-  const show = docOpen() && (overlay || isCbarDocked() || MARKING_TOOLS.has(tool));
+  const show = !coloursHidden && docOpen() && (overlay || isCbarDocked() || MARKING_TOOLS.has(tool));
   els.contextBar.hidden = !show;
   // The colorblind-safe palette toggle now lives inside this bar, so it shows
   // and hides with it automatically (only relevant while choosing colours).
@@ -2855,7 +2871,13 @@ const mainKeydown = (ev) => {
     ev.preventDefault();
     toggleHelp(true);
   } else if (!mod && TOOL_KEYS[key]) {
-    const btn = railRoot.querySelector(`[data-tool="${TOOL_KEYS[key]}"]`);
+    // v180 item 4a: a tool key TOGGLES. Pressing the ACTIVE tool's own key again defocuses it → Select
+    // (neutral, no ink). Two guards: (1) Select itself never toggles-to-Select (no-op), and (2) while the
+    // Answering pause is on, the same key RESUMES drawing (arms the tool) instead of landing on neutral —
+    // so a student answering re-enters their tool with one keystroke, not two.
+    const want = TOOL_KEYS[key];
+    const target = (!annotatePaused && want !== "select" && activeTool() === want) ? "select" : want;
+    const btn = railRoot.querySelector(`[data-tool="${target}"]`);
     if (btn && btn.offsetParent !== null) btn.click(); // skip tools hidden in this mode (e.g. Snip in overlay)
   } else if (ev.key === "PageDown" || ev.key === "PageUp") {
     if (!pdfDoc || isContinuous()) return; // continuous: let the browser scroll
@@ -3729,9 +3751,15 @@ const helpOverlay = $("help-overlay");
 function toggleHelp(show) {
   const open = show ?? helpOverlay.hidden;
   helpOverlay.hidden = !open;
+  // v180 item 1: this modal renders INSIDE the iframe. If it opens during the Answering pause (iframe
+  // pe:none), its ✕/backdrop would be dead — so re-sync the iframe's pointer-events now (open → capture;
+  // close → back to the pause's passthrough). Without this the Help card looked un-closable while answering.
+  syncIframePE();
   // #btn-help rides inside the rail's More menu, which the overlay REPARENTS into the parent page —
-  // so look it up in the rail's realm ($() would search this iframe and return null there).
+  // so look it up in the rail's realm ($() would search this iframe and return null there). The ⓘ (btn-about)
+  // opens the SAME modal in v180 (shortcuts merged into it), so light it up too when present.
   railRoot.querySelector("#btn-help")?.classList.toggle("active", open);
+  railRoot.querySelector("#btn-about")?.classList.toggle("active", open);
   if (!open) return;
   // Band-place the card in the VISIBLE part of the (possibly question-tall) overlay iframe — else the flex
   // centring lands it in the middle of the full iframe height, off-screen below the fold (the reported bug).
@@ -3849,7 +3877,9 @@ function savePrefs() {
                    width: r.style.getPropertyValue("--rail-w") || "",
                    // v171 Customize: the DEVIATION from default — unchecked stable data-tool ids. Absent/empty
                    // = everything shown, so a future new tool defaults eligible with no migration.
-                   toolsHidden: [...r.querySelectorAll(".tool.tool-off")].map((b) => b.dataset.tool).filter(Boolean) };
+                   toolsHidden: [...r.querySelectorAll(".tool.tool-off")].map((b) => b.dataset.tool).filter(Boolean),
+                   // v180 Customize: the colour/width strip removed from the bar (default false = shown).
+                   coloursOff: coloursHidden };
         })()
         : (prev.railFloat2 || {}),
       railFloat: prev.railFloat || {}, // carry the legacy iframe-realm key forward untouched (rollback safety)
@@ -4020,6 +4050,12 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         railEl.appendChild(actions);
         railEl.appendChild(morePop); // sibling of actions; CSS positions it under the More button
         railEl.appendChild($("rail-collapse")); // keep the collapse chevron LAST, after the appended children
+        // v180 item 6: when Customize hides the CURRENTLY-ACTIVE tool, applyToolVisibility clicks a fallback
+        // tool so the student isn't left holding an invisible one. That programmatic .click() bubbles to the
+        // document, where the "click-away" closers below would read it as an outside click and slam the menu
+        // shut mid-configuration. This flag marks such internal clicks so the closers ignore them — the menu
+        // stays open (like toggling any other tool) until a REAL click-away.
+        let suppressMoreClose = false;
         const closeMore = () => {
           if (morePop.hidden) return;
           const hadFocus = morePop.contains(railHostDoc.activeElement); // B3-4: realm-correct (iframe OR parent post-flip)
@@ -4070,6 +4106,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               !e.target.closest("#more-overflow, #more-customize")) closeMore();
         });
         document.addEventListener("click", (e) => {
+          if (suppressMoreClose) return; // v180 item 6: internal fallback-tool click, not a real click-away
           if (!morePop.hidden && !morePop.contains(e.target) && !moreBtn.contains(e.target)) closeMore();
         });
         document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMore(); });
@@ -4130,7 +4167,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               // MF-B / B3-4: the More AND About popovers' outside-click / Escape must ALSO be heard in the
               // PARENT realm now (the rail's clicks fire there). The iframe-document listeners stay too, so a
               // click on either side closes them. Named handlers → removable on teardown (B3-6).
-              const pMoreClick = (e) => { if (!morePop.hidden && !morePop.contains(e.target) && !moreBtn.contains(e.target)) closeMore(); };
+              const pMoreClick = (e) => { if (suppressMoreClose) return; if (!morePop.hidden && !morePop.contains(e.target) && !moreBtn.contains(e.target)) closeMore(); };
               const pMoreKey = (e) => { if (e.key === "Escape") closeMore(); };
               // Match the IFRAME listener order so Escape layering (C10) is identical in the parent realm:
               // About-closer (consuming) → mainKeydown (defers to an open More) → More-closer. mainKeydown MUST
@@ -4266,7 +4303,12 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
             // (activeTool() is the existing module-scope reader — realm-correct via railRoot.)
             if (hiddenSet.has(activeTool())) {
               const fallback = ["pen", "highlighter", "text", "eraser", "select", "snip"].find((id) => !hiddenSet.has(id)) || "select";
-              railRoot.querySelector(`.tool[data-tool="${fallback}"]`)?.click();
+              // v180 item 6: flag this programmatic click so the document "click-away" closers don't read it
+              // as a real outside click and close the More menu mid-configuration. .click() dispatches (and
+              // bubbles) synchronously, so the flag is guaranteed set for the whole event → reset in finally.
+              suppressMoreClose = true;
+              try { railRoot.querySelector(`.tool[data-tool="${fallback}"]`)?.click(); }
+              finally { suppressMoreClose = false; }
             }
             for (const b of railRoot.querySelectorAll(".tool[data-tool]")) {
               if (!CUSTOMIZABLE_TOOLS.has(b.dataset.tool)) continue;
@@ -4307,6 +4349,32 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
             row.append(name);
             custWrap.append(row);
           }
+          // v180 item 2: a "Colours" toggle — remove/restore the colour+width strip like a tool. It uses
+          // data-extra (NOT data-tool), so the tool change-handler + serialize selectors above skip it; its
+          // own handler flips coloursHidden, re-hides/re-shows the strip, and refits the bar. Icon = a clone
+          // of the static palette SVG (from index.html — safe to clone, never innerHTML of dynamic content).
+          {
+            const row = document.createElement("label");
+            row.className = "ct-row";
+            const box = document.createElement("input");
+            box.type = "checkbox"; box.dataset.extra = "colours"; box.checked = !coloursHidden;
+            const live = railRoot.querySelector("#btn-palette svg");
+            const name = document.createElement("span");
+            name.textContent = "Colours";
+            row.append(box);
+            if (live) row.append(live.cloneNode(true));
+            row.append(name);
+            box.addEventListener("change", () => {
+              coloursHidden = !box.checked;
+              updateContextBar(activeTool());                       // hide/show the strip now
+              railLayout.invalidate(); pushRailClear(); syncHostPad(); // strip width changed → refit the bar
+              savePrefs();
+              status(box.checked
+                ? "Colours shown on the toolbar"
+                : "Colours hidden from the toolbar — re-check here to restore them");
+            });
+            custWrap.append(row);
+          }
           const ctReset = document.createElement("button");
           ctReset.type = "button"; ctReset.id = "ct-reset"; ctReset.textContent = "Reset tools to default";
           custWrap.append(ctReset);
@@ -4322,14 +4390,25 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           });
           ctReset.addEventListener("click", () => {
             applyToolVisibility(new Set());
+            coloursHidden = false; // v180 item 2: Reset restores the colour strip too
+            const cbox = custWrap.querySelector('input[data-extra="colours"]');
+            if (cbox) cbox.checked = true;
+            updateContextBar(activeTool());
+            railLayout.invalidate(); pushRailClear(); syncHostPad();
             savePrefs();
-            status("Toolbar tools reset to default.");
+            status("Toolbar reset to default.");
           });
           // ---- restore: tools, then width, then an explicit first fit — all BEFORE the align/clamp below, so
           // geometry is measured against the FINAL tool set. The saved list is validated against the closed
           // CUSTOMIZABLE_TOOLS set, so a corrupt/stale pref can never hide a protected tool.
           const savedHidden = new Set((Array.isArray(rp.toolsHidden) ? rp.toolsHidden : []).filter((id) => CUSTOMIZABLE_TOOLS.has(id)));
           applyToolVisibility(savedHidden);
+          // v180 item 2: restore the colour-strip toggle BEFORE the reflow below, so the bar is measured with
+          // the strip already hidden/shown (else the first fit sizes to the wrong content width).
+          coloursHidden = rp.coloursOff === true;
+          const cbox0 = custWrap.querySelector('input[data-extra="colours"]');
+          if (cbox0) cbox0.checked = !coloursHidden;
+          updateContextBar(activeTool());
           const savedRailW = parseFloat(rp.width);
           if (Number.isFinite(savedRailW) && savedRailW > 0) railResize.setWidth(savedRailW); // re-clamps to the CURRENT band
           // The explicit trio also covers the no-saved-width branch: makeOverflow's constructor never reflows,
@@ -4514,6 +4593,20 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               annotatePaused = false; // v179 item 4: Done exits fully — clear any paused sub-state + its classes
               document.body.classList.remove("annotate-paused");
               railHostEl?.classList.remove("annotate-paused");
+              // v180 review (medium, §11 rule 9): Done must not STRAND an in-iframe modal over the finished
+              // question. The parent set the iframe pe:none on Done, so a Help card / lightbox left open would
+              // render with a dead ✕/backdrop (clicks pass through) and Esc routes to the now-gated parent —
+              // an un-dismissable obstruction. v180 item 4b (Help promoted to a one-click bar button) makes
+              // "open Help, then click Done" a realistic path. Close them here: toggleHelp(false) re-syncs pe
+              // (help closed + annotate-active off ⇒ correctly leaves pe:none); a document Escape runs each
+              // open dialog's OWN cleanup (removes node, resolves its promise, revokes blob URLs). mainKeydown
+              // early-returns while a modal is open, so this Escape only reaches the dialog's handler.
+              if (!helpOverlay.hidden) toggleHelp(false);
+              if (document.querySelector(".modal-overlay:not([hidden])")) {
+                document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+              }
+              syncIframePE(); // final assert: everything closed + annotate-active off ⇒ pe:none (covers the
+                              // help+lightbox-both-open ordering where an earlier sync still saw a modal)
               const cur = railRoot.querySelector(".tool.active")?.dataset.tool;
               if (RESUME_TOOLS.has(cur)) lastDrawTool = cur;
               railRoot.querySelector('.tool[data-tool="select"]')?.click();

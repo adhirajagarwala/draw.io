@@ -15,7 +15,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=179">
+  <link rel="stylesheet" href="style.css?v=180">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -47,15 +47,12 @@
       <button id="btn-help" class="btn" title="Keyboard shortcuts (?)" aria-label="Show keyboard shortcuts" aria-haspopup="dialog">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.2a2.8 2.8 0 1 1 3.6 2.7c-.8.3-1.3 1-1.3 1.9v.4"/><path d="M12 17.5v.01"/></svg>
       </button>
-      <!-- About: attribution reachable in ONE click everywhere (the Help-modal footer carries it
-           too). Wrapper spans button + popover so the overlay merge moves both. -->
+      <!-- v180: the ⓘ opens the Keyboard-shortcuts modal (its footer carries the attribution), so shortcuts
+           are one click on the bar. Wrapper kept so the overlay merge moves the button as one unit. -->
       <span class="about-wrap" id="about-wrap">
-        <button id="btn-about" class="btn" title="About Scribble" aria-label="About Scribble" aria-expanded="false">
+        <button id="btn-about" class="btn" title="Keyboard shortcuts &amp; about" aria-label="Keyboard shortcuts and about" aria-haspopup="dialog">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.5v.01"/></svg>
         </button>
-        <div id="about-popover" hidden>
-          <strong>Scribble</strong> — by Adhiraj Agarwala.<br>© 2026 · MIT License.
-        </div>
       </span>
 
       <span class="bar-divider"></span>
@@ -318,6 +315,7 @@
             <dt>T</dt><dd>Text note</dd>
             <dt>E</dt><dd>Eraser</dd>
             <dt class="ov-hide">S</dt><dd class="ov-hide">Snip a region</dd>
+            <dt>Same key again</dt><dd>Deselect the active tool (back to Select)</dd>
           </dl>
         </section>
         <section>
@@ -329,7 +327,7 @@
             <dt>Drag empty</dt><dd>Box-select several marks</dd>
             <dt>Shift-click</dt><dd>Add / remove one from the selection</dd>
             <dt>Delete</dt><dd>Remove selected mark(s)</dd>
-            <dt>Esc</dt><dd>Deselect</dd>
+            <dt>Esc</dt><dd>Deselect — or pause to answer, press again to draw</dd>
           </dl>
         </section>
         <section>
@@ -353,21 +351,21 @@
   <!-- RACE-3 (audit, high): preload the whole module graph in parallel. The v172 wedge's leading
        mechanism is a script-blocking stall while parser-inserted modules wait; preloading shrinks
        the serial window. Keep this list in lockstep with app.js's imports. -->
-  <link rel="modulepreload" href="app.js?v=179">
-  <link rel="modulepreload" href="pkg/scribble.js?v=179">
-  <link rel="modulepreload" href="utils.js?v=179">
-  <link rel="modulepreload" href="pdf-writer.js?v=179">
-  <link rel="modulepreload" href="embed.js?v=179">
-  <link rel="modulepreload" href="idb.js?v=179">
-  <link rel="modulepreload" href="text-extract.js?v=179">
-  <link rel="modulepreload" href="modals.js?v=179">
-  <link rel="modulepreload" href="colorbar.js?v=179">
-  <link rel="modulepreload" href="notes-dock.js?v=179">
-  <link rel="modulepreload" href="floating-panel.js?v=179">
-  <link rel="modulepreload" href="rail-resize.js?v=179">
-  <link rel="modulepreload" href="rail-overflow.js?v=179">
-  <link rel="modulepreload" href="calc-dodge.js?v=179">
-  <link rel="modulepreload" href="visible-band.js?v=179">
-  <script type="module" src="app.js?v=179"></script>
+  <link rel="modulepreload" href="app.js?v=180">
+  <link rel="modulepreload" href="pkg/scribble.js?v=180">
+  <link rel="modulepreload" href="utils.js?v=180">
+  <link rel="modulepreload" href="pdf-writer.js?v=180">
+  <link rel="modulepreload" href="embed.js?v=180">
+  <link rel="modulepreload" href="idb.js?v=180">
+  <link rel="modulepreload" href="text-extract.js?v=180">
+  <link rel="modulepreload" href="modals.js?v=180">
+  <link rel="modulepreload" href="colorbar.js?v=180">
+  <link rel="modulepreload" href="notes-dock.js?v=180">
+  <link rel="modulepreload" href="floating-panel.js?v=180">
+  <link rel="modulepreload" href="rail-resize.js?v=180">
+  <link rel="modulepreload" href="rail-overflow.js?v=180">
+  <link rel="modulepreload" href="calc-dodge.js?v=180">
+  <link rel="modulepreload" href="visible-band.js?v=180">
+  <script type="module" src="app.js?v=180"></script>
 </body>
 </html>

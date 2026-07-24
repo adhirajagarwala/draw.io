@@ -1588,18 +1588,12 @@ body.locked #btn-paste-img { display: none !important; }
    notes, not the student's PL answer — the intended flow is snip HERE, paste in the question tab. */
 
 /* ---------- About: the "i" popover ---------- */
-/* The wrapper keeps the popover anchored to the button in BOTH homes (standalone #topbar and the
-   overlay's merged rail — the whole wrapper is moved into .rail-actions there). */
+/* The wrapper keeps the ⓘ button as one movable unit in BOTH homes (standalone #topbar and the overlay's
+   merged rail — the whole wrapper is moved into .rail-actions there). v180: the ⓘ opens the Help modal now,
+   so the old anchored #about-popover is gone; the wrapper stays as a simple inline-flex slot. */
 .about-wrap { position: relative; display: inline-flex; }
-#about-popover {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 90;
-  min-width: 200px; background: #fff; border: 1px solid var(--line); border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(20, 24, 28, 0.18); padding: 9px 12px;
-  font-size: 12.5px; color: var(--ink); line-height: 1.55; white-space: nowrap;
-}
-#about-popover[hidden] { display: none; }
 
-/* (Attribution lives in the ⓘ popover + the Help-modal footer — the user retired the always-visible
+/* (Attribution lives in the Help-modal footer, opened by the ⓘ — the user retired the always-visible
    chip: at the question's bottom it read as exam text, and under the toolbar it was still clutter.) */
 
 /* ============================================================================
