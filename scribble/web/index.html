@@ -10,12 +10,19 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'">
   <title>Scribble — annotate your question paper</title>
+  <!-- v181 LOCKED REFERENCE TOOL: set content="true" to make THIS deployment a pure reference sheet —
+       Open/Save/Resume/Export never appear and no other file can be opened; it loads only the file named by
+       a validated ?file=<reference>. The lock is baked into the served page (a student can't strip it from
+       the URL like a query param). Change the ?file= per exam. Left "false" here so the normal tool is the
+       default; deploy a copy with "true" for the exam reference link. (A <meta> is used because the CSP
+       forbids inline <script>.) -->
+  <meta name="scribble-locked" content="false">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <!-- ?v= queries bust browser caches: python http.server sends no cache
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=180">
+  <link rel="stylesheet" href="style.css?v=181">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -351,21 +358,21 @@
   <!-- RACE-3 (audit, high): preload the whole module graph in parallel. The v172 wedge's leading
        mechanism is a script-blocking stall while parser-inserted modules wait; preloading shrinks
        the serial window. Keep this list in lockstep with app.js's imports. -->
-  <link rel="modulepreload" href="app.js?v=180">
-  <link rel="modulepreload" href="pkg/scribble.js?v=180">
-  <link rel="modulepreload" href="utils.js?v=180">
-  <link rel="modulepreload" href="pdf-writer.js?v=180">
-  <link rel="modulepreload" href="embed.js?v=180">
-  <link rel="modulepreload" href="idb.js?v=180">
-  <link rel="modulepreload" href="text-extract.js?v=180">
-  <link rel="modulepreload" href="modals.js?v=180">
-  <link rel="modulepreload" href="colorbar.js?v=180">
-  <link rel="modulepreload" href="notes-dock.js?v=180">
-  <link rel="modulepreload" href="floating-panel.js?v=180">
-  <link rel="modulepreload" href="rail-resize.js?v=180">
-  <link rel="modulepreload" href="rail-overflow.js?v=180">
-  <link rel="modulepreload" href="calc-dodge.js?v=180">
-  <link rel="modulepreload" href="visible-band.js?v=180">
-  <script type="module" src="app.js?v=180"></script>
+  <link rel="modulepreload" href="app.js?v=181">
+  <link rel="modulepreload" href="pkg/scribble.js?v=181">
+  <link rel="modulepreload" href="utils.js?v=181">
+  <link rel="modulepreload" href="pdf-writer.js?v=181">
+  <link rel="modulepreload" href="embed.js?v=181">
+  <link rel="modulepreload" href="idb.js?v=181">
+  <link rel="modulepreload" href="text-extract.js?v=181">
+  <link rel="modulepreload" href="modals.js?v=181">
+  <link rel="modulepreload" href="colorbar.js?v=181">
+  <link rel="modulepreload" href="notes-dock.js?v=181">
+  <link rel="modulepreload" href="floating-panel.js?v=181">
+  <link rel="modulepreload" href="rail-resize.js?v=181">
+  <link rel="modulepreload" href="rail-overflow.js?v=181">
+  <link rel="modulepreload" href="calc-dodge.js?v=181">
+  <link rel="modulepreload" href="visible-band.js?v=181">
+  <script type="module" src="app.js?v=181"></script>
 </body>
 </html>

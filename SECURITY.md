@@ -19,11 +19,25 @@ file host. The goals are therefore (a) no code execution from any input,
 
 ## Defenses
 
-### No network egress, no persistence of content
-No `fetch`/`XHR` to any origin; no analytics, cookies, or `localStorage` of
-user content. The app holds everything in memory; the only outputs are files
-the user explicitly downloads (Save → JSON, Export → PDF). A global error
-handler surfaces failures in-app rather than failing silently.
+### No network egress; scoped local persistence
+No `fetch`/`XHR` to any cross-origin destination; no analytics, no cookies.
+Nothing ever leaves the machine except files the user explicitly downloads
+(Save → JSON, Export → PDF). A global error handler surfaces failures in-app
+rather than failing silently.
+
+Two local, same-origin persistence layers exist (both best-effort, nothing
+network-bound):
+- **`localStorage`** holds UI *preferences only* — layout (toolbar/notes/colour-bar
+  position, width, hidden tools), accessibility toggles, and (v181) the last pen
+  colour/width/tool. Keys are namespaced per PrairieLearn question (`PREFS_KEY`).
+  No annotation *content* is stored here.
+- **IndexedDB autosave** snapshots the annotation document (including base64 snip
+  images) for crash recovery, keyed by the open PDF's SHA-256. Because the store
+  is same-origin and not per-question, this runs **STANDALONE ONLY** — it is
+  disabled whenever the tool is embedded in PrairieLearn (`__SCRIBBLE_PL` /
+  `__SCRIBBLE_EMBED`), where a co-tenant course's question could otherwise
+  cursor-read another student's snapshots and where PL's own form persists the
+  graded work anyway (v181, from the security sweep).
 
 ### Strict Content-Security-Policy
 Set in `index.html` (mirror it as an HTTP header when hosting):

@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "180";
+const APP_VERSION = "181";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=180";
+import init, { App } from "./pkg/scribble.js?v=181";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -26,24 +26,36 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=180";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=180";
-import { initEmbed } from "./embed.js?v=180";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=180";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=180";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=180";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=180";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=180";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=180";
-import { makeResizable } from "./rail-resize.js?v=180";
-import { makeOverflow } from "./rail-overflow.js?v=180";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=180";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=180";
+} from "./utils.js?v=181";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=181";
+import { initEmbed } from "./embed.js?v=181";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=181";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=181";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=181";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=181";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=181";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=181";
+import { makeResizable } from "./rail-resize.js?v=181";
+import { makeOverflow } from "./rail-overflow.js?v=181";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=181";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=181";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
 // head script, ahead of the CSP meta). All edit entry points short-circuit on it.
 const READONLY = !!window.__SCRIBBLE_READONLY;
+
+// v181: deploy-time HARD lock for a reference-sheet build. Unlike ?file= (whose lock is affordance-only —
+// stripping the query param yields the full tool), this is a served-in flag, so a student can't remove it
+// from the URL. When set, the build is a pure reference sheet: no Open/Save/Resume/Export ever appear and no
+// other file can be opened — only the validated ?file= reference loads (chosen per exam). Enable it by setting
+// `<meta name="scribble-locked" content="true">` in the served index.html (the CSP forbids inline <script>, so
+// a meta flag is the standalone-safe switch), then link students to `…?file=<that exam's reference>`.
+// window.__SCRIBBLE_LOCKED is also honoured (e.g. a PL srcdoc that injects it). (?file= alone still engages the
+// same lock UI for PL-linked use.)
+const LOCKED_BUILD = !!window.__SCRIBBLE_LOCKED
+  || document.querySelector('meta[name="scribble-locked"]')?.content === "true";
+if (LOCKED_BUILD) document.body.classList.add("locked"); // early: no flash of the soon-hidden file actions
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
 let pdfjsLib = null;
@@ -1762,19 +1774,25 @@ async function finishSnip(r) {
     // text/plain flavor. The analysis already ran (finalText); carrying it means a later paste into notes
     // fills the caption in one step (no separate "analyze" action). Independent of the snip-time keepText
     // choice: the clipboard is a distinct channel, and text is only attached when there genuinely is some.
+    // v181: track whether the auto-copy actually landed so the status can tell the truth — a paste after a
+    // failed/absent copy would silently do nothing. The per-clip "Copy" button (fresh user gesture, writes
+    // image + text) is the reliable fallback, so a miss here is never a dead end.
+    let copied = false;
     try {
       if (navigator.clipboard?.write && window.ClipboardItem) {
         const parts = { "image/png": blob };
         if (finalText) parts["text/plain"] = new Blob([finalText], { type: "text/plain" });
         await navigator.clipboard.write([new ClipboardItem(parts)]);
+        copied = true;
       }
-    } catch { /* clipboard permission is optional */ }
+    } catch { /* auto-copy is best-effort (activation/permission) — the clip's Copy button is the reliable path */ }
     // Overlay drops cross-origin question images from the raster (regionHasBrokenImage is a no-op there,
     // since Scribble's own iframe is empty) — use the raster's own drop-count instead.
     const imgWarn = (snipMode === "html" && (document.body.classList.contains("overlay")
       ? overlaySnipDropped > 0 : regionHasBrokenImage(x0, y0, x0 + w, y0 + h)))
       ? " (some external images couldn't be captured)" : "";
-    status((keepText ? "Snipped — image and text added to notes." : "Snipped — image added to notes.") + imgWarn);
+    const copyHint = copied ? " · copied — paste into your answer" : " · press Copy on the clip to copy it";
+    status((keepText ? "Snipped — image and text added to notes." : "Snipped — image added to notes.") + imgWarn + copyHint);
   } catch (e) {
     console.error("snip failed:", e);
     status(`Snip failed: ${e?.message || e}`);
@@ -2408,6 +2426,7 @@ function routeOpen(f) {
 els.filePdf.addEventListener("change", () => {
   const f = els.filePdf.files[0];
   els.filePdf.value = "";
+  if (document.body.classList.contains("locked")) return; // v181: belt — the reference load bypasses this picker (routeOpen direct)
   if (f) routeOpen(f);
 });
 
@@ -2467,11 +2486,16 @@ async function openReferenceFile() {
     const fallbackType = /\.html?$/i.test(req.name) ? "text/html" : "application/pdf";
     routeOpen(new File([blob], req.name, { type: blob.type || fallbackType }));
   } catch (e) {
-    // A dead locked tool would strand the student mid-exam — unlock and fall back to the normal UI.
-    document.body.classList.remove("locked");
+    // A dead SOFT-locked tool (?file= only) would strand the student mid-exam — unlock and fall back to the
+    // normal Open UI. But a HARD deploy lock (LOCKED_BUILD) must STAY locked: v181 review caught that
+    // unlocking here on a pre-window 403 / offline fetch would re-expose Open/Save/Export and defeat the
+    // guaranteed lock. So only the soft lock unwinds; the hard lock just reports and stays sealed.
+    if (!LOCKED_BUILD) document.body.classList.remove("locked");
     status(e?.httpStatus === 403
       ? "That reference isn't available yet — it may unlock when the assessment opens."
-      : "The reference file couldn't be loaded — you can open a file yourself with the Open button.");
+      : (LOCKED_BUILD
+        ? "The reference file couldn't be loaded — reload to try again."
+        : "The reference file couldn't be loaded — you can open a file yourself with the Open button."));
   }
 }
 
@@ -2586,6 +2610,7 @@ for (const b of document.querySelectorAll(".tool")) {
     els.annoCanvas.style.cursor = name === "snip" ? "crosshair" : "";
     updateContextBar(name);
     syncAria();
+    savePrefs(); // v181: remember the selected tool across reloads (snip is guarded on restore)
   });
 }
 
@@ -2644,6 +2669,7 @@ for (const b of document.querySelectorAll("#widths .width")) {
     railRoot.querySelectorAll("#widths .width").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     syncAria();
+    savePrefs(); // v181: remember the chosen width across reloads
   });
 }
 
@@ -2653,6 +2679,7 @@ for (const s of document.querySelectorAll("#colors .swatch")) {
     railRoot.querySelectorAll("#colors .swatch").forEach((x) => x.classList.remove("active"));
     s.classList.add("active");
     syncAria();
+    savePrefs(); // v181: remember the chosen colour across reloads
   });
 }
 
@@ -3239,14 +3266,20 @@ function buildTextBlock(div, i) {
 // auto-growing caption.
 // Copy a notes clipping (its blob-URL PNG) to the system clipboard, with brief
 // in-button feedback. Needs a secure context (localhost / https) and a user gesture.
-async function copyImageToClipboard(src, btn) {
+async function copyImageToClipboard(src, btn, text) {
   const label = btn && btn.textContent;
   try {
     const blob = await fetch(src).then((r) => r.blob());
-    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    // v181: write BOTH flavors when there's caption text — a rich PL answer editor pastes the image, a plain
+    // <textarea> pastes the text. One ClipboardItem, one write, so whichever the answer box accepts lands.
+    const parts = { "image/png": blob };
+    if (text && text.trim()) parts["text/plain"] = new Blob([text], { type: "text/plain" });
+    await navigator.clipboard.write([new ClipboardItem(parts)]);
     if (btn) { btn.textContent = "Copied ✓"; setTimeout(() => { btn.textContent = label; }, 1400); }
   } catch {
-    status("Couldn't copy the image — the browser blocked clipboard access.");
+    // v181: don't fail silently — the student needs to know the paste won't work and what to do instead.
+    if (btn) { btn.textContent = "Couldn't copy"; setTimeout(() => { btn.textContent = label; }, 1900); }
+    status("Couldn't copy — the browser blocked clipboard access. Try again, or check the site's clipboard permission.");
   }
 }
 
@@ -3401,7 +3434,7 @@ function buildClippingBlock(div, i) {
   copy.className = "clip-copy";
   copy.textContent = "Copy image";
   copy.title = "Copy this image to the clipboard";
-  copy.addEventListener("click", () => copyImageToClipboard(img.src, copy));
+  copy.addEventListener("click", () => copyImageToClipboard(img.src, copy, cap.value)); // v181: carry the caption text too
   // Wrap the image so a small "×" can remove JUST the image (keeping the caption as a text note) — for when
   // the student only wanted the recognised text, not the picture. Editable views only.
   const imgWrap = document.createElement("div");
@@ -3842,6 +3875,14 @@ function savePrefs() {
         top: !isCbarDocked() && cb.classList.contains("moved") ? cb.style.top : "",
         collapsed: cb.classList.contains("collapsed"),
       },
+      // v181: remember the last colour / line width / selected tool (per question). Read straight off the
+      // .active chips (realm-correct via railRoot). Validated + guarded on restore (applyPrefs → restorePen),
+      // so a stale/edited value can never arm an invalid colour, width, or a hidden/one-shot tool.
+      pen: {
+        color: railRoot.querySelector("#colors .swatch.active")?.dataset.color || "",
+        width: railRoot.querySelector("#widths .width.active")?.dataset.width || "",
+        tool: activeTool() || "",
+      },
       // Embed-only; in standalone carry the saved value forward untouched. While collapsed, the pane's
       // inline width/height are cleared (stashed in dataset.expW/expH), so persist the EXPANDED size from
       // there — else a collapse+reload would lose the student's chosen notes size to the default.
@@ -3909,6 +3950,33 @@ function applyPrefs() {
   }
   if (cb.collapsed) setCbarCollapsed(true);
   applyPalette(a11y.palette === "safe"); // also paints the swatches for the active palette
+  // v181: restore the last colour / line width / selected tool. set_color/set_pen_width/set_tool return
+  // false on an unknown value (the Rust side is a CLOSED enum), so they double as validation — a stale or
+  // hand-edited pref can never arm an invalid state. The querySelector value is CSS.escape'd (defence in
+  // depth against selector injection; the Rust validation is the real gate). Snip is a one-shot JS tool and
+  // a Customize-hidden tool must never be armed invisibly, so both are skipped (fall back to the default pen).
+  const pen = p.pen || {};
+  if (pen.color) {
+    const sw = railRoot.querySelector(`#colors .swatch[data-color="${CSS.escape(pen.color)}"]`);
+    if (sw && app.set_color(pen.color)) {
+      railRoot.querySelectorAll("#colors .swatch").forEach((x) => x.classList.remove("active"));
+      sw.classList.add("active");
+    }
+  }
+  if (pen.width) {
+    const wb = railRoot.querySelector(`#widths .width[data-width="${CSS.escape(pen.width)}"]`);
+    if (wb && app.set_pen_width(pen.width)) {
+      railRoot.querySelectorAll("#widths .width").forEach((x) => x.classList.remove("active"));
+      wb.classList.add("active");
+    }
+  }
+  if (pen.tool && pen.tool !== "snip" && CUSTOMIZABLE_TOOLS.has(pen.tool)) {
+    const tb = railRoot.querySelector(`.tool[data-tool="${pen.tool}"]`);
+    if (tb && !tb.classList.contains("tool-off") && app.set_tool(pen.tool)) {
+      railRoot.querySelectorAll(".tool").forEach((x) => x.classList.remove("active"));
+      tb.classList.add("active");
+    }
+  }
   return p;
 }
 
@@ -3920,8 +3988,17 @@ let dirtySinceFileSave = false;
 
 // Snapshot the current annotations to IndexedDB under the open PDF's hash.
 // PDF-only: HTML uploads have no stable identity to key on.
+// v181 security (vuln-sweep, confirmed low): the IndexedDB autosave store is a SINGLE origin-wide db
+// (idb.js: "scribble"/"autosave") keyed only by PDF hash — not namespaced per question/course. On a shared
+// hosted PL instance (all courses one origin), another instructor's question carrying client JS could
+// indexedDB.open("scribble") and CURSOR-read every snapshot a shared student autosaved. Fix: confine autosave
+// to the TRUE STANDALONE tool (single-tenant). In any embedded/overlay/PL context the student's graded work
+// already persists through PL's own form input, and the ?file= reference sheet is in-memory scratch — so
+// there is nothing to recover and no reason to write to the shared-origin store. (SECURITY.md updated to match.)
+const AUTOSAVE_ENABLED = !(window.__SCRIBBLE_PL || window.__SCRIBBLE_EMBED);
 async function autosaveTick() {
   try {
+    if (!AUTOSAVE_ENABLED) return; // v181: standalone only — never write the origin-wide store inside PL/embed
     if (docMode !== "pdf" || !app || !app.is_dirty()) return;
     const key = app.pdf_sha256();
     if (!key) return; // no hash (e.g. insecure context) — can't key recovery
@@ -3938,11 +4015,12 @@ async function autosaveTick() {
     console.warn("autosave failed:", e);
   }
 }
-setInterval(autosaveTick, 4000);
+if (AUTOSAVE_ENABLED) setInterval(autosaveTick, 4000); // v181: no autosave loop inside PL/embed
 
 // On opening a PDF, offer to recover annotations autosaved for that exact file.
 // Returns true if the user restored a snapshot (so the caller can react).
 async function maybeRestoreAutosave(hash) {
+  if (!AUTOSAVE_ENABLED) return false; // v181: no reads inside PL/embed either (belt for the confine-to-standalone fix)
   if (!hash) return false;
   let saved;
   try { saved = await idbGet(hash); } catch { return false; }
@@ -4222,7 +4300,17 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // onChange also syncs the host pad: dragging a .big (60px) bar away from the default spot must CLEAR
           // the question's extra top padding, or a stale 64px gap survives the move. (syncHostPad is declared
           // below this call — safe: onChange only fires on drag drops, long after the const initializes.)
-          const railFP = makeFloating(railEl, { collapse: railEl.querySelector("#rail-collapse"), onChange: () => { syncCollapsedGeom(); savePrefs(); calcDodgeNudge(); syncHostPad(); }, onSettle: () => { restickRail(); if (railWin !== window) { alignRailToCard(); clampFixed(railEl, railWin); } }, win: railWin });
+          // v181 item 2: SESSION-ONLY memory of where the student drags the bar. A fresh page load returns to
+          // top-center (the professor's "top-center on load" default is kept — this is never persisted); but
+          // WITHIN the tab, once you move the bar, re-opening it (Done → Annotate) reopens it where you left
+          // it instead of snapping back to center. Captured after each drag settles (clamped, visible).
+          let sessionRailPos = null;
+          const rememberRailPos = () => {
+            if (!railEl.classList.contains("fp-moved")) return; // only a genuinely moved bar
+            const r = railEl.getBoundingClientRect();
+            if (r.width) sessionRailPos = { left: Math.round(r.left), top: Math.round(r.top) };
+          };
+          const railFP = makeFloating(railEl, { collapse: railEl.querySelector("#rail-collapse"), onChange: () => { syncCollapsedGeom(); savePrefs(); calcDodgeNudge(); syncHostPad(); }, onSettle: () => { restickRail(); if (railWin !== window) { alignRailToCard(); clampFixed(railEl, railWin); } rememberRailPos(); }, win: railWin });
           // v170: the engine registers release backstops on the PARENT document, so it must be disposed on the
           // iframe swap even when the rail was never reparented. The railTeardowns path below only installs
           // inside the `railWin !== window` branch, which is dead while PHASE1_CHROME_REPARENT is false — so
@@ -4585,7 +4673,26 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // restore, every re-entry stayed in Select — off the toolbar the cursor read as a plain arrow
           // and drags drew a marquee instead of ink (Lumetta's "cursor keeps disappearing").
           const RESUME_TOOLS = new Set(["pen", "highlighter", "text"]); // eraser/snip/select never surprise-restore
-          let lastDrawTool = "pen";
+          // v181: seed the resume tool from the persisted pen.tool so the FIRST Annotate re-arms the tool the
+          // student last used (only the marking tools resume — eraser/select/snip stay off the surprise-restore
+          // list by the existing rule). Reload otherwise defaults to pen.
+          let lastDrawTool = (prefs && prefs.pen && RESUME_TOOLS.has(prefs.pen.tool)) ? prefs.pen.tool : "pen";
+          // v181 review fix (Select trap): arm the resume tool on Annotate. Shared by the normal ON branch AND
+          // the pre-init shortcut path below — before v181 the shortcut trusted "the live tool is Pen", but the
+          // v181 tool-restore can leave the WASM tool on Select/Eraser (every overlay Done persists pen.tool=
+          // "select"), so an un-armed shortcut path would strand the student in a Select trap (first drag = a
+          // marquee, not ink). Falls back to the first VISIBLE tool, then Select, exactly like the ON branch.
+          const armResumeTool = () => {
+            const resumeBtn = railRoot.querySelector(`.tool[data-tool="${lastDrawTool}"]`);
+            const visibleFallback = () => {
+              for (const id of ["pen", "highlighter", "text", "eraser", "select", "snip"]) {
+                const b = railRoot.querySelector(`.tool[data-tool="${id}"]`);
+                if (b && !b.classList.contains("tool-off")) return b;
+              }
+              return railRoot.querySelector('.tool[data-tool="select"]'); // everything hidden — neutral arm
+            };
+            (resumeBtn && !resumeBtn.classList.contains("tool-off") ? resumeBtn : visibleFallback())?.click();
+          };
           let wasAnnotating = document.body.classList.contains("annotate-active");
           new MutationObserver(() => {
             const now = document.body.classList.contains("annotate-active");
@@ -4622,25 +4729,16 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               // null and the bar opens top-center). Read the pill's rect BEFORE weldDone reparents it. floatTo
               // marks the bar fp-moved, so alignRailToCard / restickRail / scheduleAlign all bail — single
               // writer of geometry — and clampFixed pulls a near-edge drop into the visible band.
-              const dropAt = launcherDropPoint();
+              // v181 item 2: precedence for where the bar opens — a launcher the student JUST dragged (this
+              // Annotate) wins; else the position they last dragged the BAR to this session; else top-center.
+              // All three are session-only (sessionRailPos is never persisted), so a fresh load is top-center.
+              const dropAt = launcherDropPoint() || sessionRailPos;
               weldDone(); // v172: dock the parent's Done pill into the bar's right end for this session
               if (dropAt) { railFP.floatTo(dropAt.left, dropAt.top); clampFixed(railEl, railWin); }
               else alignRailToCard(); // STICKY-1(c): first visible placement — the bar was display:none until now
-              // Unconditional click — an offsetParent-style visibility guard would silently skip
-              // exactly when the rail is collapsed, and the Select trap would survive there. The ONE exception
-              // is .tool-off (hidden via Customize): click() works on display:none, so resuming a hidden tool
-              // would arm an INVISIBLE tool — the exact failure class Customize is built to avoid. v173 (no
-              // protected tools): fall back to the FIRST VISIBLE tool in preference order, snip last (modal);
-              // if the student hid all six, arm Select — neutral, inkless, the documented degradation.
-              const resumeBtn = railRoot.querySelector(`.tool[data-tool="${lastDrawTool}"]`);
-              const visibleFallback = () => {
-                for (const id of ["pen", "highlighter", "text", "eraser", "select", "snip"]) {
-                  const b = railRoot.querySelector(`.tool[data-tool="${id}"]`);
-                  if (b && !b.classList.contains("tool-off")) return b;
-                }
-                return railRoot.querySelector('.tool[data-tool="select"]'); // everything hidden — neutral arm
-              };
-              (resumeBtn && !resumeBtn.classList.contains("tool-off") ? resumeBtn : visibleFallback())?.click();
+              // Arm the resume tool (shared helper): the drawing tool the student last used, else the first
+              // VISIBLE tool, else Select — never a hidden (Customize-off) tool, never leaving a Select trap.
+              armResumeTool();
               clampRailOnShow();
               restickRail(); // land the default bar at the band top even if the page was scrolled at Annotate-time
               railLayout.reflow(); pushRailClear(); syncHostPad(); // bar was display:none and measured 0 until now
@@ -4650,10 +4748,12 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
             syncRailVis(); // show/hide the reparented rail with annotate-active (hide branch; idempotent on show)
             wasAnnotating = now;
           }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
-          // If Annotate was pressed BEFORE wasm init finished, the ON transition already happened and
-          // the observer will never see it — run the show-clamps once for that first showing. (No
-          // Select trap in this path: pen is both the markup default and lastDrawTool's default.)
-          if (wasAnnotating) { syncRailVis(); const d0 = launcherDropPoint(); weldDone(); if (d0) { railFP.floatTo(d0.left, d0.top); clampFixed(railEl, railWin); } else alignRailToCard(); clampRailOnShow(); restickRail(); clampNotes(); calcDodgeNudge(); }
+          // If Annotate was pressed BEFORE wasm init finished, the ON transition already happened and the
+          // observer will never see it — run the show-clamps once for that first showing, AND arm the resume
+          // tool. v181 review: the old "pen is the default, no Select trap here" assumption is now FALSE —
+          // applyPrefs may have restored the WASM tool to Select/Eraser (an overlay Done persists pen.tool=
+          // "select"), so this path must armResumeTool() too or the first drag draws a marquee, not ink.
+          if (wasAnnotating) { syncRailVis(); const d0 = launcherDropPoint() || sessionRailPos; weldDone(); if (d0) { railFP.floatTo(d0.left, d0.top); clampFixed(railEl, railWin); } else alignRailToCard(); armResumeTool(); clampRailOnShow(); restickRail(); clampNotes(); calcDodgeNudge(); }
 
           // ---- #13: PL's Calculator drawer must win its own clicks. calc-dodge punches a clip-path
           // hole in the overlay frame wherever the OPEN drawer overlaps it (clicks fall through, ink
@@ -4771,8 +4871,9 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
     // the normal Open UI if the value is invalid); the ?open picker-popper runs only when ?file is
     // absent. Branch on PRESENCE, not validity, so a malformed link still gets feedback.
     if (new URLSearchParams(location.search).has("file")) openReferenceFile();
+    else if (LOCKED_BUILD) status("Locked reference tool — add ?file=<reference> to the link to load a sheet."); // v181: no picker to fall back to
     else autoOpenIfRequested(); // "Open in a new tab" → pop the file picker here
-    idbPrune(); // bound the autosave store (keep the most-recent snapshots)
+    if (AUTOSAVE_ENABLED) idbPrune(); // v181: bound the autosave store — standalone only (never touch it in PL/embed)
   })
   .catch((e) => {
     console.error("WASM init failed:", e);
