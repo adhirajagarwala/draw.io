@@ -13,6 +13,10 @@
   --accent-soft: #e8eefc;
   --sheet-shadow: 0 1px 2px rgba(20, 24, 28, 0.10), 0 6px 24px rgba(20, 24, 28, 0.12);
 }
+/* v185 (flash fix): the host is created visibility:hidden (app.js) so nothing paints before THIS sheet lands.
+   Reveal the RAIL here — a descendant, so its visibility:visible overrides the host's inherited hidden with no
+   !important. When this rule applies the whole toolbar is already fully styled, so there is no unstyled flash. */
+.scribble-chrome #rail { visibility: visible; }
 .scribble-chrome .bar-divider {
   width: 1px;
   align-self: stretch;

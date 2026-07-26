@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "184";
+const APP_VERSION = "185";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=184";
+import init, { App } from "./pkg/scribble.js?v=185";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -26,20 +26,20 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=184";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=184";
-import { initEmbed } from "./embed.js?v=184";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=184";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=184";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=184";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=184";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=184";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=184";
-import { computeOverlayPE } from "./overlay-pe.js?v=184";
-import { makeResizable } from "./rail-resize.js?v=184";
-import { makeOverflow } from "./rail-overflow.js?v=184";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=184";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=184";
+} from "./utils.js?v=185";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=185";
+import { initEmbed } from "./embed.js?v=185";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=185";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=185";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=185";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=185";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=185";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=185";
+import { computeOverlayPE } from "./overlay-pe.js?v=185";
+import { makeResizable } from "./rail-resize.js?v=185";
+import { makeOverflow } from "./rail-overflow.js?v=185";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=185";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=185";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -2572,7 +2572,7 @@ function syncAria() {
 // Single writer of the iframe's pointer-events DURING a session: the parent sizer only rewrites it on the
 // Annotate/Done transition, which also resets this state (ON/OFF branches below).
 let annotatePaused = false;
-let answerHintShown = 0; // v180 item 3: the long "press a tool…" hint only for the first couple of pauses
+let modeHintsShown = 0; // v185: brief Draw/Answer teach only for the first couple of mode switches, then silent (the visible toggle shows the mode)
 // v180 item 1: the in-session writer of the iframe's pointer-events. The iframe CAPTURES (pe:auto) only when
 // the student is actively drawing — annotate ON and not paused — so at every other time answers/clicks fall
 // THROUGH to the question (pe:none). Two overrides, in precedence order:
@@ -2621,14 +2621,12 @@ function setAnnotatePaused(paused) {
   railHostEl?.classList.toggle("annotate-paused", paused);            // parent realm (dims the reparented rail)
   syncIframePE();                                                     // v180 item 1: modal-aware pe (never traps a modal)
   syncModeSeg();                                                      // v184 #3: reflect Draw/Answer on the visible switch
-  if (paused) {
-    // v180 item 3: don't re-teach the shortcut on every single pause — show the full hint the first couple
-    // of times, then a terse "Answering." so the status line stops nagging.
-    status(++answerHintShown <= 2
-      ? "Answering — click a tool (or press P / H / T / E / V / S) to draw again."
-      : "Answering.");
-  } else {
-    status("Drawing.");
+  // v185 (user): the visible Draw/Answer switch NOW shows the mode, so the status line is redundant noise on
+  // every toggle — reduce it to a brief FIRST-TIME teach (a couple of switches, either direction), then stay
+  // silent and let the toggle speak. No status() call at all once taught, so no empty box lingers.
+  if (modeHintsShown < 2) {
+    modeHintsShown++;
+    status(paused ? "Answering — click the question to type your answer." : "Back to drawing.");
   }
 }
 // v184 #3: the visible switch drives the SAME setAnnotatePaused as Esc and clicking a tool — one state writer.
@@ -4278,7 +4276,13 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
                 host.className = "scribble-chrome pl-scribble-chrome-host";
                 // B3-8: z BELOW the Done FAB (2147483000, py:142) so the rail never covers the exit affordance;
                 // ABOVE the overlay frame/calc (2147482000) and the Annotate launch pill (2147482500).
-                host.style.cssText = "position:relative;z-index:2147482900;";
+                // v185 (flash fix): the host starts visibility:hidden so the reparented rail can NEVER paint
+                // UNSTYLED before chrome.css lands in the parent (a <div>-defaulted full-width #mode-seg + the
+                // un-scoped tools = the "blank stretched" FOUC on Annotate). chrome.css reveals the RAIL
+                // (a descendant — its own visibility:visible overrides the inherited hidden, so no !important
+                // war with this inline). If chrome.css never loads the bar stays hidden = fail-invisible over an
+                // answerable question (§11.9), consistent with the existing chrome.css-.sheet measurement gate.
+                host.style.cssText = "position:relative;z-index:2147482900;visibility:hidden;";
                 pdoc.body.appendChild(host); // B3-9: plain body child (a transformed card ancestor re-pins fixed)
               }
               host.appendChild(railEl); // #rail lives in the parent now; ".scribble-chrome #rail" styles it
@@ -4600,7 +4604,11 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
             // nested div, so a bubble-phase window listener never hears it (live-measured, ISSUES-NEXT #4;
             // rule 3). This is the exact proven wiring of the calc-dodge + restickRail triggers.
             let alignRaf = 0;
-            const scheduleAlign = () => { if (alignRaf) return; alignRaf = requestAnimationFrame(() => { alignRaf = 0; alignRailToCard(); }); };
+            // v185 (flash fix): reflow IN THE SAME frame as alignRailToCard's --rail-max rewrite — for parity
+            // with the sibling onRailResize (4587). Without it a scroll/card-width change left the bar un-demoted
+            // (all tools, box at full card width = the "blank stretched" flash) for one frame until the engine's
+            // async ResizeObserver→rAF reflow caught up. pushRailClear/syncHostPad are steady-state no-ops here.
+            const scheduleAlign = () => { if (alignRaf) return; alignRaf = requestAnimationFrame(() => { alignRaf = 0; alignRailToCard(); railLayout.reflow(); pushRailClear(); syncHostPad(); }); };
             const alignOpts = { capture: true, passive: true };
             railWin.document.addEventListener("scroll", scheduleAlign, alignOpts);
             railTeardowns.push(() => railWin.document.removeEventListener("scroll", scheduleAlign, alignOpts));
