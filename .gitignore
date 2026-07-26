@@ -17,3 +17,7 @@ Thumbs.db
 sample.html
 # Finder/iCloud "filename 2.ext" copy artifacts
 * 2.*
+
+# Course-specific reference files (deployed via refs/, committed in the COURSE repo, not the tool source)
+scribble/web/refs/*.pdf
+scribble/web/refs/*.htm*

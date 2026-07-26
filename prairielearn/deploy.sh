@@ -20,9 +20,12 @@ wasm-bindgen target/wasm32-unknown-unknown/release/scribble.wasm \
 DEST="$COURSE/clientFilesCourse/scribble"
 echo "→ deploying compiled bundle → $DEST/"
 mkdir -p "$DEST"
+# NOTE: refs/ is COURSE-OWNED reference content (the ?file=<leaf> reference sheets), managed in the COURSE
+# repo — NOT the tool source. Exclude it so a tool deploy's --delete can never wipe a course's reference PDFs.
+# (The tool ships refs/ empty; drop your reference files into <course>/clientFilesCourse/scribble/refs/.)
 rsync -a --delete \
   --exclude '* 2.js' --exclude '__*' --exclude '.gitignore' \
-  --exclude 'embed/' --exclude '*.map' --exclude 'test/' \
+  --exclude 'embed/' --exclude '*.map' --exclude 'test/' --exclude 'refs/' \
   "$REPO/scribble/web/" "$DEST/"
 
 echo "✓ deployed. Now in PrairieLearn: course → Sync → 'Load from disk', then preview the question."
