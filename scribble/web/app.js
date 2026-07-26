@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "182";
+const APP_VERSION = "183";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=182";
+import init, { App } from "./pkg/scribble.js?v=183";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -26,19 +26,20 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=182";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=182";
-import { initEmbed } from "./embed.js?v=182";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=182";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=182";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=182";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=182";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=182";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=182";
-import { makeResizable } from "./rail-resize.js?v=182";
-import { makeOverflow } from "./rail-overflow.js?v=182";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=182";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=182";
+} from "./utils.js?v=183";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=183";
+import { initEmbed } from "./embed.js?v=183";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=183";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=183";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=183";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=183";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=183";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=183";
+import { computeOverlayPE } from "./overlay-pe.js?v=183";
+import { makeResizable } from "./rail-resize.js?v=183";
+import { makeOverflow } from "./rail-overflow.js?v=183";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=183";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=183";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -2581,17 +2582,17 @@ let answerHintShown = 0; // v180 item 3: the long "press a tool…" hint only fo
 //     → capture. This mirrors the parent sizer's Annotate/Done base, so re-asserting it on modal-close never
 //     strands the iframe capturing over a finished question.
 // Call this whenever a modal opens/closes or the pause toggles — never write frameElement.pe directly.
+// v183 (Fable audit): the decision is a PURE function (overlay-pe.js, truth-table tested). This wrapper only
+// reads the five live DOM signals; ALL the branching lives in computeOverlayPE so a regression is caught by a
+// unit test, not a live exam. (helpOverlay is declared later in the module — fine, this only runs at runtime.)
 function iframeShouldCapture() {
-  // Only the TRANSPARENT overlay iframe toggles pass-through. Every other iframed mode (the opaque ?embed /
-  // Option-B clone tool) is the whole tool and must ALWAYS capture — without this guard, closing Help in
-  // ?embed (its only syncIframePE caller; setAnnotatePaused early-returns off-overlay) would fall to the
-  // "!annotate-active → false" case and set the iframe pe:none, locking the entire tool out (reload-only).
-  if (!document.body.classList.contains("overlay")) return true;
-  if (!helpOverlay.hidden) return true;                                    // help modal open → must be clickable
-  if (document.querySelector(".modal-overlay:not([hidden])")) return true; // lightbox / prompt open → clickable
-  if (!document.body.classList.contains("annotate-active")) return false;  // Done → pass answers through
-  if (annotatePaused) return false;                                        // Answering pause → pass through
-  return true;                                                             // actively drawing → capture
+  return computeOverlayPE({
+    overlay: document.body.classList.contains("overlay"),
+    annotating: document.body.classList.contains("annotate-active"),
+    paused: annotatePaused,
+    helpOpen: !helpOverlay.hidden,
+    modalOpen: !!document.querySelector(".modal-overlay:not([hidden])"),
+  });
 }
 function syncIframePE() {
   try { if (window.frameElement) window.frameElement.style.pointerEvents = iframeShouldCapture() ? "auto" : "none"; } catch { /* cross-frame */ }
@@ -4129,7 +4130,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
         const moreBtn = document.createElement("button");
         moreBtn.id = "btn-more"; moreBtn.type = "button"; moreBtn.className = "btn labeled";
         moreBtn.title = "More tools"; moreBtn.setAttribute("aria-haspopup", "true"); moreBtn.setAttribute("aria-expanded", "false");
-        moreBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>More';
+        moreBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>More'; // html-ok: static SVG literal, no user content (§7)
         const morePop = document.createElement("div");
         // A labelled popover of plain buttons — NOT role="menu" (that would demand menuitem roles + a full
         // arrow-key model, and it invalidates the children's aria-pressed / aria-haspopup).

@@ -316,7 +316,7 @@ export function initEmbed({ app, els, status, toggleNotes, renderNotes, openHtml
     const b = document.createElement("button");
     b.className = "btn labeled";
     b.title = label;
-    b.innerHTML = `<svg viewBox="0 0 24 24">${svg}</svg>`;
+    b.innerHTML = `<svg viewBox="0 0 24 24">${svg}</svg>`; // html-ok: static SVG icon path from a code literal, never user content (§7)
     b.append(document.createTextNode(label));
     b.addEventListener("click", fn);
     return b;

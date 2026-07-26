@@ -45,6 +45,42 @@ jobs:
       - name: JS syntax check
         run: |
           for f in scribble/web/*.js; do node --check "$f"; done
+      # Fable-audit #1: the JS tests existed but never ran in CI — the realm/geometry engines' only
+      # real coverage (drag.test.mjs + future truth-table tests) is now a MERGE GATE, not decoration.
+      - name: JS tests
+        run: node --test scribble/web/test/*.test.mjs
+      # CLAUDE.md §11.2, automated: never schedule a parent-realm rAF with an iframe-realm callback.
+      # The rule shipped three times against a hand-run grep; make it a gate. (v183 review hardening:)
+      #  - exclude ONLY comment-LEADING lines ("path:NN:  //…") — NOT any line whose trailing comment happens
+      #    to say "requestAnimationFrame", which used to silence the exact real call it must catch;
+      #  - a legitimate same-realm call attests with a trailing "// realm-ok" COMMENT (not a bare substring);
+      #  - match any *Win/*Window handle + .contentWindow, not just three hand-listed names.
+      #  POSIX ERE only (no \s/\b/-P) so it behaves the same on the runner and a dev's BSD grep.
+      - name: Cross-realm rAF gate (CLAUDE.md §11.2)
+        run: |
+          HITS=$(grep -rnE '([A-Za-z_][A-Za-z0-9_]*(Win|Window)|\.contentWindow|[^A-Za-z0-9_]pw)\.requestAnimationFrame' scribble/web/*.js \
+            | grep -vE '^[^:]*:[0-9]+:[[:space:]]*//' \
+            | grep -vE '//[[:space:]]*realm-ok' || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::parent-realm rAF scheduled (CLAUDE.md §11.2) — schedule the callback in ITS OWN realm, or add a '// realm-ok: <why>' comment."
+            echo "$HITS"; exit 1
+          fi
+          echo "OK: no un-annotated cross-realm rAF"
+      # §7 origin-integrity (Fable-audit keep-doing #4): user/hydrated content must never reach innerHTML.
+      # Every .innerHTML assignment must be static-markup carrying a "// html-ok" comment. (v183 review:)
+      #  - cover compound assignment (+=), so an append-XSS sink can't slip past a bare-'=' pattern;
+      #  - exclude == / === comparisons (a read, not a sink) so they don't spuriously fail the build;
+      #  - the marker must be a "// html-ok" COMMENT, not a substring anywhere on the line.
+      - name: innerHTML §7 gate
+        run: |
+          HITS=$(grep -rnE '\.innerHTML[[:space:]]*\+?=' scribble/web/*.js \
+            | grep -vE '\.innerHTML[[:space:]]*==' \
+            | grep -vE '//[[:space:]]*html-ok' || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::.innerHTML assignment without a '// html-ok' comment (§7). Draw user/hydrated text with textContent/canvas, never innerHTML. Mark genuinely-static markup with '// html-ok'."
+            echo "$HITS"; exit 1
+          fi
+          echo "OK: no un-annotated innerHTML sinks"
       - name: Cache-version consistency
         # Every hand-written ?v= literal in app.js + index.html must equal APP_VERSION.
         # This is the guard that would have caught the pkg/scribble.js glue drifting to
