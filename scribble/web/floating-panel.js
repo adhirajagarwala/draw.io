@@ -5,7 +5,7 @@
 // (no reparent, no jump), tracks the cursor, drops them clamped to the VIEWPORT,
 // and toggles a collapsed state. Bump this module's ?v= import with APP_VERSION.
 
-import { visibleBand, clampIntoBand, GRAB } from "./visible-band.js?v=183";
+import { visibleBand, clampIntoBand, GRAB } from "./visible-band.js?v=184";
 
 const DRAG_SLOP = 4; // px before a lift commits — a press-without-move is a no-op
 

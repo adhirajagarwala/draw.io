@@ -164,7 +164,7 @@ _OVERLAY_SIZER = (
     "if(b){var on=false,dg=null,sc=false;"
     "try{var sid=b.getAttribute('data-scribble-id');if(sid){document.querySelectorAll('.pl-scribble-annotate-btn[data-scribble-id=\"'+sid+'\"]').forEach(function(o){if(o!==b)o.remove();});}}catch(_){}"
     "function m(){f.style.pointerEvents=on?'auto':'none';"
-    "var sp=b.querySelector('span');"
+    "var sp=b.querySelector('span'),ic=b.querySelector('svg');"
     # ACTIVE: a big, filled, DRAGGABLE floating action button, opening below the toolbar's right end. CRITICAL: a PrairieLearn
     # ancestor (question card) can carry a CSS transform, which makes a position:fixed DESCENDANT resolve
     # against THAT box, not the viewport — so the button lands off-screen down a long question and the student
@@ -188,7 +188,9 @@ _OVERLAY_SIZER = (
     "b.style.padding='6px 12px';b.style.fontSize='13px';b.style.fontWeight='600';"
     "b.style.background='#fff';b.style.color='#2f5fde';b.style.borderColor='#c9d6f7';b.style.borderRadius='8px';"
     "b.style.boxShadow='0 1px 3px rgba(20,24,28,.12)';b.style.cursor='move';b.style.touchAction='none';}"
-    "if(sp)sp.textContent='Done';}"
+    # v184 #3b: the active button is an ✕ (close) icon, NOT the word "Done" — "Done" read like exam-submit; an
+    # X reads as "close the drawing tools". Static path (no user content). Restored to the pencil on the OFF branch.
+    "if(sp)sp.textContent='';if(ic)ic.innerHTML='<path d=\"M6 6l12 12M18 6L6 18\"/>';b.setAttribute('aria-label','Close drawing tools');}"
     # v177: capture where the button IS (welded in the bar, or the FAB) BEFORE unwelding — the inactive pill
     # re-appears at that exact spot ("appears the exact place you click Done"), clamped on-screen; a fresh
     # load (rect 0x0 / never annotated) defaults to the TOP-LEFT of the visible card. position:fixed keeps it
@@ -204,7 +206,7 @@ _OVERLAY_SIZER = (
     "b.style.padding='6px 12px';b.style.fontSize='13px';b.style.fontWeight='600';"
     "b.style.background='#fff';b.style.color='#2f5fde';b.style.borderColor='#c9d6f7';b.style.borderRadius='8px';"
     "b.style.boxShadow='0 1px 3px rgba(20,24,28,.12)';b.style.cursor='pointer';"
-    "if(sp)sp.textContent='Annotate';}"
+    "if(sp)sp.textContent='Annotate';if(ic)ic.innerHTML='<path d=\"M12 20h9\"/><path d=\"M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z\"/>';b.setAttribute('aria-label','Annotate');}"
     "w.classList.toggle('scribble-active',on);b.setAttribute('aria-pressed',String(on));"
     "try{var d=f.contentDocument;if(d&&d.body)d.body.classList.toggle('annotate-active',on);}catch(e){}}"
     # Drag the active Done button to reposition it (viewport-clamped). DRAG_SLOP separates a drag from a click,

@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "183";
+const APP_VERSION = "184";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=183";
+import init, { App } from "./pkg/scribble.js?v=184";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -26,20 +26,20 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=183";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=183";
-import { initEmbed } from "./embed.js?v=183";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=183";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=183";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=183";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=183";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=183";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=183";
-import { computeOverlayPE } from "./overlay-pe.js?v=183";
-import { makeResizable } from "./rail-resize.js?v=183";
-import { makeOverflow } from "./rail-overflow.js?v=183";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=183";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=183";
+} from "./utils.js?v=184";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=184";
+import { initEmbed } from "./embed.js?v=184";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=184";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=184";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=184";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=184";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=184";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=184";
+import { computeOverlayPE } from "./overlay-pe.js?v=184";
+import { makeResizable } from "./rail-resize.js?v=184";
+import { makeOverflow } from "./rail-overflow.js?v=184";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=184";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=184";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -143,6 +143,7 @@ const els = {
     addNote: $("btn-add-note"),
   },
   seg: { paged: $("seg-paged"), cont: $("seg-cont") },
+  mode: { draw: $("seg-draw"), answer: $("seg-answer") }, // v184 #3: Draw⇄Answer switch
 };
 
 // Tools that exist only in the UI layer (the Rust core stays in a neutral
@@ -2597,6 +2598,17 @@ function iframeShouldCapture() {
 function syncIframePE() {
   try { if (window.frameElement) window.frameElement.style.pointerEvents = iframeShouldCapture() ? "auto" : "none"; } catch { /* cross-frame */ }
 }
+// v184 #3: reflect the live Draw⇄Answer state onto the visible segmented switch (Draw active when NOT paused).
+// Called from setAnnotatePaused (every state change) AND the Annotate-ON transition (fresh entry), so the
+// switch is never stale. Realm-safe: els.mode.* are the SAME nodes whether the rail is in the iframe or the
+// reparented parent host (they travel with the reparent), and toggling a class needs no realm awareness.
+function syncModeSeg() {
+  const drawing = !annotatePaused;
+  els.mode.draw?.classList.toggle("active", drawing);
+  els.mode.draw?.setAttribute("aria-pressed", String(drawing));
+  els.mode.answer?.classList.toggle("active", !drawing);
+  els.mode.answer?.setAttribute("aria-pressed", String(!drawing));
+}
 function setAnnotatePaused(paused) {
   if (!document.body.classList.contains("overlay") || !document.body.classList.contains("annotate-active")) return;
   // v179 F4: pause blanks the IFRAME's pointer-events — only safe when the toolbar is REPARENTED into the
@@ -2608,6 +2620,7 @@ function setAnnotatePaused(paused) {
   document.body.classList.toggle("annotate-paused", paused);          // iframe realm (CSS cue on canvas cursor)
   railHostEl?.classList.toggle("annotate-paused", paused);            // parent realm (dims the reparented rail)
   syncIframePE();                                                     // v180 item 1: modal-aware pe (never traps a modal)
+  syncModeSeg();                                                      // v184 #3: reflect Draw/Answer on the visible switch
   if (paused) {
     // v180 item 3: don't re-teach the shortcut on every single pause — show the full hint the first couple
     // of times, then a terse "Answering." so the status line stops nagging.
@@ -2618,6 +2631,11 @@ function setAnnotatePaused(paused) {
     status("Drawing.");
   }
 }
+// v184 #3: the visible switch drives the SAME setAnnotatePaused as Esc and clicking a tool — one state writer.
+// (setAnnotatePaused no-ops off-overlay / pre-reparent, so these are inert in standalone/embed where the
+// switch is hidden anyway.)
+els.mode.draw?.addEventListener("click", () => setAnnotatePaused(false));
+els.mode.answer?.addEventListener("click", () => setAnnotatePaused(true));
 
 for (const b of document.querySelectorAll(".tool")) {
   b.addEventListener("click", () => {
@@ -4766,6 +4784,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
               // Arm the resume tool (shared helper): the drawing tool the student last used, else the first
               // VISIBLE tool, else Select — never a hidden (Customize-off) tool, never leaving a Select trap.
               armResumeTool();
+              syncModeSeg(); // v184 #3: fresh Annotate entry starts in Draw — reflect it on the visible switch
               clampRailOnShow();
               restickRail(); // land the default bar at the band top even if the page was scrolled at Annotate-time
               railLayout.reflow(); pushRailClear(); syncHostPad(); // bar was display:none and measured 0 until now
@@ -4780,7 +4799,7 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // tool. v181 review: the old "pen is the default, no Select trap here" assumption is now FALSE —
           // applyPrefs may have restored the WASM tool to Select/Eraser (an overlay Done persists pen.tool=
           // "select"), so this path must armResumeTool() too or the first drag draws a marquee, not ink.
-          if (wasAnnotating) { syncRailVis(); const d0 = launcherDropPoint() || sessionRailPos; weldDone(); if (d0) { railFP.floatTo(d0.left, d0.top); clampFixed(railEl, railWin); } else alignRailToCard(); armResumeTool(); clampRailOnShow(); restickRail(); clampNotes(); calcDodgeNudge(); }
+          if (wasAnnotating) { syncRailVis(); const d0 = launcherDropPoint() || sessionRailPos; weldDone(); if (d0) { railFP.floatTo(d0.left, d0.top); clampFixed(railEl, railWin); } else alignRailToCard(); armResumeTool(); syncModeSeg(); clampRailOnShow(); restickRail(); clampNotes(); calcDodgeNudge(); }
 
           // ---- #13: PL's Calculator drawer must win its own clicks. calc-dodge punches a clip-path
           // hole in the overlay frame wherever the OPEN drawer overlaps it (clicks fall through, ink

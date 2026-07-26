@@ -20,7 +20,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=183">
+  <link rel="stylesheet" href="style.css?v=184">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -87,6 +87,20 @@
     <nav id="rail" aria-label="Tools">
       <!-- Overlay-only: drag grip + collapse toggle (hidden in standalone / Option-B via CSS). -->
       <span class="fp-grip" title="Drag to move the tools" aria-hidden="true"><svg viewBox="0 0 6 16"><circle cx="1.5" cy="4" r="1"/><circle cx="4.5" cy="4" r="1"/><circle cx="1.5" cy="8" r="1"/><circle cx="4.5" cy="8" r="1"/><circle cx="1.5" cy="12" r="1"/><circle cx="4.5" cy="12" r="1"/></svg></span>
+      <!-- v184 #3: the visible Draw⇄Answer mode switch — the always-on, TOUCH-reachable replacement for the
+           hidden Esc pause. Bound to setAnnotatePaused. Shown ONLY in the reparented PL overlay rail (chrome.css
+           gates it); hidden in standalone/embed, where there is no answer-through pause. NOT a .rail-group, so
+           the overflow engine never demotes it into More. -->
+      <div id="mode-seg" class="seg-group" role="group" aria-label="Draw or answer">
+        <button id="seg-draw" class="seg active" type="button" title="Draw on the question" aria-pressed="true">
+          <svg viewBox="0 0 24 24"><path d="M16.5 3.5l4 4L8 20l-5 1 1-5L16.5 3.5z"/></svg>
+          <span>Draw</span>
+        </button>
+        <button id="seg-answer" class="seg" type="button" title="Answer the question — clicks go through to type your answer" aria-pressed="false">
+          <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg>
+          <span>Answer</span>
+        </button>
+      </div>
       <!-- Undo/Redo live here (not just the floating pill) so they're reachable on a
            touch device with no keyboard. Actions, not modes — they never go .active. -->
       <div class="rail-group">
@@ -356,22 +370,22 @@
   <!-- RACE-3 (audit, high): preload the whole module graph in parallel. The v172 wedge's leading
        mechanism is a script-blocking stall while parser-inserted modules wait; preloading shrinks
        the serial window. Keep this list in lockstep with app.js's imports. -->
-  <link rel="modulepreload" href="app.js?v=183">
-  <link rel="modulepreload" href="pkg/scribble.js?v=183">
-  <link rel="modulepreload" href="utils.js?v=183">
-  <link rel="modulepreload" href="pdf-writer.js?v=183">
-  <link rel="modulepreload" href="embed.js?v=183">
-  <link rel="modulepreload" href="idb.js?v=183">
-  <link rel="modulepreload" href="text-extract.js?v=183">
-  <link rel="modulepreload" href="modals.js?v=183">
-  <link rel="modulepreload" href="colorbar.js?v=183">
-  <link rel="modulepreload" href="notes-dock.js?v=183">
-  <link rel="modulepreload" href="floating-panel.js?v=183">
-  <link rel="modulepreload" href="overlay-pe.js?v=183">
-  <link rel="modulepreload" href="rail-resize.js?v=183">
-  <link rel="modulepreload" href="rail-overflow.js?v=183">
-  <link rel="modulepreload" href="calc-dodge.js?v=183">
-  <link rel="modulepreload" href="visible-band.js?v=183">
-  <script type="module" src="app.js?v=183"></script>
+  <link rel="modulepreload" href="app.js?v=184">
+  <link rel="modulepreload" href="pkg/scribble.js?v=184">
+  <link rel="modulepreload" href="utils.js?v=184">
+  <link rel="modulepreload" href="pdf-writer.js?v=184">
+  <link rel="modulepreload" href="embed.js?v=184">
+  <link rel="modulepreload" href="idb.js?v=184">
+  <link rel="modulepreload" href="text-extract.js?v=184">
+  <link rel="modulepreload" href="modals.js?v=184">
+  <link rel="modulepreload" href="colorbar.js?v=184">
+  <link rel="modulepreload" href="notes-dock.js?v=184">
+  <link rel="modulepreload" href="floating-panel.js?v=184">
+  <link rel="modulepreload" href="overlay-pe.js?v=184">
+  <link rel="modulepreload" href="rail-resize.js?v=184">
+  <link rel="modulepreload" href="rail-overflow.js?v=184">
+  <link rel="modulepreload" href="calc-dodge.js?v=184">
+  <link rel="modulepreload" href="visible-band.js?v=184">
+  <script type="module" src="app.js?v=184"></script>
 </body>
 </html>

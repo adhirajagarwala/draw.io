@@ -1305,6 +1305,12 @@ body.overlay.big #context-bar .swatch { width: 26px; height: 26px; }
 .seg.active { background: var(--accent-soft); color: var(--accent); }
 .seg:disabled { opacity: 0.45; cursor: default; }
 
+/* v184 #3: the Draw⇄Answer switch is hidden EVERYWHERE by default — it's meaningful only in the transparent
+   PL overlay (where clicks either draw or fall through to the question). chrome.css re-shows it inside the
+   reparented overlay rail (.scribble-chrome), and there the rail is already display:none unless annotate-active,
+   so it appears only while annotating. In standalone/embed it stays hidden (no answer-through pause exists). */
+#mode-seg { display: none; }
+
 #pdf-canvas { display: block; border-radius: 2px; }
 #pdf-canvas[hidden] { display: none; }
 

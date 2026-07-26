@@ -267,7 +267,7 @@
 .scribble-chrome #context-bar.cbar-dragging { z-index: 80; }
 .scribble-chrome #rail.fp-moved { width: max-content; max-width: min(var(--rail-w, 9999px), calc(100vw - 8px)); top: auto; left: auto; right: auto; } /* v177: dragged bar keeps content-sizing; viewport cap only (it may leave the card) */
 .scribble-chrome #rail.fp-dragging { z-index: 80; cursor: grabbing; box-shadow: 0 6px 20px rgba(20, 24, 28, 0.22); }
-.scribble-chrome #rail.fp-collapsed :is(.rail-group, #context-bar, .rail-actions, .fp-resize) { display: none; }
+.scribble-chrome #rail.fp-collapsed :is(.rail-group, #context-bar, .rail-actions, .fp-resize, #mode-seg) { display: none; } /* v184: the Draw/Answer switch collapses with everything else — a minimised bar is just grip+expand */
 .scribble-chrome #rail.fp-collapsed { width: auto; }
 /* Collapse the DEFAULT (un-dragged) bar toward the RIGHT — where the minimise button is (mirror style.css). */
 .scribble-chrome #rail.fp-collapsed:not(.fp-moved) { left: auto; right: 4px; }
@@ -302,6 +302,32 @@
 }
 .scribble-chrome #rail .tool.active svg { stroke: var(--accent); }
 .scribble-chrome #rail .tool.active span, .scribble-chrome #rail .tool.active span::after { color: var(--accent); font-weight: 600; }
+
+/* v184 #3: the visible Draw⇄Answer switch, styled for the reparented overlay bar (chrome.css carries NO .seg
+   rules — the scroll-mode seg lives only in the iframe). It's a direct child of #rail, OUTSIDE .rail-scroll,
+   so the annotate-paused dim (which fades .rail-scroll) leaves it full-opacity — the switch stays crisp while
+   the tools grey out, making "am I drawing or answering" obvious. Shown whenever the rail is (annotate-active);
+   the ACTIVE half is accent-FILLED (stronger than a tool's soft highlight) so the mode reads at a glance. */
+.scribble-chrome #mode-seg {
+  display: inline-flex; align-self: center; flex: none; margin-right: 2px;
+  border: 1px solid #c9d6f7; border-radius: 9px; overflow: hidden;
+}
+.scribble-chrome #mode-seg .seg {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 40px; padding: 0 11px; border: none; background: #fff; color: var(--muted);
+  font: 600 11px/1 system-ui, -apple-system, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.scribble-chrome #mode-seg .seg + .seg { border-left: 1px solid #c9d6f7; }
+.scribble-chrome #mode-seg .seg svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.scribble-chrome #mode-seg .seg:hover:not(.active) { background: #f2f4f7; color: var(--ink); }
+.scribble-chrome #mode-seg .seg.active { background: var(--accent); color: #fff; }
+/* v184 review (low): on a very narrow viewport (mobile portrait / a tiny question card) drop the switch
+   labels to icon-only so the fixed-width switch can't push the bar past the card edge — the pencil/keyboard
+   icons + aria-label keep it usable. Labels return at normal widths. */
+@media (max-width: 380px) {
+  .scribble-chrome #mode-seg .seg span { display: none; }
+  .scribble-chrome #mode-seg .seg { padding: 0 9px; }
+}
 .scribble-chrome #rail .tool:disabled { opacity: .34; }
 .scribble-chrome #rail .tool:disabled span { color: var(--muted); }
 /* fp-grip BASE (mirror style.css:766-773) — display + svg sizing + grab cursor; the Hairline+ override
