@@ -29,15 +29,15 @@ class site), the user requires this exact process:
    reasoning effort. Adversarially verify every finding. Reviewers are
    **READ-ONLY** — never let a review agent edit the shared working tree (a
    Cycle-2 agent once reverted `lib.rs`); the main loop applies the fixes.
-2. **Deploy the bundle to BOTH course copies** (`prairielearn/example-course` via
-   `./prairielearn/deploy.sh`, then the same rsync — since v172 WITHOUT any `chrome.css`
-   exclude (the reparented toolbar loads it in the parent page; excluding it 404s the bar's styling) —
-   into `pl-uiuc-ece498sl/clientFilesCourse/scribble/`). **Since v182 ALSO `--exclude 'refs/'`** on the
-   class rsync (as deploy.sh now does): `refs/` holds COURSE-owned reference sheets (the `?file=<leaf>`
-   targets, e.g. `refs/mt.pdf`) committed in the COURSE repo — a tool deploy's `--delete` must never wipe
-   them. Bump the cache version.
-   (The old "local Docker at :3000 first" stage is DEAD — Colima + macOS TCC on
-   `~/Desktop`; hosted PrairieLearn instructor Preview replaces it.)
+2. **Deploy with ONE command** (v185/roadmap #5): `./prairielearn/deploy.sh` builds the wasm and deploys the
+   bundle to BOTH course copies (`prairielearn/example-course` + the sibling `../pl-uiuc-ece498sl`), syncs the
+   `pl-scribble` ELEMENT (demo copy = source of truth → class repo), and runs a **drift gate** (`diff -r`) that
+   FAILS if the two deployed trees differ. Excludes (baked into the script): since v172 NO `chrome.css` exclude
+   (the reparented toolbar loads it in the parent page; excluding it 404s the bar's styling); since v182
+   `--exclude 'refs/'` — `refs/` holds COURSE-owned reference sheets (the `?file=<leaf>` targets, e.g.
+   `refs/mt.pdf`), so a tool deploy's `--delete` must never wipe them. Bump the cache version BEFORE running it.
+   (The old two hand-run rsyncs + hand-copied element are GONE — one script now, drift-gated. The old "local
+   Docker at :3000 first" stage is also dead — hosted PrairieLearn instructor Preview replaces it.)
 3. **Commit in both repos** (short one-line message, sole author, **no** co-author
    trailer). `git fetch` the class repo FIRST — the prof pushes to the same `main`.
 4. **STOP — the USER runs `git push` and clicks the course Sync.** Never push.
