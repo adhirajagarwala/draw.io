@@ -39,6 +39,24 @@ network-bound):
   cursor-read another student's snapshots and where PL's own form persists the
   graded work anyway (v181, from the security sweep).
 
+### Standalone is a locked reference tool by default (v182)
+Served **standalone** (a real, non-localhost host), Scribble is a **locked reference
+sheet**: no Open / Save / Resume / Export, and it opens **only** the file named by a
+validated same-origin `?file=` (see the `?file=` allowlist below). This is a served-in
+property of the deployment — a student cannot strip it from the URL. Change `?file=`
+per exam. **This does not affect the PL overlay/embed** (they inject `__SCRIBBLE_PL` /
+`__SCRIBBLE_EMBED` before the module loads and are gated out; their own chrome already
+hides the file actions).
+
+Deploy footgun to know: with **no** `scribble-locked` meta, a standalone build is locked
+and — absent `?file=` — shows only "Your reference sheet will appear here." with no way
+to open anything (a silent, non-erroring dead tool to anyone expecting the old full
+annotator). To ship a **full** standalone annotator, add
+`<meta name="scribble-locked" content="false">`. For local dev, append `?unlock` on
+localhost. `window.__SCRIBBLE_LOCKED` / meta `content="true"` force the lock even on
+localhost. The lock stays sealed if the `?file=` fetch fails (a pre-window 403 / offline
+never re-exposes the file actions).
+
 ### Strict Content-Security-Policy
 Set in `index.html` (mirror it as an HTTP header when hosting):
 

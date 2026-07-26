@@ -87,7 +87,10 @@
     </div>
 
     <!-- ============ THE REAL SCRIBBLE TOOL (embedded) ============ -->
-    <iframe id="scribble-frame" src="../index.html?embed" data-source="#problem"
+    <!-- v182: &unlock (honoured on localhost only) because the standalone now locks by default; production PL
+         embed injects __SCRIBBLE_EMBED in its srcdoc so it's never locked, but this plain ?embed harness sets
+         that flag only at runtime, after app.js reads it — so the local harness needs the dev unlock. -->
+    <iframe id="scribble-frame" src="../index.html?embed&unlock" data-source="#problem"
             title="Scribble"></iframe>
   </div>
 </body>

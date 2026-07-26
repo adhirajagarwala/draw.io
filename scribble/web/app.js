@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "181";
+const APP_VERSION = "182";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=181";
+import init, { App } from "./pkg/scribble.js?v=182";
 import {
   bytesToB64,
   b64ToBlobUrl,
@@ -26,35 +26,51 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=181";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=181";
-import { initEmbed } from "./embed.js?v=181";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=181";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=181";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=181";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=181";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=181";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=181";
-import { makeResizable } from "./rail-resize.js?v=181";
-import { makeOverflow } from "./rail-overflow.js?v=181";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=181";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=181";
+} from "./utils.js?v=182";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=182";
+import { initEmbed } from "./embed.js?v=182";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=182";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=182";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=182";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=182";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=182";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=182";
+import { makeResizable } from "./rail-resize.js?v=182";
+import { makeOverflow } from "./rail-overflow.js?v=182";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=182";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=182";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
 // head script, ahead of the CSP meta). All edit entry points short-circuit on it.
 const READONLY = !!window.__SCRIBBLE_READONLY;
 
-// v181: deploy-time HARD lock for a reference-sheet build. Unlike ?file= (whose lock is affordance-only —
-// stripping the query param yields the full tool), this is a served-in flag, so a student can't remove it
-// from the URL. When set, the build is a pure reference sheet: no Open/Save/Resume/Export ever appear and no
-// other file can be opened — only the validated ?file= reference loads (chosen per exam). Enable it by setting
-// `<meta name="scribble-locked" content="true">` in the served index.html (the CSP forbids inline <script>, so
-// a meta flag is the standalone-safe switch), then link students to `…?file=<that exam's reference>`.
-// window.__SCRIBBLE_LOCKED is also honoured (e.g. a PL srcdoc that injects it). (?file= alone still engages the
-// same lock UI for PL-linked use.)
-const LOCKED_BUILD = !!window.__SCRIBBLE_LOCKED
-  || document.querySelector('meta[name="scribble-locked"]')?.content === "true";
+// v182: the STANDALONE Scribble is a LOCKED reference tool BY DEFAULT — no Open/Save/Resume/Export ever
+// appear and no other file can be opened; it loads only the validated ?file= reference (chosen per exam).
+// This is a served-in property of the deployment, not a URL flag, so a student can't strip it.
+//
+// Crucially this must NEVER lock the PL OVERLAY/EMBED: pl-scribble.py builds the overlay by READING this same
+// index.html and wrapping it as a srcdoc, so the meta below rides along — but the overlay/embed inject
+// __SCRIBBLE_PL / __SCRIBBLE_EMBED before this module runs and load the question via config (not file buttons),
+// so we gate on that FIRST and leave them entirely alone (their own chrome already hides the file actions).
+//
+// Escapes a real-host student can't use: an explicit `<meta name="scribble-locked" content="false">` ships a
+// FULL standalone annotator; on localhost only, `?unlock` gives a dev the full tool. A real-host ?unlock is
+// ignored, and `window.__SCRIBBLE_LOCKED` / meta content="true" force the lock even on localhost.
+// _sbEmbedded is GLOBALS-ONLY on purpose (v182 review): it deliberately does NOT honor the ?embed / ?overlay
+// query the way embed.js does. Recognizing ?embed here would let a student strip the lock with
+// `…/index.html?embed&open` (embed mode leaves body.locked off; ?open then pops the picker). Every REAL embed
+// (pl-scribble.py srcdoc) injects __SCRIBBLE_EMBED as an inline <script> before this deferred module, so the
+// global is always set first — a query-only embed on a real host is a localhost-dev construct only.
+const _sbEmbedded = !!(window.__SCRIBBLE_PL || window.__SCRIBBLE_EMBED);
+const _sbMetaLock = document.querySelector('meta[name="scribble-locked"]')?.content;
+const _sbLocalhost = ["localhost", "127.0.0.1", ""].includes(location.hostname) || location.protocol === "file:";
+let LOCKED_BUILD;
+if (_sbEmbedded) LOCKED_BUILD = false;                                    // overlay / embed: never (own chrome)
+else if (window.__SCRIBBLE_LOCKED || _sbMetaLock === "true") LOCKED_BUILD = true;  // forced lock
+else if (_sbMetaLock === "false") LOCKED_BUILD = false;                   // explicit full-tool build
+else if (_sbLocalhost && new URLSearchParams(location.search).has("unlock")) LOCKED_BUILD = false; // dev only
+else LOCKED_BUILD = true;                                                 // DEFAULT: standalone is a locked ref tool
 if (LOCKED_BUILD) document.body.classList.add("locked"); // early: no flash of the soon-hidden file actions
 
 // PDF.js is imported lazily so a load failure there can never break the UI.
@@ -2471,10 +2487,20 @@ function refFileRequest() {
   }
 }
 
+// v182: in a LOCKED build these failure messages must NEVER point at the (hidden) Open button, and — because
+// status() auto-clears after 4s while routeOpen never runs to hide the placeholder — they must ALSO write a
+// persistent line into the center placeholder so the student isn't left staring at "Open a PDF…" next to a
+// button that doesn't exist (v182 review #2/#3).
+function refFail(msg) {
+  status(msg);
+  if (LOCKED_BUILD && els.placeholder) els.placeholder.textContent = msg;
+}
 async function openReferenceFile() {
   const req = refFileRequest();
   if (!req) {
-    status("That reference link isn't valid — you can open a file yourself with the Open button.");
+    refFail(LOCKED_BUILD
+      ? "This reference link is invalid — ask your instructor for the correct link."
+      : "That reference link isn't valid — you can open a file yourself with the Open button.");
     return;
   }
   document.body.classList.add("locked"); // before any await: no flash of the soon-hidden file actions
@@ -2491,7 +2517,7 @@ async function openReferenceFile() {
     // unlocking here on a pre-window 403 / offline fetch would re-expose Open/Save/Export and defeat the
     // guaranteed lock. So only the soft lock unwinds; the hard lock just reports and stays sealed.
     if (!LOCKED_BUILD) document.body.classList.remove("locked");
-    status(e?.httpStatus === 403
+    refFail(e?.httpStatus === 403
       ? "That reference isn't available yet — it may unlock when the assessment opens."
       : (LOCKED_BUILD
         ? "The reference file couldn't be loaded — reload to try again."
@@ -4871,7 +4897,10 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
     // the normal Open UI if the value is invalid); the ?open picker-popper runs only when ?file is
     // absent. Branch on PRESENCE, not validity, so a malformed link still gets feedback.
     if (new URLSearchParams(location.search).has("file")) openReferenceFile();
-    else if (LOCKED_BUILD) status("Locked reference tool — add ?file=<reference> to the link to load a sheet."); // v181: no picker to fall back to
+    else if (LOCKED_BUILD) { // v181/v182: locked ref tool with no ?file= — there's no picker to fall back to
+      status("Reference tool — this link is missing its ?file=. Open the reference from your assignment link.");
+      if (els.placeholder) els.placeholder.textContent = "Your reference sheet will appear here.";
+    }
     else autoOpenIfRequested(); // "Open in a new tab" → pop the file picker here
     if (AUTOSAVE_ENABLED) idbPrune(); // v181: bound the autosave store — standalone only (never touch it in PL/embed)
   })
