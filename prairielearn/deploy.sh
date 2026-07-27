@@ -21,6 +21,22 @@ cargo build --release --target wasm32-unknown-unknown
 wasm-bindgen target/wasm32-unknown-unknown/release/scribble.wasm \
   --target web --out-dir web/pkg --no-typescript
 
+# VERSION GATE (v187): every ?v=<N> in the web bundle must equal app.js's APP_VERSION. Hand-bumping ~20
+# references (index.html + each module's cross-imports) is easy to get wrong, and a single stray old ?v= is a
+# silent normal-reload break (a fresh JS against a cached old module). Fail the deploy on any drift.
+echo "→ version gate…"
+WEB="$REPO/scribble/web"
+APPV="$(grep -oE 'APP_VERSION = "([0-9]+)"' "$WEB/app.js" | grep -oE '[0-9]+')"
+[ -n "$APPV" ] || { echo "::error:: could not read APP_VERSION from app.js"; exit 1; }
+GREP_OPTS=(--include='*.js' --include='*.html' --exclude-dir=vendor --exclude-dir=pkg --exclude-dir=embed --exclude-dir=test)
+STRAY="$(grep -rhoE '\?v=[0-9]+' "$WEB" "${GREP_OPTS[@]}" 2>/dev/null | grep -oE '[0-9]+' | sort -u | grep -vx "$APPV" || true)"
+if [ -n "$STRAY" ]; then
+  echo "::error:: version drift — APP_VERSION=$APPV but found stale ?v= referencing: $(echo $STRAY | tr '\n' ' ')"
+  grep -rnE '\?v=[0-9]+' "$WEB" "${GREP_OPTS[@]}" | grep -vE "\?v=$APPV([^0-9]|$)"
+  exit 1
+fi
+echo "  ✓ all ?v= match APP_VERSION=$APPV"
+
 # Deploy the compiled bundle into a course's clientFilesCourse/scribble/. Since v172: NO chrome.css exclude
 # (the reparented toolbar loads it in the parent). Since v182: --exclude 'refs/' — refs/ is COURSE-OWNED
 # reference content, so a tool deploy's --delete must never wipe a course's reference sheets.

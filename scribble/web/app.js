@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "186";
+const APP_VERSION = "187";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=186";
+import init, { App } from "./pkg/scribble.js?v=187";
 import {
   bytesToB64,
   b64ToBlob,
@@ -27,20 +27,20 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=186";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=186";
-import { initEmbed } from "./embed.js?v=186";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=186";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=186";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=186";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=186";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=186";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=186";
-import { computeOverlayPE } from "./overlay-pe.js?v=186";
-import { makeResizable } from "./rail-resize.js?v=186";
-import { makeOverflow } from "./rail-overflow.js?v=186";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=186";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=186";
+} from "./utils.js?v=187";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=187";
+import { initEmbed } from "./embed.js?v=187";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=187";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=187";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=187";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=187";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=187";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=187";
+import { computeOverlayPE } from "./overlay-pe.js?v=187";
+import { makeResizable } from "./rail-resize.js?v=187";
+import { makeOverflow } from "./rail-overflow.js?v=187";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=187";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=187";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -133,6 +133,7 @@ const els = {
   widthDivider: $("width-divider"),
   status: $("status"),
   persistAlert: $("persist-alert"),
+  bootSplash: $("boot-splash"),
   btn: {
     open: $("btn-open"), save: $("btn-save"), load: $("btn-load"),
     undo: $("btn-undo"), redo: $("btn-redo"),
@@ -289,6 +290,23 @@ function status(msg) {
   els.status.classList.add("show");
   clearTimeout(statusTimer);
   statusTimer = setTimeout(() => els.status.classList.remove("show"), 4000);
+}
+
+// v187: boot splash for the slow STANDALONE load (wasm + PDF.js + fetch). Both helpers are idempotent so any
+// number of ready/error paths can call hideBootSplash() safely. A fail-safe timeout guarantees the splash can
+// never get stuck covering the tool (fail-invisible), even if a boot step hangs or throws before a hide fires.
+let bootSplashTimer;
+function showBootSplash(msg) {
+  if (!els.bootSplash) return;
+  const m = els.bootSplash.querySelector(".bs-msg");
+  if (m && msg) m.textContent = msg; // textContent only — never HTML
+  els.bootSplash.hidden = false;
+  clearTimeout(bootSplashTimer);
+  bootSplashTimer = setTimeout(hideBootSplash, 20000); // never strand the splash over the tool
+}
+function hideBootSplash() {
+  clearTimeout(bootSplashTimer);
+  if (els.bootSplash) els.bootSplash.hidden = true;
 }
 
 // Persistent, high-attention alerts that must NOT auto-clear (unlike status()'s 4s toast) and must
@@ -836,6 +854,7 @@ async function openPdf(file) {
     scrollMode = doc.numPages > 1 ? "continuous" : "paged";
     setScrollEnabled(true);
     syncScrollUI();
+    hideBootSplash(); // v187: PDF rendered — clear the standalone boot splash
     els.placeholder.hidden = true;
     els.wrap.hidden = false;
     enableDocUI({ thumbs: true, pageNav: true });
@@ -891,6 +910,7 @@ async function openHtml(file) {
     // The uploaded HTML renders in a same-origin sandboxed iframe with NO
     // script permission, so embedded scripts never run — it shows as static
     // content and can't do anything. The annotation canvas sits on top.
+    hideBootSplash(); // v187: HTML doc rendered — clear the standalone boot splash
     els.placeholder.hidden = true;
     els.wrap.hidden = false;
     els.pdfCanvas.hidden = true;
@@ -2452,8 +2472,9 @@ els.btn.export.addEventListener("click", exportPdf);
 
 // Open a picked file as HTML or PDF (by extension/MIME, HTML otherwise PDF).
 function routeOpen(f) {
-  if (/\.html?$/i.test(f.name) || f.type === "text/html") openHtml(f);
-  else openPdf(f);
+  // Return the open promise so a caller (openReferenceFile) can await completion and run cleanup afterward.
+  // openPdf/openHtml catch their own failures (they RESOLVE, not reject), so awaiting is safe and never throws.
+  return (/\.html?$/i.test(f.name) || f.type === "text/html") ? openHtml(f) : openPdf(f);
 }
 
 els.filePdf.addEventListener("change", () => {
@@ -2509,6 +2530,7 @@ function refFileRequest() {
 // persistent line into the center placeholder so the student isn't left staring at "Open a PDF…" next to a
 // button that doesn't exist (v182 review #2/#3).
 function refFail(msg) {
+  hideBootSplash(); // v187: the reference didn't load — clear the splash so this message is visible
   status(msg);
   if (LOCKED_BUILD && els.placeholder) els.placeholder.textContent = msg;
 }
@@ -2527,7 +2549,13 @@ async function openReferenceFile() {
     if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { httpStatus: r.status });
     const blob = await r.blob();
     const fallbackType = /\.html?$/i.test(req.name) ? "text/html" : "application/pdf";
-    routeOpen(new File([blob], req.name, { type: blob.type || fallbackType }));
+    await routeOpen(new File([blob], req.name, { type: blob.type || fallbackType }));
+    // openPdf/openHtml swallow a render failure (corrupt/truncated PDF, size/page cap) — they RESOLVE, so this
+    // is never caught below. Detect it here and give the LOCKED tool a proper message + placeholder rather than
+    // the default "Open a PDF…" that points at a hidden Open button (restores the v182 no-mispoint design).
+    if (!docOpen()) refFail(LOCKED_BUILD
+      ? "The reference couldn't be displayed — reload to try again."
+      : "That file couldn't be displayed — you can open a file yourself with the Open button.");
   } catch (e) {
     // A dead SOFT-locked tool (?file= only) would strand the student mid-exam — unlock and fall back to the
     // normal Open UI. But a HARD deploy lock (LOCKED_BUILD) must STAY locked: v181 review caught that
@@ -2539,6 +2567,10 @@ async function openReferenceFile() {
       : (LOCKED_BUILD
         ? "The reference file couldn't be loaded — reload to try again."
         : "The reference file couldn't be loaded — you can open a file yourself with the Open button."));
+  } finally {
+    // Guarantee the boot splash clears once the open ATTEMPT concludes (success, swallowed render failure, or
+    // fetch error) — otherwise a render failure would strand it until the 20s fail-safe (v187 review finding).
+    hideBootSplash();
   }
 }
 
@@ -4168,6 +4200,13 @@ if (new URLSearchParams(location.search).has("debug") || window.__SCRIBBLE_EMBED
 // Resolve against import.meta.url (this module's own location), NOT a relative string: the
 // glue fetch()es a string against the DOCUMENT base, which in PL srcdoc mode hinges on
 // pl-scribble.py's injected <base href>. new URL(..., import.meta.url) is base-independent.
+// v187: show the boot splash BEFORE the slow wasm load, but only in the STANDALONE tool — never in the overlay
+// (_sbEmbedded), where it must stay fail-invisible. Covers wasm init + the ?file PDF fetch/render (the parts the
+// user saw as a blank, "is-it-broken?" wait). hideBootSplash() fires from routeOpen / refFail / the no-file boot
+// branch / the fail-safe timeout.
+if (!_sbEmbedded) {
+  showBootSplash(new URLSearchParams(location.search).has("file") ? "Loading your reference…" : "Loading…");
+}
 init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.meta.url) })
   .then(() => {
     app = new App();
@@ -4992,14 +5031,18 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
     // the normal Open UI if the value is invalid); the ?open picker-popper runs only when ?file is
     // absent. Branch on PRESENCE, not validity, so a malformed link still gets feedback.
     if (new URLSearchParams(location.search).has("file")) openReferenceFile();
-    else if (LOCKED_BUILD) { // v181/v182: locked ref tool with no ?file= — there's no picker to fall back to
-      status("Reference tool — this link is missing its ?file=. Open the reference from your assignment link.");
-      if (els.placeholder) els.placeholder.textContent = "Your reference sheet will appear here.";
+    else { // no ?file: nothing is loading, so clear the standalone boot splash and show the normal idle state
+      hideBootSplash();
+      if (LOCKED_BUILD) { // v181/v182: locked ref tool with no ?file= — there's no picker to fall back to
+        status("Reference tool — this link is missing its ?file=. Open the reference from your assignment link.");
+        if (els.placeholder) els.placeholder.textContent = "Your reference sheet will appear here.";
+      }
+      else autoOpenIfRequested(); // "Open in a new tab" → pop the file picker here
     }
-    else autoOpenIfRequested(); // "Open in a new tab" → pop the file picker here
     if (AUTOSAVE_ENABLED) idbPrune(); // v181: bound the autosave store — standalone only (never touch it in PL/embed)
   })
   .catch((e) => {
     console.error("WASM init failed:", e);
+    hideBootSplash(); // v187: boot failed — never leave the splash covering the tool (fail-invisible)
     status(`Failed to start: ${e?.message || e}`);
   });

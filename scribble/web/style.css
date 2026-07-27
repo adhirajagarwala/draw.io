@@ -1559,6 +1559,36 @@ body.overlay.big #context-bar .swatch { width: 26px; height: 26px; }
 
 #status.show { opacity: 0.92; } /* v186: slight fade so the text, not just the background, lets the page through */
 
+/* ---------- v187: standalone boot splash ---------- */
+/* Covers the STAGE (doc area) during the slow standalone load (wasm + PDF.js + fetch) while the surrounding
+   tool chrome is already painted, so the tool never looks blank/broken. app.js reveals it only when standalone
+   and hides it once the doc renders (or a fail-safe timeout). Never shown in the overlay (fail-invisible). */
+#boot-splash {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 14px;
+}
+#boot-splash[hidden] { display: none; } /* restore hiding — the display:flex above overrides the UA [hidden] rule */
+.bs-ring {
+  width: 34px;
+  height: 34px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: bs-spin 0.8s linear infinite;
+}
+.bs-msg { margin: 0; }
+@keyframes bs-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .bs-ring { animation-duration: 2.4s; } }
+
 /* Persistent alert (autosave failure / scratchpad nearly full). Pinned near the TOP-center so it is
    visible when the student is reading the question top (the bottom-fixed #status is the worst spot in a
    tall overlay iframe). Does not auto-clear. High z so it sits above the toolbar. */

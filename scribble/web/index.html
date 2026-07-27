@@ -20,7 +20,7 @@
        headers, and a stale app.js running against a fresh .wasm was the
        single biggest source of "it broke after an update". Bump APP_VERSION
        in app.js and these together on every release. -->
-  <link rel="stylesheet" href="style.css?v=186">
+  <link rel="stylesheet" href="style.css?v=187">
 </head>
 <body>
   <!-- ============================ TOP BAR ============================ -->
@@ -193,6 +193,13 @@
          floating overlays (context bar, doc controls), so the overlays stay
          pinned while the page scrolls. -->
     <section id="stage">
+      <!-- v187: boot affordance for the SLOW standalone load (wasm + PDF.js + fetch). Hidden by default so it can
+           NEVER flash over the exam in the overlay (fail-invisible); app.js reveals it only when standalone, and
+           hides it once the doc renders (or a fail-safe timeout fires). -->
+      <div id="boot-splash" hidden role="status" aria-live="polite">
+        <div class="bs-ring" aria-hidden="true"></div>
+        <p class="bs-msg">Loading…</p>
+      </div>
       <div id="viewer">
         <p id="placeholder">Open a PDF or HTML file to start scribbling.</p>
         <!-- HTML docs (single page) use this wrapper directly. -->
@@ -370,22 +377,22 @@
   <!-- RACE-3 (audit, high): preload the whole module graph in parallel. The v172 wedge's leading
        mechanism is a script-blocking stall while parser-inserted modules wait; preloading shrinks
        the serial window. Keep this list in lockstep with app.js's imports. -->
-  <link rel="modulepreload" href="app.js?v=186">
-  <link rel="modulepreload" href="pkg/scribble.js?v=186">
-  <link rel="modulepreload" href="utils.js?v=186">
-  <link rel="modulepreload" href="pdf-writer.js?v=186">
-  <link rel="modulepreload" href="embed.js?v=186">
-  <link rel="modulepreload" href="idb.js?v=186">
-  <link rel="modulepreload" href="text-extract.js?v=186">
-  <link rel="modulepreload" href="modals.js?v=186">
-  <link rel="modulepreload" href="colorbar.js?v=186">
-  <link rel="modulepreload" href="notes-dock.js?v=186">
-  <link rel="modulepreload" href="floating-panel.js?v=186">
-  <link rel="modulepreload" href="overlay-pe.js?v=186">
-  <link rel="modulepreload" href="rail-resize.js?v=186">
-  <link rel="modulepreload" href="rail-overflow.js?v=186">
-  <link rel="modulepreload" href="calc-dodge.js?v=186">
-  <link rel="modulepreload" href="visible-band.js?v=186">
-  <script type="module" src="app.js?v=186"></script>
+  <link rel="modulepreload" href="app.js?v=187">
+  <link rel="modulepreload" href="pkg/scribble.js?v=187">
+  <link rel="modulepreload" href="utils.js?v=187">
+  <link rel="modulepreload" href="pdf-writer.js?v=187">
+  <link rel="modulepreload" href="embed.js?v=187">
+  <link rel="modulepreload" href="idb.js?v=187">
+  <link rel="modulepreload" href="text-extract.js?v=187">
+  <link rel="modulepreload" href="modals.js?v=187">
+  <link rel="modulepreload" href="colorbar.js?v=187">
+  <link rel="modulepreload" href="notes-dock.js?v=187">
+  <link rel="modulepreload" href="floating-panel.js?v=187">
+  <link rel="modulepreload" href="overlay-pe.js?v=187">
+  <link rel="modulepreload" href="rail-resize.js?v=187">
+  <link rel="modulepreload" href="rail-overflow.js?v=187">
+  <link rel="modulepreload" href="calc-dodge.js?v=187">
+  <link rel="modulepreload" href="visible-band.js?v=187">
+  <script type="module" src="app.js?v=187"></script>
 </body>
 </html>
