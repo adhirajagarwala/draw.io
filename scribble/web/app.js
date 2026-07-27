@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "185";
+const APP_VERSION = "186";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,28 +18,29 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=185";
+import init, { App } from "./pkg/scribble.js?v=186";
 import {
   bytesToB64,
+  b64ToBlob,
   b64ToBlobUrl,
   autoGrow,
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=185";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=185";
-import { initEmbed } from "./embed.js?v=185";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=185";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=185";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=185";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=185";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=185";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=185";
-import { computeOverlayPE } from "./overlay-pe.js?v=185";
-import { makeResizable } from "./rail-resize.js?v=185";
-import { makeOverflow } from "./rail-overflow.js?v=185";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=185";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=185";
+} from "./utils.js?v=186";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=186";
+import { initEmbed } from "./embed.js?v=186";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=186";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=186";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=186";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=186";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=186";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=186";
+import { computeOverlayPE } from "./overlay-pe.js?v=186";
+import { makeResizable } from "./rail-resize.js?v=186";
+import { makeOverflow } from "./rail-overflow.js?v=186";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=186";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=186";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -1576,10 +1577,24 @@ function showPageImageMenu(clientX, clientY) {
     b.addEventListener("click", () => { hidePageMenu(); onPick(); });
     menu.appendChild(b);
   };
-  item("Copy image", () => capture(async (blob) => {
-    try { await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]); status("Page image copied to the clipboard."); }
-    catch { status("Couldn't copy — the browser blocked clipboard access."); }
-  }, "Capturing the page…"));
+  // v186: copy the whole-page raster IN-GESTURE — build the Promise<Blob> and hand it straight to ClipboardItem
+  // so write() runs inside the click. An `await capturePageCanvas()` before write() (the old code, via capture())
+  // drops the user-activation and WebKit rejects. No blob: fetch here — the raster is a fresh canvas Blob.
+  item("Copy image", () => {
+    if (!(navigator.clipboard?.write && window.ClipboardItem)) { status("Couldn't copy — the browser blocked clipboard access."); return; }
+    status("Capturing the page…");
+    // Distinguish a capture failure from a clipboard block via a flag (not err.message — write() often rejects
+    // with a generic DOMException). Keep the write IN-GESTURE: do NOT await capturePageCanvas() before write().
+    let captureFailed = false;
+    const pngP = capturePageCanvas().then((c) => {
+      if (!c) { captureFailed = true; throw new Error("capture failed"); }
+      return new Promise((res, rej) => c.toBlob((b) => b ? res(b) : (captureFailed = true, rej(new Error("toBlob failed"))), "image/png"));
+    });
+    navigator.clipboard.write([new ClipboardItem({ "image/png": pngP })])
+      .then(() => status("Page image copied to the clipboard."))
+      .catch(() => status(captureFailed ? "Couldn't capture the page." : "Couldn't copy — the browser blocked clipboard access."));
+    pngP.catch(() => {}); // rejection is surfaced via write()'s catch (branched on captureFailed); mark handled
+  });
   item("Save image", () => capture((blob) => downloadBlob(blob, `page-${fileStamp()}.png`), "Capturing the page…"));
   menu._onAway = (e) => { if (!menu.contains(e.target)) hidePageMenu(); };
   document.body.appendChild(menu);
@@ -3309,20 +3324,66 @@ function buildTextBlock(div, i) {
 // auto-growing caption.
 // Copy a notes clipping (its blob-URL PNG) to the system clipboard, with brief
 // in-button feedback. Needs a secure context (localhost / https) and a user gesture.
-async function copyImageToClipboard(src, btn, text) {
-  const label = btn && btn.textContent;
+// Re-encode a PNG Blob through a canvas so the clipboard receives a CANVAS-NATIVE image Blob. Verified in
+// Chromium (and Safari is historically strict too): clipboard.write() rejects a hand-CONSTRUCTED image/png Blob
+// (atob -> Uint8Array -> new Blob, i.e. b64ToBlob) with DataError "Failed to read or decode…", yet accepts a
+// canvas-produced Blob for the exact same pixels — which is why the snip-time auto-copy (out.toBlob, works) and
+// the page "Copy image" (capturePageCanvas, works) both succeed while the per-clip Copy (b64ToBlob) did not.
+// Pixel-lossless here (the snip raster is opaque, white-filled — no premultiplied-alpha rounding). Returns a
+// Promise<Blob> so the caller hands it straight to ClipboardItem and keeps write() in-gesture.
+function pngToCanvasBlob(blob) {
+  if (!blob) return Promise.reject(new Error("no image"));
+  return createImageBitmap(blob).then((bmp) => {
+    try {
+      const c = document.createElement("canvas");
+      c.width = bmp.width; c.height = bmp.height;
+      const ctx = c.getContext("2d");
+      if (!ctx) throw new Error("no 2d context");
+      ctx.drawImage(bmp, 0, 0); // pixels are copied into the canvas here — safe to close the bitmap next
+      return new Promise((res, rej) => c.toBlob((b) => b ? res(b) : rej(new Error("re-encode failed")), "image/png"));
+    } finally {
+      bmp.close?.(); // release even if getContext/drawImage throws (was leaked on that error path)
+    }
+  });
+}
+
+// Copy a PNG to the system clipboard, in-gesture. `blobSrc` is a Blob OR a Promise<Blob> (a canvas raster /
+// re-encode). Two hard rules, both learned the hard way (v186):
+//   1. NEVER fetch a blob:/data: URL to get the bytes. The app CSP is `default-src 'self'` with no connect-src,
+//      so fetch("blob:…") is BLOCKED on every browser (TypeError) — that (not a gesture quirk) is what made the
+//      old per-clip Copy fail EVERY time while the snip-time auto-copy (which used the Blob directly) still put
+//      the image on the clipboard, i.e. the "says Couldn't copy but it pasted" bug.
+//   2. Call write() SYNCHRONOUSLY in the click and let ClipboardItem await the Promise — an `await` before write()
+//      drops the user-activation and Safari/unfocused-Chrome reject. Passing a Blob/Promise keeps write in-gesture.
+// v181 intent kept: carry the caption as text/plain so a rich PL editor pastes the image and a plain <textarea>
+// pastes the text; a few engines reject that mixed item though, so on failure we retry image-only before crying.
+async function copyImageToClipboard(blobSrc, btn, text) {
+  // Stable original label + a single cancellable timer per button, so rapid re-clicks can't capture a transient
+  // caption ("Copied ✓"/"Couldn't copy") as the label or leave a stale restore that re-shows a false failure.
+  if (btn && !btn.dataset.origLabel) btn.dataset.origLabel = btn.textContent;
+  const flash = (msg, ms) => {
+    if (!btn) return;
+    btn.textContent = msg;
+    clearTimeout(btn._flashT);
+    btn._flashT = setTimeout(() => { btn.textContent = btn.dataset.origLabel; }, ms);
+  };
+  const imgP = Promise.resolve(blobSrc); // normalize Blob | Promise<Blob>; a settled Blob is re-readable for the retry
+  imgP.catch(() => {}); // if blobSrc is an already-rejected promise (corrupt clip), write()'s catch reports it — mark handled so no unhandledrejection
+  const rich = { "image/png": imgP };
+  if (text && text.trim()) rich["text/plain"] = Promise.resolve(new Blob([text], { type: "text/plain" }));
   try {
-    const blob = await fetch(src).then((r) => r.blob());
-    // v181: write BOTH flavors when there's caption text — a rich PL answer editor pastes the image, a plain
-    // <textarea> pastes the text. One ClipboardItem, one write, so whichever the answer box accepts lands.
-    const parts = { "image/png": blob };
-    if (text && text.trim()) parts["text/plain"] = new Blob([text], { type: "text/plain" });
-    await navigator.clipboard.write([new ClipboardItem(parts)]);
-    if (btn) { btn.textContent = "Copied ✓"; setTimeout(() => { btn.textContent = label; }, 1400); }
-  } catch {
-    // v181: don't fail silently — the student needs to know the paste won't work and what to do instead.
-    if (btn) { btn.textContent = "Couldn't copy"; setTimeout(() => { btn.textContent = label; }, 1900); }
-    status("Couldn't copy — the browser blocked clipboard access. Try again, or check the site's clipboard permission.");
+    await navigator.clipboard.write([new ClipboardItem(rich)]);
+    flash("Copied ✓", 1400);
+  } catch (e1) {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": imgP })]);
+      flash("Copied ✓", 1400);
+    } catch (e2) {
+      // Genuinely blocked (permission / not a secure context) — tell the student so a silent no-op paste isn't a surprise.
+      console.warn("clipboard copy failed:", e1, e2);
+      flash("Couldn't copy", 1900);
+      status("Couldn't copy — the browser blocked clipboard access. Try again, or check the site's clipboard permission.");
+    }
   }
 }
 
@@ -3441,7 +3502,11 @@ document.addEventListener("paste", (e) => {
 
 function buildClippingBlock(div, i) {
   const img = document.createElement("img");
-  img.src = b64ToBlobUrl(app.note_png(i));
+  // Decode the PNG bytes ONCE (Rust holds them as base64). Reused for BOTH the <img> preview and the Copy
+  // button — copyImageToClipboard builds its ClipboardItem from this Blob directly (a blob:-URL fetch is
+  // CSP-blocked under default-src 'self', see that function). null on a corrupt payload → broken-image, as before.
+  const pngBlob = b64ToBlob(app.note_png(i));
+  img.src = pngBlob ? URL.createObjectURL(pngBlob) : "";
   img.dataset.blob = "1";
   img.alt = "clipping";
   // Render at the SOURCE on-screen size (stored disp width), not the 2-4x high-DPI raster's natural size,
@@ -3477,7 +3542,9 @@ function buildClippingBlock(div, i) {
   copy.className = "clip-copy";
   copy.textContent = "Copy image";
   copy.title = "Copy this image to the clipboard";
-  copy.addEventListener("click", () => copyImageToClipboard(img.src, copy, cap.value)); // v181: carry the caption text too
+  // v186: hand a CANVAS-re-encoded Blob (pngToCanvasBlob) — a constructed b64ToBlob Blob is rejected by the
+  // clipboard with DataError; the canvas Blob matches the working snip auto-copy. No blob: fetch (CSP-blocked).
+  copy.addEventListener("click", () => copyImageToClipboard(pngToCanvasBlob(pngBlob), copy, cap.value)); // v181 caption too
   // Wrap the image so a small "×" can remove JUST the image (keeping the caption as a text note) — for when
   // the student only wanted the recognised text, not the picture. Editable views only.
   const imgWrap = document.createElement("div");

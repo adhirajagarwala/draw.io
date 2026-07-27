@@ -1538,19 +1538,26 @@ body.overlay.big #context-bar .swatch { width: 26px; height: 26px; }
   left: 50%;
   transform: translateX(-50%);
   z-index: 60; /* above #doc-controls — the toast was rendering behind the controls pill */
-  background: var(--ink);
+  /* v186: translucent so it no longer blocks the exam content it floats over. The user reported the opaque
+     toast hid "a lot of stuff in the middle of an exam"; the see-through rgba background lets the question show
+     through (--ink is #1f2428 = rgb(31,36,40)). The blur softens busy pages behind it in STANDALONE; in the
+     overlay #status sits in the transparent iframe so the blur is an inert no-op there — harmless, and the rgba
+     still delivers the see-through. Routine self-dismissing toast only — the critical .persist-alert stays opaque. */
+  background: rgba(31, 36, 40, 0.78);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   color: #fff;
   font-size: 13px;
   padding: 9px 16px;
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(20, 24, 28, 0.25);
+  box-shadow: 0 4px 16px rgba(20, 24, 28, 0.22);
   opacity: 0;
   transition: opacity 0.25s;
   pointer-events: none;
   max-width: 80vw;
 }
 
-#status.show { opacity: 1; }
+#status.show { opacity: 0.92; } /* v186: slight fade so the text, not just the background, lets the page through */
 
 /* Persistent alert (autosave failure / scratchpad nearly full). Pinned near the TOP-center so it is
    visible when the student is reading the question top (the bottom-fixed #status is the worst spot in a
