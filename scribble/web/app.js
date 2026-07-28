@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "189";
+const APP_VERSION = "190";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=189";
+import init, { App } from "./pkg/scribble.js?v=190";
 import {
   bytesToB64,
   b64ToBlob,
@@ -27,20 +27,20 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=189";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=189";
-import { initEmbed } from "./embed.js?v=189";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=189";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=189";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=189";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=189";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=189";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=189";
-import { computeOverlayPE } from "./overlay-pe.js?v=189";
-import { makeResizable } from "./rail-resize.js?v=189";
-import { makeOverflow } from "./rail-overflow.js?v=189";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=189";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=189";
+} from "./utils.js?v=190";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=190";
+import { initEmbed } from "./embed.js?v=190";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=190";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=190";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=190";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=190";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=190";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=190";
+import { computeOverlayPE } from "./overlay-pe.js?v=190";
+import { makeResizable } from "./rail-resize.js?v=190";
+import { makeOverflow } from "./rail-overflow.js?v=190";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=190";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=190";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -3784,24 +3784,80 @@ document.addEventListener("visibilitychange", () => {
 
 const THUMB_SCALE_WIDTH = 220; // backing px; CSS shrinks for sharpness
 
+// v190: the thumbnail strip is VIRTUALIZED — sized placeholders up front, each thumbnail's canvas rendered
+// lazily via an IntersectionObserver only while near the strip's viewport, and freed when it scrolls far away.
+// Mirrors the continuous-scroll virtualization (contMount/contOnIntersect/contMountVisible). Opening a long PDF
+// no longer renders EVERY page's thumbnail up front through the shared render lock (the slow-load win).
+let thumbIO = null;
+let thumbPages = []; // i -> { base:{width,height}, mounted:bool }
+
 async function buildThumbnails() {
   els.thumbs.textContent = "";
   thumbState.clear(); // drop any in-flight render state from the previous document
+  if (thumbIO) { thumbIO.disconnect(); thumbIO = null; }
+  thumbPages = [];
   if (!pdfDoc) return;
-  for (let i = 0; i < pdfDoc.numPages; i++) {
+  const doc = pdfDoc;
+  for (let i = 0; i < doc.numPages; i++) {
+    // getPage is cheap here — the main render already parsed these pages and PDF.js caches them; the RENDER is
+    // what we defer. The page aspect ratio sizes a placeholder so the strip's scrollbar + layout stay stable.
+    const page = await doc.getPage(i + 1);
+    if (pdfDoc !== doc) return; // document swapped mid-build
+    const base = page.getViewport({ scale: 1 });
     const btn = document.createElement("button");
     btn.className = "thumb";
     btn.title = `Go to page ${i + 1}`;
+    btn.dataset.page = String(i);
     const canvas = document.createElement("canvas");
+    // Tiny placeholder backing at the page's aspect ratio (CSS width:100% scales it) — correct shape, ~nil
+    // memory, until the observer mounts the real render.
+    canvas.width = 24;
+    canvas.height = Math.max(1, Math.round(24 * base.height / base.width));
     const tag = document.createElement("span");
     tag.className = "pageno";
     tag.textContent = String(i + 1);
     btn.append(canvas, tag);
     btn.addEventListener("click", () => goToPage(i));
     els.thumbs.appendChild(btn);
-    await renderThumb(i); // sequential keeps memory low
+    thumbPages.push({ base: { width: base.width, height: base.height }, mounted: false });
   }
+  thumbIO = new IntersectionObserver(thumbOnIntersect, { root: els.thumbs, rootMargin: "100% 0px" });
+  for (const el of els.thumbs.children) thumbIO.observe(el);
   markActiveThumb();
+  thumbMountVisible(); // render the initially-visible thumbnails synchronously (occluded/background-tab backstop)
+}
+
+// Render thumbnails within ~1 viewport of the strip; free the rest, by pure geometry — a backstop for the
+// IntersectionObserver, which never fires while the tab isn't being painted.
+function thumbMountVisible() {
+  if (!thumbPages.length || els.thumbs.hidden) return;
+  const sr = els.thumbs.getBoundingClientRect();
+  const margin = els.thumbs.clientHeight; // matches the observer's 100% rootMargin
+  [...els.thumbs.children].forEach((el, i) => {
+    const r = el.getBoundingClientRect();
+    const near = r.bottom >= sr.top - margin && r.top <= sr.bottom + margin;
+    if (near) renderThumb(i); else thumbUnmount(i);
+  });
+}
+
+function thumbOnIntersect(entries) {
+  for (const e of entries) {
+    const i = Number(e.target.dataset.page);
+    if (e.isIntersecting) renderThumb(i); else thumbUnmount(i);
+  }
+}
+
+// Free a thumbnail's canvas backing (reset to the tiny placeholder at the page aspect) — the button stays sized.
+function thumbUnmount(i) {
+  const p = thumbPages[i];
+  if (!p || !p.mounted) return;
+  p.mounted = false;
+  if (p.renderTask) { p.renderTask.cancel(); p.renderTask = null; } // v190: cancel a superseded render (mirror contUnmount)
+  const canvas = els.thumbs.children[i]?.querySelector("canvas");
+  if (canvas) {
+    canvas.width = 24;
+    canvas.height = Math.max(1, Math.round(24 * p.base.height / p.base.width));
+  }
 }
 
 // PDF.js forbids two render() calls on one canvas at once, so thumbnail
@@ -3809,6 +3865,7 @@ async function buildThumbnails() {
 const thumbState = new Map(); // i -> {busy, again}
 
 async function renderThumb(i) {
+  if (!thumbPages[i]) return; // not built / out of range
   const st = thumbState.get(i) || { busy: false, again: false };
   thumbState.set(i, st);
   if (st.busy) {
@@ -3816,23 +3873,31 @@ async function renderThumb(i) {
     return;
   }
   st.busy = true;
+  thumbPages[i].mounted = true;
   try {
     const canvas = els.thumbs.children[i]?.querySelector("canvas");
     if (!canvas || !pdfDoc) return;
     const page = await pdfDoc.getPage(i + 1);
+    if (!thumbPages[i]?.mounted) return; // v190: scrolled away during getPage — don't repaint an unmounted cell
     const base = page.getViewport({ scale: 1 });
     const s = THUMB_SCALE_WIDTH / base.width;
     const vp = page.getViewport({ scale: s });
     canvas.width = Math.floor(vp.width);
     canvas.height = Math.floor(vp.height);
     const ctx = canvas.getContext("2d");
-    await withRenderLock(() =>
-      page.render({ canvasContext: ctx, viewport: vp, intent: "print" }).promise);
+    // v190: store the render task (thumbUnmount cancels it) and bail if it unmounted while queued for the lock —
+    // mirrors contMount/contUnmount so a superseded thumbnail render never occupies the shared lock or paints a freed cell.
+    await withRenderLock(() => {
+      if (!thumbPages[i]?.mounted) return Promise.resolve();
+      thumbPages[i].renderTask = page.render({ canvasContext: ctx, viewport: vp, intent: "print" });
+      return thumbPages[i].renderTask.promise;
+    });
     app.ensure_page(i, base.width, base.height);
     app.render(ctx, i, s); // annotations visible in the overview
   } catch (e) {
-    console.warn("thumb render:", e);
+    if (e?.name !== "RenderingCancelledException") console.warn("thumb render:", e); // cancellation on unmount is expected
   } finally {
+    if (thumbPages[i]) thumbPages[i].renderTask = null;
     st.busy = false;
     if (st.again) {
       st.again = false;
@@ -3851,17 +3916,27 @@ let thumbTimer;
 function scheduleThumbRefresh() {
   if (els.thumbs.hidden) return;
   clearTimeout(thumbTimer);
-  thumbTimer = setTimeout(() => renderThumb(pageNum), 800);
+  thumbTimer = setTimeout(() => { if (thumbPages[pageNum]?.mounted) renderThumb(pageNum); }, 800); // v190: only when the current thumb is mounted
 }
 
 els.btn.thumbs.addEventListener("click", async () => {
   els.thumbs.hidden = !els.thumbs.hidden;
   els.btn.thumbs.classList.toggle("active", !els.thumbs.hidden);
   syncAria();
-  if (!els.thumbs.hidden && els.thumbs.childElementCount === 0) {
-    await buildThumbnails();
+  if (!els.thumbs.hidden) {
+    if (els.thumbs.childElementCount === 0) await buildThumbnails();
+    else thumbMountVisible(); // v190: render the now-visible thumbnails (freed while hidden)
   }
 });
+
+// v190: scroll backstop for the thumbnail strip — the IntersectionObserver is throttled when the tab isn't
+// painting, so re-evaluate which thumbnails are near by geometry on scroll, exactly like the #viewer scroll
+// handler backs up the continuous-page observer. setTimeout (not rAF) so it still fires in a non-painting tab.
+let thumbScrollTimer;
+els.thumbs.addEventListener("scroll", () => {
+  clearTimeout(thumbScrollTimer);
+  thumbScrollTimer = setTimeout(thumbMountVisible, 60);
+}, { passive: true });
 
 // ---------- accessibility toggles ----------
 

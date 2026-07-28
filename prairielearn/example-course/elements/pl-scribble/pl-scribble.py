@@ -73,7 +73,8 @@ def _within_structural_bounds(obj):
                 n += len(cur)  # a large flat scalar array is bounded; a coord tuple (<=8) is free
                 if n > MAX_JSON_NODES:
                     raise ValueError("too complex")
-    return obj
+    # v189: no return — the sole caller invokes this purely for the raise-on-oversize side effect (it does not
+    # transform obj), so a `return obj` implied a value-producing contract nothing uses.
 
 _MISSING_BUNDLE = (
     '<div style="padding:12px;border:1px solid #f0d9a8;background:#fff7e6;border-radius:8px;">'
@@ -94,9 +95,10 @@ _FRAME = (
 # Option C (overlay): the question prose renders VISIBLY in .pl-scribble-host and a TRANSPARENT
 # Scribble iframe is laid over it so the student draws on the LIVE question rather than a clone.
 # width:100% fills the host; HEIGHT is set by _OVERLAY_SIZER (an iframe is a REPLACED element —
-# absolute inset:0 does NOT stretch it, so we size it to the prose in JS). The page coords are
-# locked to HTML_BASE_W=816 inside Scribble so the fixed-width replay in hydrateAnnotations stays
-# faithful; min-height (== Scribble's 200px page floor) stops a short prose from clipping the canvas.
+# absolute inset:0 does NOT stretch it, so we size it in JS (v179: to the WHOLE question panel — wrap top to
+# .card-body bottom, so it also covers a graded sibling input below <pl-scribble>, not just the prose). The page
+# coords are locked to HTML_BASE_W=816 inside Scribble so the fixed-width replay in hydrateAnnotations stays
+# faithful; min-height (== Scribble's 200px page floor) keeps a short question from clipping the canvas.
 _OVERLAY_FRAME = (
     '<iframe class="pl-scribble-overlay-frame" title="%s" '
     # z-index near INT_MAX so Scribble's toolbar/notes sit ABOVE any other page overlay or browser
@@ -462,8 +464,9 @@ def render(element_html, data):
 
     # panel == "question": editable, with a hidden form input PrairieLearn persists.
     # SEC-1: same \u003c hardening as the read-only panel (qid/name are course-authored, but the rule is uniform).
+    qid = _qid(data)  # v189: compute once — reused for cfg below and the overlay launcher sid
     cfg = "<script>window.__SCRIBBLE_PL=%s;</script>" % json.dumps(
-        {"readOnly": False, "name": name, "qid": _qid(data)}).replace("<", "\\u003c")
+        {"readOnly": False, "name": name, "qid": qid}).replace("<", "\\u003c")
     srcdoc = _build_srcdoc(doc, base_url, cfg, overlay=overlay)
     if srcdoc is None:
         return _INJECT_FAIL
@@ -478,7 +481,7 @@ def render(element_html, data):
         # OUTSIDE <pl-scribble>: the overlay only captures pointer events while the student is drawing, so
         # nested inputs stay answerable (verified end-to-end: render + type-through + grade).
         # v177 A3: identity-stamp the launcher so app.js's weld binds by id, never by first-match (B3-3).
-        sid = _html.escape("%s.%s" % (_qid(data) or "q", name), quote=True)
+        sid = _html.escape("%s.%s" % (qid or "q", name), quote=True)
         return _OVERLAY_WRAP % (input_html, inner, _OVERLAY_FRAME % ("Scribble scratchpad", srcdoc), _ANNOTATE_BTN % sid)
     return (
         '<div class="pl-scribble-wrap" style="margin:14px 0;">'

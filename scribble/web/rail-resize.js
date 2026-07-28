@@ -7,7 +7,7 @@
 // with ZERO edits to the drag engine. The handle is a <button>, so DRAG_EXCLUDE already stops a resize gesture
 // from LIFTING the bar. Bump this module's ?v= import with APP_VERSION.
 
-import { visibleBand, clamp } from "./visible-band.js?v=189"; // v189: clamp is the shared visible-band definition
+import { visibleBand, clamp } from "./visible-band.js?v=190"; // v189: clamp is the shared visible-band definition
 
 // el      : #rail (position:fixed, its own containing block)
 // handle  : the .fp-resize <button> strip on the bar's right edge
