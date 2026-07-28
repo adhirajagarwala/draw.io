@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "187";
+const APP_VERSION = "188";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=187";
+import init, { App } from "./pkg/scribble.js?v=188";
 import {
   bytesToB64,
   b64ToBlob,
@@ -27,20 +27,20 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=187";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=187";
-import { initEmbed } from "./embed.js?v=187";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=187";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=187";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=187";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=187";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=187";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=187";
-import { computeOverlayPE } from "./overlay-pe.js?v=187";
-import { makeResizable } from "./rail-resize.js?v=187";
-import { makeOverflow } from "./rail-overflow.js?v=187";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=187";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=187";
+} from "./utils.js?v=188";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=188";
+import { initEmbed } from "./embed.js?v=188";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=188";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=188";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=188";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=188";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=188";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=188";
+import { computeOverlayPE } from "./overlay-pe.js?v=188";
+import { makeResizable } from "./rail-resize.js?v=188";
+import { makeOverflow } from "./rail-overflow.js?v=188";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=188";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=188";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -3991,6 +3991,17 @@ const PREFS_PER_QUESTION = !!(window.__SCRIBBLE_PL && window.__SCRIBBLE_PL.qid);
 // most need consistency).
 const A11Y_KEY = "scribble.a11y.v1";
 
+// v188: pen (colour / line width / selected tool) and the toolbar's customize+size are USER PREFERENCES, not
+// per-question layout — a student wants them consistent as they move through an exam. Like the a11y prefs, they
+// live in this SHARED, un-namespaced key so they FOLLOW the student across questions (previously they were
+// per-question, so each question reset them). What stays per-question: toolbar POSITION (restored top-center
+// anyway) and notes layout (overlay notes are scratch, re-staged each load). Reads prefer this key and fall
+// back to the per-question PREFS_KEY, so a pre-v188 student's last settings migrate in on first load.
+const SHARED_KEY = "scribble.shared.v1";
+function readShared() {
+  try { return JSON.parse(localStorage.getItem(SHARED_KEY) || "{}") || {}; } catch { return {}; }
+}
+
 function savePrefs() {
   try {
     const cb = els.contextBar;
@@ -4067,6 +4078,31 @@ function savePrefs() {
         : (prev.railFloat2 || {}),
       railFloat: prev.railFloat || {}, // carry the legacy iframe-realm key forward untouched (rollback safety)
     }));
+    // v188: mirror the CROSS-QUESTION prefs into the shared key so they follow the student across questions.
+    // Values read off the live rail (realm-correct via railRoot), same expressions as PREFS_KEY above. `bar` is
+    // only captured in the OVERLAY (where #rail lives); elsewhere carry the last shared bar forward untouched so
+    // a standalone/embed save can't wipe the overlay's toolbar customize. Collapsed is saved but the overlay
+    // boot deliberately never re-applies it (R4: a bar restored collapsed is un-findable).
+    const sharedCur = readShared();
+    const overlayRail = overlay && railRoot.querySelector("#rail");
+    localStorage.setItem(SHARED_KEY, JSON.stringify({
+      pen: {
+        color: railRoot.querySelector("#colors .swatch.active")?.dataset.color || "",
+        width: railRoot.querySelector("#widths .width.active")?.dataset.width || "",
+        tool: activeTool() || "",
+      },
+      bar: overlayRail
+        ? (() => {
+          const r = railRoot.querySelector("#rail");
+          return {
+            collapsed: r.classList.contains("fp-collapsed"),
+            width: r.style.getPropertyValue("--rail-w") || "",
+            toolsHidden: [...r.querySelectorAll(".tool.tool-off")].map((b) => b.dataset.tool).filter(Boolean),
+            coloursOff: coloursHidden,
+          };
+        })()
+        : (sharedCur.bar || undefined), // omit when there's nothing to carry so the reader's fallback still migrates
+    }));
   } catch { /* storage unavailable — non-fatal */ }
 }
 
@@ -4097,7 +4133,7 @@ function applyPrefs() {
   // hand-edited pref can never arm an invalid state. The querySelector value is CSS.escape'd (defence in
   // depth against selector injection; the Rust validation is the real gate). Snip is a one-shot JS tool and
   // a Customize-hidden tool must never be armed invisibly, so both are skipped (fall back to the default pen).
-  const pen = p.pen || {};
+  const pen = readShared().pen || p.pen || {}; // v188: prefer the shared (cross-question) pen; fall back to the per-question pref for migration
   if (pen.color) {
     const sw = railRoot.querySelector(`#colors .swatch[data-color="${CSS.escape(pen.color)}"]`);
     if (sw && app.set_color(pen.color)) {
@@ -4475,7 +4511,10 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // B3-7 + review L-1: prefer railFloat2, but when NOT reparented fall back to the legacy railFloat —
           // gate-off coords are still iframe-realm (same realm v160 saved them in), so a v160 student who dragged
           // their toolbar isn't reset. Only the parent-realm (post-flip) path ignores the legacy key.
-          const rp = (prefs && (prefs.railFloat2 || (railWin === window && prefs.railFloat))) || {};
+          // v188: the toolbar customize/size (toolsHidden, coloursOff, width) now follows the student across
+          // questions via the shared key; fall back to the per-question railFloat2 (then legacy railFloat) for
+          // migration. Position stays top-center (v177) and collapsed is still never re-applied (R4) either way.
+          const rp = readShared().bar || (prefs && (prefs.railFloat2 || (railWin === window && prefs.railFloat))) || {};
           // v170: a dragged position IS restored again, but only per-question and only band-clamped — see the
           // PREFS_PER_QUESTION restore further down, which documents why the v168 blanket "never restore" was
           // both right at the time and too blunt. The COLLAPSED state is still never re-applied (R4): a bar that
@@ -4835,7 +4874,14 @@ init({ module_or_path: new URL(`pkg/scribble_bg.wasm?v=${APP_VERSION}`, import.m
           // v181: seed the resume tool from the persisted pen.tool so the FIRST Annotate re-arms the tool the
           // student last used (only the marking tools resume — eraser/select/snip stay off the surprise-restore
           // list by the existing rule). Reload otherwise defaults to pen.
-          let lastDrawTool = (prefs && prefs.pen && RESUME_TOOLS.has(prefs.pen.tool)) ? prefs.pen.tool : "pen";
+          // v188: prefer the SHARED (cross-question) tool so the student's drawing tool follows them across
+          // questions (colour/width already do via applyPrefs, but armResumeTool re-arms the tool from HERE, so
+          // seeding it from the per-question pref alone left the tool resetting to pen each question). Fall back
+          // to the per-question pref, then pen. Only RESUME_TOOLS follow — select/eraser/snip (incl. the select
+          // state after Done) default to pen, which is exactly the "if something else, default to pen" rule.
+          const sharedTool = readShared().pen?.tool;
+          let lastDrawTool = RESUME_TOOLS.has(sharedTool) ? sharedTool
+            : (prefs && prefs.pen && RESUME_TOOLS.has(prefs.pen.tool)) ? prefs.pen.tool : "pen";
           // v181 review fix (Select trap): arm the resume tool on Annotate. Shared by the normal ON branch AND
           // the pre-init shortcut path below — before v181 the shortcut trusted "the live tool is Pen", but the
           // v181 tool-restore can leave the WASM tool on Select/Eraser (every overlay Done persists pen.tool=
