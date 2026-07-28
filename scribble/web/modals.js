@@ -76,19 +76,7 @@ export function confirmSnip(imgUrl, text) {
     // of its full height — else Add/Cancel land below the fold and you'd scroll to reach them. Recompute once
     // the preview image DECODES and grows the card (its height is unknown at first paint, so a one-shot
     // measure would mis-place it). Same-origin read of the parent's scroll; falls back to the centred layout.
-    const place = () => {
-      try {
-        const fr = window.frameElement && window.frameElement.getBoundingClientRect();
-        const pvh = window.parent && window.parent.innerHeight;
-        if (!fr || !pvh) return;
-        const visTop = Math.max(0, -fr.top);
-        const band = Math.min(pvh - fr.top, fr.height) - visTop;
-        if (band <= 160) return;
-        ov.style.alignItems = "flex-start"; // stop the flex from re-centring in the full iframe height
-        card.style.maxHeight = `${Math.round(band - 32)}px`;
-        card.style.marginTop = `${Math.max(8, Math.round(visTop + band / 2 - card.offsetHeight / 2 - 20))}px`;
-      } catch { /* cross-frame — keep the default centred layout */ }
-    };
+    const place = () => bandPlaceCard(ov, card); // v189: shared band-placement helper (bandPlaceCard, below)
     place();
     img.addEventListener("load", place);
     img.decode?.().then(place).catch(() => {}); // fires even when the object URL is already decoded
@@ -133,19 +121,7 @@ export function confirmDialog({ title, body, confirmLabel = "OK", danger = false
     document.body.append(ov);
     // Band-place in the VISIBLE part of the (possibly multi-screen-tall) overlay iframe — else the buttons
     // land below the fold. No async image here, so the card height is known immediately (one measure).
-    try {
-      const fr = window.frameElement && window.frameElement.getBoundingClientRect();
-      const pvh = window.parent && window.parent.innerHeight;
-      if (fr && pvh) {
-        const visTop = Math.max(0, -fr.top);
-        const band = Math.min(pvh - fr.top, fr.height) - visTop;
-        if (band > 160) {
-          ov.style.alignItems = "flex-start";
-          card.style.maxHeight = `${Math.round(band - 32)}px`;
-          card.style.marginTop = `${Math.max(8, Math.round(visTop + band / 2 - card.offsetHeight / 2 - 20))}px`;
-        }
-      }
-    } catch { /* cross-frame — keep the centred layout */ }
+    bandPlaceCard(ov, card); // v189: shared band-placement helper (bandPlaceCard, below)
     cancel.focus();
   });
 }
@@ -219,4 +195,22 @@ export function showClippingLightbox(src, srcPage, docMode, goToPage) {
   document.addEventListener("keydown", onKey, true);
   document.body.appendChild(ov);
   (firstFocus || ov).focus?.();
+}
+
+// v189: place a dialog card in the VISIBLE band of the (possibly multi-screen-tall) overlay iframe so its
+// buttons never land below the fold. Shared by confirmSnip (re-run on image decode) and confirmDialog; both
+// used a byte-identical computation. Same-origin read of the parent's scroll; falls back to the centred layout
+// on any cross-frame throw. (function-hoisted, so the callers above can use it.)
+function bandPlaceCard(ov, card) {
+  try {
+    const fr = window.frameElement && window.frameElement.getBoundingClientRect();
+    const pvh = window.parent && window.parent.innerHeight;
+    if (!fr || !pvh) return;
+    const visTop = Math.max(0, -fr.top);
+    const band = Math.min(pvh - fr.top, fr.height) - visTop;
+    if (band <= 160) return;
+    ov.style.alignItems = "flex-start"; // stop the flex from re-centring in the full iframe height
+    card.style.maxHeight = `${Math.round(band - 32)}px`;
+    card.style.marginTop = `${Math.max(8, Math.round(visTop + band / 2 - card.offsetHeight / 2 - 20))}px`;
+  } catch { /* cross-frame — keep the centred layout */ }
 }

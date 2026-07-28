@@ -16,6 +16,11 @@ use web_sys::CanvasRenderingContext2d;
 /// Must match the `/CA` of the highlight ExtGState in the PDF exporter.
 const HIGHLIGHT_ALPHA: f64 = 0.35;
 
+/// Fixed highlighter line width and new-text font size. These are NOT user-adjustable (set_pen_width only
+/// changes the PEN width; there is no setter for either), so they are constants rather than App fields.
+const HL_WIDTH: f32 = 14.0;
+const TEXT_SIZE: f32 = 16.0;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
     /// Pick, move and edit existing annotations (handled by the host UI
@@ -56,8 +61,6 @@ pub struct App {
     tool: Tool,
     color: Color,
     pen_width: f32,
-    hl_width: f32,
-    text_size: f32,
     next_id: u64,
     dirty: bool,
     /// In-progress stroke: (surface, stroke).
@@ -84,8 +87,6 @@ impl App {
             tool: Tool::Pen,
             color: Color::Blue, // first stroke must stand out from near-black question text
             pen_width: 2.5,
-            hl_width: 14.0,
-            text_size: 16.0,
             next_id: 1,
             dirty: false,
             current: None,
@@ -227,7 +228,7 @@ impl App {
                 let (kind, width) = if self.tool == Tool::Pen {
                     (PenKind::Pen, self.pen_width)
                 } else {
-                    (PenKind::Highlighter, self.hl_width)
+                    (PenKind::Highlighter, HL_WIDTH)
                 };
                 let (px, py) = self.clamp_to_page(surface, x, y);
                 self.current = Some((
@@ -384,7 +385,7 @@ impl App {
             pos: [px, py],
             content,
             color: self.color,
-            size: self.text_size,
+            size: TEXT_SIZE,
         });
         self.commit(surface, item);
         Ok(())
@@ -490,12 +491,14 @@ impl App {
             return;
         };
         let (surface, id, grab) = (drag.surface, drag.id, drag.grab);
-        let original = drag.original.clone();
+        // One clone frees the shared `drag` (&self) borrow so page_mut can run below; translating it in place
+        // and moving it into the slot avoids the SECOND clone the old translate_item did (two clones -> one).
+        let mut moved = drag.original.clone();
         let Some(p) = self.page_ref(surface) else {
             return;
         };
-        let (dx, dy) = clamp_translation(&original, x - grab.0, y - grab.1, p.width, p.height);
-        let moved = translate_item(&original, dx, dy);
+        let (dx, dy) = clamp_translation(&moved, x - grab.0, y - grab.1, p.width, p.height);
+        translate_item_in_place(&mut moved, dx, dy);
         if let Some(p) = self.page_mut(surface) {
             if let Some(slot) = p.items.iter_mut().find(|it| it.id() == id) {
                 *slot = moved;
@@ -694,11 +697,13 @@ impl App {
             (x - grab.0).clamp(-ub[0], (w - ub[2]).max(-ub[0])),
             (y - grab.1).clamp(-ub[1], (h - ub[3]).max(-ub[1])),
         );
-        for (id, original) in &originals {
-            let moved = translate_item(original, dx, dy);
-            if let Some(p) = self.page_mut(surface) {
-                if let Some(slot) = p.items.iter_mut().find(|it| it.id() == *id) {
-                    *slot = moved;
+        // Resolve the page ONCE and translate each grabbed item in place (was: page_mut resolved + a clone PER
+        // item inside the loop). `originals` is already an owned clone, so consume it — no per-item clone.
+        if let Some(p) = self.page_mut(surface) {
+            for (id, mut original) in originals {
+                translate_item_in_place(&mut original, dx, dy);
+                if let Some(slot) = p.items.iter_mut().find(|it| it.id() == id) {
+                    *slot = original;
                 }
             }
         }
@@ -897,14 +902,6 @@ impl App {
             Some(NoteBlock::Clipping {
                 disp_w: Some(w), ..
             }) => *w,
-            _ => -1.0,
-        }
-    }
-    pub fn note_disp_h(&self, i: usize) -> f32 {
-        match self.doc.notes.get(i) {
-            Some(NoteBlock::Clipping {
-                disp_h: Some(h), ..
-            }) => *h,
             _ => -1.0,
         }
     }
@@ -1471,10 +1468,10 @@ fn clamp_translation(item: &Item, dx: f32, dy: f32, w: f32, h: f32) -> (f32, f32
     )
 }
 
-/// Move an item rigidly by (dx, dy) without changing its shape.
-fn translate_item(item: &Item, dx: f32, dy: f32) -> Item {
-    let mut out = item.clone();
-    match &mut out {
+/// Move an item rigidly by (dx, dy) IN PLACE, without changing its shape. On the drag hot path a pointer-move
+/// frame translates the already-owned item instead of cloning it again (was translate_item's second clone).
+fn translate_item_in_place(item: &mut Item, dx: f32, dy: f32) {
+    match item {
         Item::Stroke(s) => {
             for p in &mut s.points {
                 p[0] += dx;
@@ -1492,7 +1489,6 @@ fn translate_item(item: &Item, dx: f32, dy: f32) -> Item {
             s.rect[3] += dy;
         }
     }
-    out
 }
 
 /// Scale an item about an anchor point. Strokes scale their points, shapes

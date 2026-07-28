@@ -432,15 +432,9 @@
 .scribble-chrome.big #rail .tool[data-tool="text"] span::after { font-size: 12px; }
 .scribble-chrome.big #context-bar .btn.width { min-width: 38px; height: 36px; }
 .scribble-chrome.big #context-bar .swatch { width: 26px; height: 26px; }
-/* About "ⓘ" popover (mirror style.css:1582-1589; v158 retired the #about-line chip — do NOT port it). */
+/* v189: #about-popover was retired in v180 (style.css dropped its rules); keep only .about-wrap, which IS
+   reparented. The dead #about-popover block here was chrome.css-only drift the mirror is meant to prevent. */
 .scribble-chrome .about-wrap { position: relative; display: inline-flex; }
-.scribble-chrome #about-popover {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 90;
-  min-width: 200px; background: #fff; border: 1px solid var(--line); border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(20, 24, 28, 0.18); padding: 9px 12px;
-  font-size: 12.5px; color: var(--ink); line-height: 1.55; white-space: nowrap;
-}
-.scribble-chrome #about-popover[hidden] { display: none; }
 .scribble-chrome .modal-actions .btn {
   justify-content: center;
   border: 1px solid var(--line);

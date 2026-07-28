@@ -55,8 +55,10 @@ echo "→ deploying bundle + element → class ($CLASS)…"
 [ -d "$CLASS" ] || { echo "::error:: class course dir not found: $CLASS (pass it as arg 1)"; exit 1; }
 deploy_bundle "$CLASS"
 # The demo course's element is the source of truth; sync it into the class repo so the two never drift.
+# v189: --delete (like deploy_bundle) so a removed element file is pruned in lockstep instead of surviving in
+# the class copy and failing the drift gate below.
 mkdir -p "$CLASS/elements/pl-scribble"
-rsync -a "$ELEMENT_SRC/" "$CLASS/elements/pl-scribble/"
+rsync -a --delete "$ELEMENT_SRC/" "$CLASS/elements/pl-scribble/"
 
 # DRIFT GATE: the two deployed bundles + the two elements must be identical (refs/ is course-owned, excluded).
 echo "→ drift gate: comparing the two deployed trees…"

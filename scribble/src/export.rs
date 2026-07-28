@@ -138,9 +138,7 @@ fn shape_ops(out: &mut String, s: &Shape, h: f32, pal: Palette) {
             );
         }
         ShapeKind::Circle => {
-            // Ellipse inscribed in the normalized rect, four Bézier arcs.
-            let (lo_x, hi_x) = (x0.min(x1), x0.max(x1));
-            let (lo_y, hi_y) = (y0.min(y1), y0.max(y1));
+            // Ellipse inscribed in the normalized rect, four Bézier arcs. (lo_*/hi_* from the fn scope above.)
             let (cx, cy) = ((lo_x + hi_x) / 2.0, (lo_y + hi_y) / 2.0);
             let (rx, ry) = ((hi_x - lo_x) / 2.0, (hi_y - lo_y) / 2.0);
             let (kx, ky) = (rx * KAPPA, ry * KAPPA);
@@ -191,15 +189,11 @@ fn shape_ops(out: &mut String, s: &Shape, h: f32, pal: Palette) {
             }
         }
         ShapeKind::Tick => {
-            let (lo_x, hi_x) = (x0.min(x1), x0.max(x1));
-            let (lo_y, hi_y) = (y0.min(y1), y0.max(y1));
             let (w_, h_) = (hi_x - lo_x, hi_y - lo_y);
             line(out, lo_x, lo_y + 0.55 * h_, lo_x + 0.35 * w_, hi_y, h);
             line(out, lo_x + 0.35 * w_, hi_y, hi_x, lo_y + 0.08 * h_, h);
         }
         ShapeKind::Cross => {
-            let (lo_x, hi_x) = (x0.min(x1), x0.max(x1));
-            let (lo_y, hi_y) = (y0.min(y1), y0.max(y1));
             line(out, lo_x, lo_y, hi_x, hi_y, h);
             line(out, hi_x, lo_y, lo_x, hi_y, h);
         }

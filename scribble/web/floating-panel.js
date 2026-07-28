@@ -5,7 +5,7 @@
 // (no reparent, no jump), tracks the cursor, drops them clamped to the VIEWPORT,
 // and toggles a collapsed state. Bump this module's ?v= import with APP_VERSION.
 
-import { visibleBand, clampIntoBand, GRAB } from "./visible-band.js?v=188";
+import { visibleBand, clampIntoBand, GRAB } from "./visible-band.js?v=189";
 
 const DRAG_SLOP = 4; // px before a lift commits — a press-without-move is a no-op
 
@@ -220,9 +220,8 @@ export function makeFloating(el, { collapse, onChange, onSettle, win = window })
 
   return {
     floatTo(left, top) { el.classList.add("fp-moved"); el.style.left = `${Math.round(left)}px`; el.style.top = `${Math.round(top)}px`; },
-    setCollapsed(o) { el.classList.toggle("fp-collapsed", o); labelCollapse(o); },
-    isCollapsed: () => el.classList.contains("fp-collapsed"),
-    isMoved: () => el.classList.contains("fp-moved"),
+    // v189: setCollapsed / isCollapsed / isMoved removed — no caller used them (railFP uses only floatTo + dispose).
+    // The internal collapse-click handler that toggles fp-collapsed + labelCollapse is unchanged.
     // review N-1: teardown the parent-realm listeners on iframe swap. The visibilitychange listener was never
     // torn down (a leak that outlived every iframe swap); the backstops below live on the PARENT document, so
     // they must go the same way. Callers should invoke this on pagehide even when the rail was never reparented.

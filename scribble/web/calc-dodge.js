@@ -229,7 +229,7 @@ export function initCalcDodge(deps) {
   }
 }
 
-export function teardown() {
+function teardown() { // v189: not exported — used only internally (pagehide + init catch + syncNow)
   for (const fn of cleanupFns.splice(0)) { try { fn(); } catch { /* already gone */ } }
   if (raf) { try { cancelAnimationFrame(raf); } catch { /* parent gone */ } raf = 0; }
   holes = [];

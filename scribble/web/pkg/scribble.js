@@ -212,14 +212,6 @@ export class App {
         }
     }
     /**
-     * @param {number} i
-     * @returns {number}
-     */
-    note_disp_h(i) {
-        const ret = wasm.app_note_disp_h(this.__wbg_ptr, i);
-        return ret;
-    }
-    /**
      * Stored on-screen size of a clipping in CSS px, or -1 if none (⇒ natural size).
      * @param {number} i
      * @returns {number}

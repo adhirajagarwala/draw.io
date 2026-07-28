@@ -9,7 +9,7 @@
 // floatNotes / dockNotes / clampNotes back from prefs + boot + the splitter guard.
 // Bump this module's ?v= import in app.js together with APP_VERSION.
 
-import { visibleBand, clampIntoBand } from "./visible-band.js?v=188";
+import { visibleBand, clampIntoBand, clamp } from "./visible-band.js?v=189";
 
 let els, $, savePrefs, relayoutSketches, stageEl;
 const MIN_W = 318, MIN_H = 140, DOCK_BAND = 72; // MIN_W fits the header (grip + title + +Text/+Draw/Minimise/✕) without collision
@@ -20,8 +20,7 @@ const MIN_W = 318, MIN_H = 140, DOCK_BAND = 72; // MIN_W fits the header (grip +
 let railClear = 64;
 export function setRailClear(px) { railClear = Math.max(64, px | 0); }
 const DRAG_SLOP = 4; // px the pointer must travel before a header press becomes a lift (a click is a no-op)
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
-const embedded = () => document.body.classList.contains("embedded");
+const embedded = () => document.body.classList.contains("embedded"); // clamp: v189 imported from visible-band
 const overlay = () => document.body.classList.contains("overlay");
 
 export function isNotesFloating() { return document.body.classList.contains("notes-floating"); }
@@ -80,7 +79,7 @@ export function floatNotes(left, top, w, h) {
 }
 
 // Return the pane to the docked-below grid row (#main / grid-area:notes).
-export function dockNotes() {
+function dockNotes() { // v189: not exported — called only internally (app.js imports floatNotes / clampNotes)
   const pane = els.notesPane;
   pane.classList.remove("notes-dragging");
   if (pane.parentElement !== $("main")) $("main").appendChild(pane); // grid-area:notes re-places it

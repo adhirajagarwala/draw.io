@@ -109,19 +109,8 @@ export function htmlTextInRegion(htmlFrame, x0, y0, w, h) {
     }
     hits.push({ top: anchorTop, left: anchorLeft, str });
   }
-  // Reconstruct reading order: rows top-to-bottom, then left-to-right within a
-  // row — so multi-column / absolutely-positioned text doesn't read scrambled.
-  hits.sort((p, q) => (Math.abs(p.top - q.top) > 6 ? p.top - q.top : p.left - q.left));
-  let text = "", prevTop = null;
-  for (const it of hits) {
-    if (prevTop !== null) text += (it.top - prevTop > 6) ? "\n" : " ";
-    text += it.str;
-    prevTop = it.top;
-  }
-  return {
-    text: text.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim(),
-    hadMath,
-  };
+  // Reconstruct reading order: rows top-to-bottom, then left-to-right within a row.
+  return assembleReadingOrder(hits, hadMath);
 }
 
 // Overlay mode: the question lives in the PARENT page (not an iframe), so text-node geometry is in
@@ -207,17 +196,7 @@ export function overlayTextInRegion(host, x0, y0, w, h) {
     // roughly in its sentence position (centre-anchoring pushed it out of order and read worse).
     hits.push({ top: t, left: l, str });
   }
-  hits.sort((p, q) => (Math.abs(p.top - q.top) > 6 ? p.top - q.top : p.left - q.left));
-  let text = "", prevTop = null;
-  for (const it of hits) {
-    if (prevTop !== null) text += (it.top - prevTop > 6) ? "\n" : " ";
-    text += it.str;
-    prevTop = it.top;
-  }
-  return {
-    text: text.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim(),
-    hadMath,
-  };
+  return assembleReadingOrder(hits, hadMath);
 }
 
 // Extract PDF text overlapping the region, in reading order. Uses each glyph
@@ -268,4 +247,21 @@ export async function pdfTextInRegion(pdfDoc, pageNum, basePage, x0, y0, w, h) {
   } catch {
     return "";
   }
+}
+
+// v189: single source for the row-then-column reading-order reconstruction + whitespace normalization that
+// htmlTextInRegion and overlayTextInRegion both ended with (byte-identical). The 6px row-gap threshold and the
+// normalize regex now live in ONE place so a tweak can't be hand-copied to only one caller. (function-hoisted.)
+function assembleReadingOrder(hits, hadMath) {
+  hits.sort((p, q) => (Math.abs(p.top - q.top) > 6 ? p.top - q.top : p.left - q.left));
+  let text = "", prevTop = null;
+  for (const it of hits) {
+    if (prevTop !== null) text += (it.top - prevTop > 6) ? "\n" : " ";
+    text += it.str;
+    prevTop = it.top;
+  }
+  return {
+    text: text.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim(),
+    hadMath,
+  };
 }

@@ -3,7 +3,7 @@
 // content outside explicit file downloads.
 
 // Bump with index.html's ?v= references on every release (cache busting).
-const APP_VERSION = "188";
+const APP_VERSION = "189";
 // Boot-evaluation stamp AND single-boot guard (v175 review A1, blocker). The parent-side watchdog may
 // re-inject this module's script tag into a wedged document. It injects the SAME URL, so the module map's
 // evaluate-at-most-once rule already makes double-boot structurally impossible — this guard is the belt for
@@ -18,7 +18,7 @@ window.__scribbleBooted = true;
 // release (the glue is regenerated whenever the Rust/wasm changes; a stale glue cached
 // against fresh JS — e.g. missing a newly-added export — is this project's most-repeated
 // bug). See CLAUDE.md rule 2. The wasm binary itself is versioned at the init() call below.
-import init, { App } from "./pkg/scribble.js?v=188";
+import init, { App } from "./pkg/scribble.js?v=189";
 import {
   bytesToB64,
   b64ToBlob,
@@ -27,20 +27,20 @@ import {
   looksLikeText,
   wrapLine,
   sha256Hex,
-} from "./utils.js?v=188";
-import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=188";
-import { initEmbed } from "./embed.js?v=188";
-import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=188";
-import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=188";
-import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=188";
-import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=188";
-import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=188";
-import { makeFloating, clampFixed } from "./floating-panel.js?v=188";
-import { computeOverlayPE } from "./overlay-pe.js?v=188";
-import { makeResizable } from "./rail-resize.js?v=188";
-import { makeOverflow } from "./rail-overflow.js?v=188";
-import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=188";
-import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=188";
+} from "./utils.js?v=189";
+import { buildPdf, canvasJpegBytes } from "./pdf-writer.js?v=189";
+import { initEmbed } from "./embed.js?v=189";
+import { idbGet, idbPut, idbDelete, idbPrune } from "./idb.js?v=189";
+import { htmlTextInRegion, overlayTextInRegion, pdfTextInRegion } from "./text-extract.js?v=189";
+import { confirmOpenDialog, showClippingLightbox, confirmSnip, confirmDialog } from "./modals.js?v=189";
+import { initColorBar, isCbarDocked, dockCbar, clampContextBar, setCbarCollapsed } from "./colorbar.js?v=189";
+import { initNotesDock, isNotesFloating, floatNotes, clampNotes, setNotesCollapsed, isNotesCollapsed, setRailClear } from "./notes-dock.js?v=189";
+import { makeFloating, clampFixed } from "./floating-panel.js?v=189";
+import { computeOverlayPE } from "./overlay-pe.js?v=189";
+import { makeResizable } from "./rail-resize.js?v=189";
+import { makeOverflow } from "./rail-overflow.js?v=189";
+import { initCalcDodge, calcHoles } from "./calc-dodge.js?v=189";
+import { visibleBand, clampIntoBand, MARGIN } from "./visible-band.js?v=189";
 
 // PrairieLearn read-only mode: a past submission is displayed but not editable.
 // The srcdoc injects window.__SCRIBBLE_READONLY before this module runs (inline
@@ -234,7 +234,7 @@ const cont = {
   scale: 1,    // effective CSS scale of the column
   token: 0,    // bumped on each rebuild to drop stale async page renders
 };
-const CONT_MAX_BACKING = 16000; // safe single-canvas dimension ceiling (HTML page)
+const HTML_MAX_BACKING = 16000; // safe single-canvas dimension ceiling (HTML page)
 const MAX_CANVAS_DIM = 32767;   // browser hard per-axis canvas limit (over → silent blank)
 // The on-screen backing ratio in use right now. Continuous pages render per-page
 // at devicePixelRatio; only HTML caps its own ratio for very tall pages.
@@ -864,10 +864,12 @@ async function openPdf(file) {
     // the primary way to see where your marks are and to jump around).
     els.thumbs.hidden = doc.numPages <= 1;
     els.btn.thumbs.classList.toggle("active", !els.thumbs.hidden);
-    if (!els.thumbs.hidden) await buildThumbnails();
     renderNotes();
     if (restored && app.notes_len() > 0 && els.notesPane.hidden) toggleNotes(true);
     if (isContinuous()) await renderContinuous(); else await renderPage();
+    // v189: build thumbnails AFTER the document paints — they render N low-scale pages through the shared render
+    // lock, so building them first delayed time-to-first-content (the doc the student actually opened).
+    if (!els.thumbs.hidden) await buildThumbnails();
     status(restored ? "Restored your autosaved annotations." : "PDF loaded. Scribble away!");
   } catch (e) {
     console.error("openPdf failed:", e);
@@ -992,8 +994,8 @@ function renderHtmlPage() {
   // canvas height; drop the pixel ratio before scaling fidelity is lost.
   let ratio = dpr();
   while (ratio > 1 &&
-         (basePage.h * s * ratio > CONT_MAX_BACKING ||
-          basePage.w * s * ratio > CONT_MAX_BACKING)) ratio -= 1;
+         (basePage.h * s * ratio > HTML_MAX_BACKING ||
+          basePage.w * s * ratio > HTML_MAX_BACKING)) ratio -= 1;
   htmlRatio = ratio;
   const cssW = Math.round(basePage.w * s);
   const cssH = Math.round(basePage.h * s);
@@ -1807,7 +1809,6 @@ async function finishSnip(r) {
     const blob = await new Promise((res) => out.toBlob(res, "image/png"));
     // PNG encode can return null (e.g. canvas over the encode limit).
     if (!blob) { saveTextOnly("the image was too large to capture"); return; }
-    const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
     // Preview the clip + let the student see what was grabbed and choose whether to keep the recognised
     // text as its caption, before it lands in the notes. (Revoke the preview URL either way.)
     const previewUrl = URL.createObjectURL(blob);
@@ -1817,6 +1818,9 @@ async function finishSnip(r) {
     if (!choice.add) { status("Snip discarded."); return; }
     const keepText = choice.includeText && !!finalText;
     const caption = keepText ? finalText : ""; // "image only" → no caption text under the clip
+    // v189: encode to base64 only AFTER the student commits (was above the discard check, so a cancelled snip
+    // paid a full multi-MB btoa for nothing). The preview above uses the Blob via previewUrl, not b64.
+    const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
     // Store the on-screen CSS-px size the region occupied so the note renders at SOURCE size, not the
     // 2-4x high-DPI raster (which made snips render ~2x too big).
     app.add_clipping(b64, snipPage, caption, Math.round(w * snipScale), Math.round(h * snipScale));
@@ -2856,8 +2860,8 @@ async function setScrollMode(mode) {
   if (mode === "continuous") {
     scrollMode = "continuous";
     syncScrollUI();
-    await renderContinuous();
-    goToPage(pageNum);          // bring the page you were on into view
+    await renderContinuous(); // v189: renderContinuous already restores the reader's page (scrollToContPage) —
+    // the extra goToPage(pageNum) here was a redundant second scrollTop write + geometry read.
   } else {
     pageNum = visiblePage();    // keep the page you were reading
     scrollMode = "paged";
@@ -3352,10 +3356,6 @@ function buildTextBlock(div, i) {
   queueMicrotask(() => autoGrow(ta));
 }
 
-// A clipping note: the snipped image (click to jump to its source page) plus an
-// auto-growing caption.
-// Copy a notes clipping (its blob-URL PNG) to the system clipboard, with brief
-// in-button feedback. Needs a secure context (localhost / https) and a user gesture.
 // Re-encode a PNG Blob through a canvas so the clipboard receives a CANVAS-NATIVE image Blob. Verified in
 // Chromium (and Safari is historically strict too): clipboard.write() rejects a hand-CONSTRUCTED image/png Blob
 // (atob -> Uint8Array -> new Blob, i.e. b64ToBlob) with DataError "Failed to read or decode…", yet accepts a
@@ -3619,6 +3619,10 @@ function renderNotes() {
   sketchViews = [];
   activeSketch = null; // the views are about to be rebuilt — drop the stale reference
   els.notesList.textContent = "";
+  // v189: the pane is hidden (the common case while drawing) → skip the expensive per-clip rebuild (each image
+  // re-marshals + re-decodes its base64 across the wasm boundary). toggleNotes(true)/revealNotes set hidden=false
+  // THEN call renderNotes, so a real show always rebuilds; nothing reads the list while it's hidden.
+  if (els.notesPane.hidden) return;
   const total = app.notes_len();
   for (let i = 0; i < total; i++) {
     try {
@@ -4083,7 +4087,6 @@ function savePrefs() {
     // only captured in the OVERLAY (where #rail lives); elsewhere carry the last shared bar forward untouched so
     // a standalone/embed save can't wipe the overlay's toolbar customize. Collapsed is saved but the overlay
     // boot deliberately never re-applies it (R4: a bar restored collapsed is un-findable).
-    const sharedCur = readShared();
     const overlayRail = overlay && railRoot.querySelector("#rail");
     localStorage.setItem(SHARED_KEY, JSON.stringify({
       pen: {
@@ -4101,7 +4104,7 @@ function savePrefs() {
             coloursOff: coloursHidden,
           };
         })()
-        : (sharedCur.bar || undefined), // omit when there's nothing to carry so the reader's fallback still migrates
+        : (readShared().bar || undefined), // v189: read lazily — only this non-overlay branch needs it; omit when nothing to carry
     }));
   } catch { /* storage unavailable — non-fatal */ }
 }
@@ -4183,7 +4186,7 @@ async function autosaveTick() {
     const json = app.save_json(); // NB: clears the Rust dirty flag
     dirtySinceFileSave = true;
     try {
-      await idbPut(key, { json, savedAt: Date.now(), pages: pdfDoc?.numPages || 0 });
+      await idbPut(key, { json, savedAt: Date.now() }); // v189: dropped the written-never-read 'pages' field
     } catch (e) {
       app.mark_dirty(); // the write was lost (quota/eviction) — re-mark so the next tick retries
       idbPrune(15); // best-effort: free space (old snapshots) so the retry can land

@@ -8,7 +8,10 @@
 export const GRAB = 56; // px of the drag handle kept inside the band on every edge (>= a 44px touch target)
 export const MARGIN = 4; // inset from the band edges (matches the retired strict-4px overlay margins)
 // clamp with lo>hi collapsing to lo — a band narrower than the panel pins its near (grabbable) edge in view.
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
+// v189: exported so notes-dock/rail-resize import this ONE definition instead of re-declaring it. The
+// deliberate lo>hi -> lo collapse (via the inner Math.max(lo,hi)) is a load-bearing contract for the
+// half-off-recoverable band logic, so a single source keeps the copies from drifting.
+export const clamp = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
 
 // The RAW visible band in `win`-fixed coords (NO margin — clampIntoBand applies MARGIN, and callers like
 // dodgeEl read raw top/bottom). Keyed on `win`, it auto-degenerates so callers need no branching:
